@@ -36,6 +36,17 @@ ALLOWED_EXTERNAL_HOSTS = {
 TITLE_MIN, TITLE_MAX = 15, 70
 DESC_MIN, DESC_MAX = 50, 160
 
+# Error pages are held to a DIFFERENT contract from content pages — and in two
+# places it is the OPPOSITE contract:
+#
+#   * they MUST be noindex; a 404 that invites indexing is a soft-404 farm;
+#   * they MUST NOT carry a rel=canonical. A canonical belongs on a page you want
+#     indexed, and on an error page it maps every bad URL onto a real one.
+#
+# Without this distinction the checker made a correct 404 page impossible to
+# write, which is why the page was deferred rather than built.
+ERROR_PAGE_NAMES = {"404.html", "410.html", "500.html"}
+
 VOID_TAGS = {
     "area", "base", "br", "col", "embed", "hr", "img", "input",
     "link", "meta", "param", "source", "track", "wbr",
@@ -60,6 +71,26 @@ def is_executable_script_type(type_attr: str | None) -> bool:
 
 def is_jsonld_type(type_attr: str | None) -> bool:
     return (type_attr or "").strip().lower() == "application/ld+json"
+
+
+def is_error_page(page: Path) -> bool:
+    """True for error documents, which follow the inverted rules above."""
+    return page.name in ERROR_PAGE_NAMES
+
+
+def check_sitemap_excludes_error_pages(f: Findings) -> None:
+    """A sitemap is a list of pages you want indexed. Error pages are not.
+
+    Cheap cross-file check, but it catches a real and easy mistake: copying the
+    sitemap template and forgetting that ``404.html`` now exists.
+    """
+    sitemap = ROOT / "sitemap.xml"
+    if not sitemap.is_file():
+        return
+    text = sitemap.read_text(encoding="utf-8")
+    for name in sorted(ERROR_PAGE_NAMES):
+        if name in text:
+            f.error("sitemap.xml", f"error page {name!r} must not be listed in the sitemap")
 
 
 class Findings:
@@ -219,7 +250,11 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
         f.error(where, "missing <meta charset>")
 
     robots = doc.meta.get("robots", "")
-    if "noindex" in robots.lower():
+    if is_error_page(page):
+        # Inverted on purpose: an error page that can be indexed is a defect.
+        if "noindex" not in robots.lower():
+            f.error(where, f"error page must be noindex, has robots={robots!r}")
+    elif "noindex" in robots.lower():
         f.error(where, f"page is marked noindex: robots={robots!r}")
 
     # Title / description length
@@ -237,7 +272,14 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
     for t, a in doc.tags:
         if t == "link" and (a.get("rel") or "").lower() == "canonical":
             canonical = a.get("href")
-    if not canonical:
+    if is_error_page(page):
+        if canonical:
+            f.error(
+                where,
+                f"error page must NOT declare rel=canonical (found {canonical!r}) — "
+                f"a canonical on an error page maps every bad URL onto a real one",
+            )
+    elif not canonical:
         f.error(where, "missing rel=canonical link")
     else:
         host = urlparse(canonical).netloc
@@ -435,6 +477,8 @@ def main() -> int:
         check_secrets(page, f)
         print(f"  checked {page.relative_to(ROOT)}  "
               f"(tags={len(doc.tags)} links={len(doc.anchor_hrefs)} ids={len(doc.ids)})")
+
+    check_sitemap_excludes_error_pages(f)
 
     print()
     for w in f.warnings:
