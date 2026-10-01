@@ -47,18 +47,57 @@ been supplied. No guessed endpoint is hard-coded anywhere.
 ## What exists today
 
 ```
-index.html              homepage
-static/css/style.css    styles
-static/js/app.js        front-end behaviour
-tools/check_site.py     CI: HTML, links, assets, a11y, SEO baseline, link rules
-tools/check_repo_hygiene.py  CI: secrets, tracked data, oversized files
-docs/PROJECT-STATUS.md  measured project status
-.github/workflows/ci.yml     CI
+index.html               homepage
+404.html                 branded error page (noindex, served with a real 404)
+robots.txt               crawl policy, points at the sitemap
+sitemap.xml              the pages that exist
+
+static/css/style.css     styles
+static/js/app.js         page behaviour: mobile nav, footer year, click hooks
+static/js/register.js    the registration form: validation, idempotency, states
+static/js/analytics.js   first-party event layer (dormant; no third-party egress)
+static/img/              favicon and Open Graph assets
+
+backend/                 FastAPI service: registration, lead store, provider adapter
+  app/                   routers, services, repositories, providers, middleware
+  alembic/versions/      migrations 0001..0003
+  tests/                 the suite, including the PostgreSQL and concurrency tests
+
+deploy/                  nginx, systemd, Docker, env template, go-live check
+docs/                    architecture, registration flow, integration, security,
+                         deployment, go-live checklist, measured project status
+tools/                   CI guards: site, repo hygiene, nginx config, brand images
+.github/workflows/ci.yml 10 CI jobs, all required before merge
 ```
 
-Components added by later gates (backend service, analytics layer, SEO assets,
-deployment configuration) are recorded in `docs/PROJECT-STATUS.md` as they land.
-This section lists **only what is actually in the tree**.
+This list is the repository, not an aspiration. If something is here it exists;
+if it is not here, it does not.
+
+## Running the checks
+
+```bash
+# Website (no dependencies)
+python3 tools/check_site.py            # HTML, links, a11y, SEO, business link rules
+python3 tools/check_nginx_config.py    # add_header inheritance guard
+python3 tools/check_repo_hygiene.py    # secrets, tracked data, oversized files
+
+# Backend
+cd backend && python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+python -m pytest -q                    # 371 tests; the PostgreSQL ones skip
+
+# Backend against a real PostgreSQL (see backend/tests/test_postgres.py)
+TEST_DATABASE_URL=postgresql+psycopg://user@127.0.0.1:5432/viporder_test \
+  python -m pytest tests/test_postgres.py tests/test_concurrency.py -q
+```
+
+Local development with the browser seeing a single origin, exactly as production
+does behind nginx:
+
+```bash
+cd backend && uvicorn app.main:app --port 8000     # terminal 1
+python3 tools/dev_server.py                        # terminal 2 -> :8080
+```
 
 ---
 
