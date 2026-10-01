@@ -140,6 +140,9 @@ systemctl status viporder-web --no-pager
 
 ```bash
 cp deploy/nginx/proxy_params_viporder /etc/nginx/proxy_params_viporder
+install -d /etc/nginx/upstreams
+# systemd host: the app is on loopback. (Compose uses upstream-compose.conf.)
+cp deploy/nginx/upstream-systemd.conf /etc/nginx/upstreams/viporder-upstream.conf
 cp deploy/nginx/viporder.com.vn.conf /etc/nginx/sites-available/
 ln -sf /etc/nginx/sites-available/viporder.com.vn.conf /etc/nginx/sites-enabled/
 nginx -t

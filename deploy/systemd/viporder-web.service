@@ -27,11 +27,30 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 
 # Binds to loopback only — Nginx is the only thing that may talk to it.
+#
+# --workers 1 IS DELIBERATE, NOT AN OVERSIGHT.
+# The application's rate limiter keeps its counters in process memory, so each
+# worker enforces the limit independently: with N workers the effective limit is
+# N x RATE_LIMIT_ATTEMPTS. At --workers 2 a limit of 10 becomes 20 in practice.
+# For a registration form, a correct limit matters more than a second worker —
+# and a single process is not the bottleneck here, the database and the upstream
+# provider are. Raise this ONLY after moving the limiter to a shared store
+# (Redis); see docs/SECURITY.md.
+#
+# --forwarded-allow-ips IS EXPLICIT ON PURPOSE.
+# uvicorn's --proxy-headers rewrites the client address from X-Forwarded-For for
+# any peer in --forwarded-allow-ips (uvicorn defaults to 127.0.0.1,::1). That
+# flag — NOT the app's TRUST_PROXY_HEADERS — is the operative control, because
+# it acts before the application sees the request. Pinning it to loopback means
+# a direct connection can never forge the client IP; Nginx connects from
+# 127.0.0.1, so the real client address is still recovered. Do not widen this
+# while the app is reachable from anywhere else.
 ExecStart=/srv/viporder/venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 \
     --port 8000 \
-    --workers 2 \
+    --workers 1 \
     --proxy-headers \
+    --forwarded-allow-ips 127.0.0.1 \
     --no-server-header \
     --log-level info
 

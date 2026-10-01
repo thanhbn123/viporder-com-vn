@@ -7,15 +7,26 @@
 | `viporder.com.vn.conf` | `/etc/nginx/sites-available/viporder.com.vn.conf` |
 | `proxy_params_viporder` | `/etc/nginx/proxy_params_viporder` |
 | `viporder-security-headers.conf` | `/etc/nginx/snippets/viporder-security-headers.conf` |
+| `upstream-systemd.conf` **or** `upstream-compose.conf` | `/etc/nginx/upstreams/viporder-upstream.conf` |
+
+**The upstream is an include, and exactly one variant must be installed.** The
+correct address depends on the deployment: `127.0.0.1:8000` under systemd,
+`app:8000` under compose. Under compose, `127.0.0.1` inside the nginx container
+is *nginx itself*, so the containerised stack could never have reached the
+application. Because it is an `include`, getting this wrong fails `nginx -t`
+loudly instead of silently proxying into the void.
 
 ```bash
-install -d /etc/nginx/snippets
+install -d /etc/nginx/snippets /etc/nginx/upstreams
 cp deploy/nginx/viporder-security-headers.conf /etc/nginx/snippets/
-cp deploy/nginx/proxy_params_viporder      /etc/nginx/proxy_params_viporder
-cp deploy/nginx/viporder.com.vn.conf       /etc/nginx/sites-available/
+cp deploy/nginx/upstream-systemd.conf       /etc/nginx/upstreams/viporder-upstream.conf
+cp deploy/nginx/proxy_params_viporder       /etc/nginx/proxy_params_viporder
+cp deploy/nginx/viporder.com.vn.conf        /etc/nginx/sites-available/
 ln -sf /etc/nginx/sites-available/viporder.com.vn.conf /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
 ```
+
+Under compose the equivalent mount is already wired in `docker-compose.yml`.
 
 The repository filename and the installed filename are deliberately identical for
 the snippet, so a mismatch is visible rather than silent.
@@ -81,3 +92,23 @@ security headers are present on `/`, a static asset and `robots.txt`; exactly on
 **Not verified:** behaviour on the production host, TLS/OCSP stapling with a real
 certificate, HTTP/2 negotiation, and the `/api/` proxy path (no backend was
 running). `deploy/post-deploy-check.sh` covers these against the live domain.
+
+---
+
+## Worker count and proxy trust (read before changing the service)
+
+Two uvicorn flags interact with security controls, and both are pinned on purpose.
+
+**`--workers 1`.** The rate limiter keeps its counters in process memory, so each
+worker enforces the limit independently: with N workers the effective limit is
+`N x RATE_LIMIT_ATTEMPTS`. At `--workers 2`, a limit of 10 becomes 20 in practice.
+Raise it **only** after moving the limiter to a shared store. One process is not
+the bottleneck here — the database and the upstream provider are.
+
+**`--forwarded-allow-ips`.** uvicorn's `--proxy-headers` rewrites the client
+address from `X-Forwarded-For` for any peer in `--forwarded-allow-ips`. That flag
+acts *before the application sees the request*, so it — not the app's
+`TRUST_PROXY_HEADERS` — is the operative control. It is pinned to `127.0.0.1` in
+the systemd unit, where the app is reachable on loopback. The compose service uses
+`*` and compensates by **not publishing the application port at all**: its only
+peer is the nginx container on the private compose network.
