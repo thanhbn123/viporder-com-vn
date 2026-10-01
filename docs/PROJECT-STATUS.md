@@ -61,14 +61,14 @@ redundancy (SHA retained above for recovery).
 | **G00** | Discovery / baseline, CI foundation | **PASS** | drift measured and corrected (§2); PR #5 → `9e851286` |
 | **G01** | Homepage | **PASS** (pre-existing) | merged via PR #1; verified sound, **not rewritten** |
 | **G02** | Registration + lead core | **PASS** | PR #11 → `df9b84ea`; replay CR PR #13 → `4d026def`. Live: exact browser payload → **201**; provider down → **202** `PENDING` with the lead **retained**; duplicate → **409** leaking nothing; **replay of a 409 returns 409 with a byte-identical body** |
-| **G03** | Data / lead store | **PASS, PostgreSQL now executed** | PR #19. Repository interface, Alembic `0001`–`0003`, `request_fingerprint`, consent columns. The partial unique index is **proven on real PostgreSQL 16**, in CI: a second `REGISTERED` row for one phone is refused while a `PENDING` one is allowed |
+| **G03** | Data / lead store | **PASS, PostgreSQL now executed** | PR #19, PR #24. Repository interface, Alembic `0001`–`0004`, `request_fingerprint`, consent columns, and an **in-flight phone claim** that makes "one attempt per phone at a time" a database invariant — so two concurrent registrations cannot both call the provider. The partial unique index is **proven on real PostgreSQL 16**, in CI: a second `REGISTERED` row for one phone is refused while a `PENDING` one is allowed |
 | **G04** | KHAIBAO9610 integration contract | **BLOCKED_EXTERNAL** | adapter + MOCK shipped; contract not supplied — **issue #4**. `docs/KHAIBAO9610-INTEGRATION.md` |
 | **G05** | Marketing / analytics | **PASS** | PR #10. All 7 events + `viporder_lead_pending`; UTM captured server-side. **No PII in any payload** (adversarially verified). Tracking **dormant** |
 | **G06** | SEO / public website | **PASS** | OG/Twitter, static JSON-LD, `sitemap.xml`, `robots.txt`, favicon + OG image (1200×630), branded **404** served with a real 404 status and 6/6 headers (PR #21). JSON-LD is parsed by CI |
 | **G07** | UX / conversion | **PASS** | two primary actions, accessible mobile nav, success/pending/error states. **Mobile not visually verified** (no browser) |
 | **G08** | Security | **PASS, with named residuals** | `docs/SECURITY.md`. Four real defects were found by adversarial review and fixed: password in exception tracebacks; a cross-customer data leak via a reused idempotency key; nginx dropping **all** security headers from the homepage (0/6 → 6/6); and `--workers 2` doubling the in-process rate limit while the app-level proxy setting implied a control it did not provide |
-| **G09** | Testing | **PASS** | **371** backend tests + 7 PostgreSQL tests + 3 CI-enforced repo tools. Negative controls run for the site checker, the nginx guard, the deploy check, and by mutation for the backend's own tests |
-| **G10** | CI | **PASS** | `.github/workflows/ci.yml`, **10** jobs, all pinned to the PR **head SHA**, all 10 required before merge. Includes a PostgreSQL service and a negative control for the destructive-test guard |
+| **G09** | Testing | **PASS** | **382** backend tests (370 run without a database, 12 skip). Includes 7 PostgreSQL schema tests and 5 concurrency tests, plus 3 CI-enforced repo tools. Negative controls run for the site checker, the nginx guard, the deploy check, and by mutation for the backend's own tests |
+| **G10** | CI | **PASS** | `.github/workflows/ci.yml` — **9 jobs producing 10 required checks** (the Python matrix is two), all pinned to the PR **head SHA** and all required before merge. Includes a PostgreSQL service and a negative control for the destructive-test guard |
 | **G11** | Documentation | **PASS** | `docs/` — architecture, flow, integration, deployment, security, go-live |
 | **G12** | Staging | **PASS (config only)** | PR #6, plus CR PR #15 (`--workers 1`, pinned `--forwarded-allow-ips`, upstream made deployment-specific). **Nothing deployed** — no VPS or DNS access. **Docker was never executed** |
 | **G13** | Release | **BLOCKED_EXTERNAL** | release PR (`develop` → `main`) opened as a **candidate only**, awaiting owner authorization. Staging acceptance cannot be performed without infrastructure, and KHAIBAO9610 is MOCK |
@@ -88,11 +88,23 @@ deliberately **not** covered:
 | **The real KHAIBAO9610 API** | No live call has ever been made from this repository. **`MOCK` is not working registration.** |
 | **A real browser at real breakpoints** | The mobile nav, the layout and the 404 page were reviewed as code and through DOM stubs, never rendered. No session here had image input — the OG image was measured geometrically but never *looked at*. |
 | **Docker / docker-compose** | Docker is not installed on the machine this was built on. The compose file is validated as configuration (YAML parses, every key is a real setting, defaults are safe) but the stack has **never been run**. |
+| **More than one uvicorn worker** | Both deployment paths pin `--workers 1`. The concurrency guarantees — the phone claim and the idempotency binding — are verified within a process (sync handlers run in a threadpool, so the races are real), but they have **not** been exercised across multiple workers. Raise the worker count only after re-running `tests/test_concurrency.py` against that topology. |
 
-**Closed since the first revision of this document:** PostgreSQL. It was recorded
-as "never executed" for most of this project. It is now migrated, asserted and
-enforced in CI on every pull request (`backend/tests/test_postgres.py`), including
-the partial unique index that the whole lead design rests on.
+**Closed since the first revision of this document:**
+
+* **PostgreSQL.** Recorded as "never executed" for most of this project. It is now
+  migrated, asserted and enforced in CI on every pull request
+  (`backend/tests/test_postgres.py`), including the partial unique index the whole
+  lead design rests on.
+* **The duplicate provider call under concurrency.** PR #23 stopped a losing
+  concurrent request from getting a 500, but noted honestly that **both requests
+  had already called the provider** — so two customers could exist upstream with
+  one recorded here. PR #24 makes "one attempt in flight per phone" a database
+  invariant, so the second attempt is refused **before** the provider is reached.
+  Measured: **1 call instead of 6** for one phone under six concurrent
+  registrations. That bullet said the residual "is not fixed here"; it now is,
+  and the sentence is kept so the history of the claim is visible rather than
+  quietly edited away.
 
 ---
 
@@ -127,13 +139,16 @@ produced it.
 
 | Measurement | Result |
 |---|---|
-| `pytest -q` (backend, SQLite) | `371 passed, 7 skipped` |
+| `pytest -q` (backend, SQLite) | `370 passed, 12 skipped` |
+| `pytest -q` (backend, PostgreSQL wired in) | `382 passed` |
 | `check_site.py` / `check_nginx_config.py` / `check_repo_hygiene.py` | 0 errors each |
-| CI jobs on the merged PR heads | **10 / 10** green, all required before merge |
+| CI checks on merged PR heads | **10 / 10** green (9 jobs), all required before merge |
 | Live POST, exact browser payload | `201`, lead row written, no password in DB bytes or logs |
 | Live POST, provider down | `202` `PENDING`, **lead retained** |
 | Live POST, same `Idempotency-Key` + different phone | `409 IDEMPOTENCY_KEY_REUSED`, no other customer's data |
 | `pytest tests/test_postgres.py` against real PostgreSQL 16 | `7 passed` |
+| `pytest tests/test_concurrency.py` against real PostgreSQL 16 | `5 passed` |
+| Provider calls for one phone under 6 concurrent registrations | **1** (was **6** before the claim) |
 | nginx serving a mistyped URL | `404` with the branded body and `6/6` security headers |
 | Live same-origin POST through the dev proxy | `201` |
 | Live replay of a `409` (same key, same body) | `409` with a byte-identical body |
