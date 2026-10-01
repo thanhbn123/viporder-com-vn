@@ -170,7 +170,11 @@ class Lead(Base):
     response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # --- Phone claim (one attempt in flight per phone) ----------------------
-    # Set when the attempt begins, cleared when it reaches a terminal outcome.
+    # Set when the attempt begins and cleared by EVERY `update_status` call,
+    # because the claim belongs to the ATTEMPT rather than to the status: an
+    # attempt that ends PENDING because the provider was unavailable is over, and
+    # holding the claim would block the customer's own retry. Gating the release
+    # on "terminal status" was the first version of this and it was wrong.
     # Non-null on at most one row per phone, enforced by the partial unique index
     # declared in __table_args__.
     in_flight_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

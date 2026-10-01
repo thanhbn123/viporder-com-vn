@@ -226,3 +226,102 @@ def test_no_scheduler_or_worker_exists() -> None:
         "schedule.every",
     ):
         assert forbidden not in source, f"a worker appeared: {forbidden}"
+
+
+# ---------------------------------------------------------------------------
+# Stale phone claims — the crash-recovery path
+# ---------------------------------------------------------------------------
+#
+# This path had NO test. It is the one that decides whether a process killed
+# mid-attempt locks a customer's phone number out permanently, which is a worse
+# failure than the duplicate provider call the claim exists to prevent. The
+# concurrency tests cover the live race; nothing covered the abandoned-claim case.
+
+
+def test_release_stale_claims_frees_an_abandoned_claim(repo) -> None:  # type: ignore[no-untyped-def]
+    abandoned = _lead(
+        "stale-1",
+        "+84912340001",
+        RegistrationStatus.PENDING,
+        in_flight_at=utcnow() - timedelta(hours=1),
+    )
+    repo.create(abandoned)
+
+    reclaimed = repo.release_stale_claims(utcnow() - timedelta(seconds=120))
+
+    assert reclaimed == 1, f"expected one abandoned claim to be reclaimed, got {reclaimed}"
+    refreshed = repo.get("stale-1")
+    assert refreshed is not None
+    assert refreshed.in_flight_at is None, "the claim was not actually cleared"
+
+
+def test_release_stale_claims_leaves_a_LIVE_claim_alone(repo) -> None:  # type: ignore[no-untyped-def]
+    """The negative that matters: reclamation must not free a running attempt.
+
+    A reclaim that is too eager reintroduces the duplicate provider call —
+    two attempts in flight for the same phone — which is the whole defect.
+    """
+    live = _lead("live-1", "+84912340002", RegistrationStatus.PENDING, in_flight_at=utcnow())
+    repo.create(live)
+
+    reclaimed = repo.release_stale_claims(utcnow() - timedelta(seconds=120))
+
+    assert reclaimed == 0, f"a live claim was reclaimed after only {0}s, not 120s"
+    refreshed = repo.get("live-1")
+    assert refreshed is not None and refreshed.in_flight_at is not None
+
+
+def test_a_lead_with_no_claim_is_never_touched(repo) -> None:  # type: ignore[no-untyped-def]
+    """Rows that are PENDING but not in flight are ordinary retryable leads."""
+    idle = _lead("idle-1", "+84912340003", RegistrationStatus.PENDING)
+    repo.create(idle)
+    assert repo.release_stale_claims(utcnow() + timedelta(days=365)) == 0
+
+
+def test_reclaiming_frees_the_phone_for_a_new_attempt(repo) -> None:  # type: ignore[no-untyped-def]
+    """The point of reclaiming: the next attempt can take the claim.
+
+    Asserted end to end rather than by inspecting the column, because "the
+    timestamp is null" is not the property anyone cares about — "a customer can
+    register again" is.
+    """
+    blocked = _lead(
+        "stale-2",
+        "+84912340004",
+        RegistrationStatus.PENDING,
+        in_flight_at=utcnow() - timedelta(hours=1),
+    )
+    repo.create(blocked)
+
+    # While the abandoned claim stands, a second attempt for the same phone is
+    # refused at INSERT by the partial unique index.
+    from app.repositories.sqlalchemy_repo import PhoneBusyError
+
+    with pytest.raises(PhoneBusyError):
+        repo.create(
+            _lead("blocked-2", "+84912340004", RegistrationStatus.PENDING, in_flight_at=utcnow())
+        )
+
+    repo.release_stale_claims(utcnow() - timedelta(seconds=120))
+    successor = repo.create(
+        _lead("successor-2", "+84912340004", RegistrationStatus.PENDING, in_flight_at=utcnow())
+    )
+    assert successor.lead_id == "successor-2"
+
+
+def test_claiming_an_existing_lead_refuses_when_the_phone_is_busy(repo) -> None:  # type: ignore[no-untyped-def]
+    """The operator retry path takes the same claim as the customer path.
+
+    It re-attempts an EXISTING row and so never went through `create`, which is
+    where the claim is normally taken. That left the race open on the one path a
+    human drives by hand.
+    """
+    from app.repositories.sqlalchemy_repo import PhoneBusyError
+
+    holder = _lead("holder-1", "+84912340005", RegistrationStatus.PENDING, in_flight_at=utcnow())
+    repo.create(holder)
+    other = _lead("other-1", "+84912340005", RegistrationStatus.FAILED, in_flight_at=None)
+    repo.create(other)
+
+    with pytest.raises(PhoneBusyError):
+        repo.claim_phone("other-1")

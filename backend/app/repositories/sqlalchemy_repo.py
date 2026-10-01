@@ -71,9 +71,55 @@ class SqlAlchemyLeadRepository:
             update(Lead)
             .where(Lead.in_flight_at.is_not(None), Lead.in_flight_at < older_than)
             .values(in_flight_at=None)
+            # `fetch`, not the default `evaluate`. Evaluating the WHERE clause
+            # in PYTHON requires comparing the stored `in_flight_at` with the
+            # cutoff, and SQLite returns it NAIVE while the cutoff is
+            # timezone-aware — so it raised "can't compare offset-naive and
+            # offset-aware datetimes" the moment any row actually held a claim.
+            #
+            # It stayed hidden because the reclaim runs BEFORE the insert, when
+            # no row holds a claim yet, so there was nothing to compare. The
+            # app's own SQLite tests never touched it; a test that created a
+            # claim first did.
+            #
+            # `fetch` still keeps the caller's session coherent — `False` would
+            # leave the reclaimed row looking claimed to the very code that just
+            # reclaimed it, which is its own trap.
+            .execution_options(synchronize_session="fetch")
         )
         self.session.commit()
         return int(result.rowcount or 0)
+
+    def claim_phone(self, lead_id: str) -> None:
+        """Take the in-flight claim for an existing lead's phone.
+
+        The operator retry route re-attempts an EXISTING lead rather than
+        inserting a new one, so it never went through `create` and therefore
+        never took the claim. That left the door the claim exists to close wide
+        open on the one path a human drives by hand: an admin retry could reach
+        the provider while a customer attempt for the same phone was in flight.
+
+        Raises :class:`PhoneBusyError` when another attempt holds the claim —
+        either a different row for the same phone (caught by the partial unique
+        index on commit) or THIS row, whose own attempt is still running. The
+        second case is invisible to the index, because re-claiming the same row is
+        not a new row, so it is checked here.
+        """
+        lead = self.session.get(Lead, lead_id)
+        if lead is None:
+            return
+        if lead.in_flight_at is not None:
+            # This lead's own attempt is still in flight. Re-running it now would
+            # be a second provider call for the same registration.
+            raise PhoneBusyError(lead.phone)
+        lead.in_flight_at = utcnow()
+        try:
+            self.session.commit()
+        except IntegrityError as exc:
+            self.session.rollback()
+            if _is_phone_uniqueness(exc):
+                raise PhoneBusyError(lead.phone) from exc
+            raise
 
     def create(self, lead: Lead) -> Lead:
         self.session.add(lead)

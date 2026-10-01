@@ -202,6 +202,53 @@ def test_admin_route_is_404_without_a_token(make_harness) -> None:
     assert response.status_code == 404
 
 
+def test_admin_retry_is_refused_while_a_customer_attempt_holds_the_phone(
+    make_harness,
+) -> None:
+    """The operator door must respect the same phone claim as the customer door.
+
+    The retry route re-attempts an EXISTING lead, so it never went through
+    `create` — which is where the claim is taken. That left the race the claim
+    exists to close open on the one path a human drives by hand: an admin retry
+    could reach the provider while a customer attempt for the same phone was in
+    flight. Refusing with `retried: false` is the truthful answer; a second
+    provider call would risk a duplicate customer.
+    """
+    from datetime import timedelta
+
+    from app.models import RegistrationStatus, utcnow
+
+    # Provider down, so the lead is left PENDING — which is the only state a
+    # retry is for. With the default (success) the registration completes and
+    # there is nothing to retry.
+    harness = make_harness(admin_api_token="correct-horse", mock_provider_behaviour="unavailable")
+    body = harness.post_registration().json()
+    lead_id = body["lead_id"]
+
+    # Stand in for an attempt that is genuinely in flight: hold the claim.
+    with harness.database.session() as session:
+        from app.models import Lead
+
+        lead = session.get(Lead, lead_id)
+        assert lead is not None
+        assert lead.registration_status is RegistrationStatus.PENDING
+        lead.in_flight_at = utcnow() + timedelta(seconds=60)  # comfortably live
+        session.commit()
+
+    response = harness.client.post(
+        f"/api/v1/admin/registrations/{lead_id}/retry",
+        headers={"X-Admin-Token": "correct-horse"},
+        json={"password": "admin-retry-secret"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["retried"] is False, (
+        f"the retry was allowed through while the phone was claimed: {payload}"
+    )
+    assert "in flight" in payload["message"].lower(), payload["message"]
+
+
 def test_admin_retry_completes_a_pending_lead(make_harness) -> None:
     """Provider down, then up: the lead must be recoverable, not stranded."""
     from app.providers.base import ProviderStatus, RegistrationResult
