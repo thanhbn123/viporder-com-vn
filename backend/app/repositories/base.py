@@ -10,9 +10,14 @@ no generic "update anything" escape hatch. The only mutation is
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from ..models import Lead, RegistrationStatus
+
+#: "Leave this field alone." Distinct from ``None``, which means "clear it".
+#: Without the distinction, any caller that updates an attempt would silently
+#: wipe a stored response it never meant to touch.
+UNSET: Any = object()
 
 
 @runtime_checkable
@@ -41,8 +46,16 @@ class LeadRepository(Protocol):
         last_error_code: str | None = None,
         last_error_message: str | None = None,
         increment_attempt: bool = False,
+        response_status: int | None | Any = UNSET,
+        response_body: dict | None | Any = UNSET,
     ) -> Lead | None:
-        """Move a lead to a new registration status, or return ``None``."""
+        """Move a lead to a new registration status, or return ``None``.
+
+        ``response_status``/``response_body`` record the exact reply a terminal
+        outcome produced, so a replay of the same request can return it
+        verbatim. Pass ``None`` to clear them (what a non-terminal ``PENDING``
+        write does); omit them to leave them untouched.
+        """
         ...
 
     def find_registered_by_phone(self, phone: str) -> Lead | None:
@@ -50,5 +63,11 @@ class LeadRepository(Protocol):
         ...
 
     def list_pending(self, limit: int = 100) -> list[Lead]:
-        """Leads awaiting the provider, oldest first — the retry work queue."""
+        """Leads awaiting the provider, oldest first — the retry work queue.
+
+        NOTE: nothing calls this yet. There is no worker or scheduler in this
+        service, so a PENDING lead is completed only by a customer retry or the
+        admin route. It exists so that adding that worker is a wiring change
+        rather than a design change. See backend/README.md.
+        """
         ...

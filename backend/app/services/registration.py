@@ -32,6 +32,7 @@ from ..errors import (
     INVALID_REQUEST,
     NOT_FOUND,
     PROVIDER_INVALID,
+    REGISTRATION_FAILED,
     ApiError,
 )
 from ..logging_filters import register_secret
@@ -57,6 +58,13 @@ MESSAGE_PENDING = (
     "Keep the tracking token to check the result; we will complete it shortly."
 )
 MESSAGE_ALREADY_REGISTERED = "This registration is already confirmed."
+MESSAGE_DUPLICATE_PHONE = (
+    "This phone number is already registered. Please sign in to the customer portal."
+)
+MESSAGE_PROVIDER_INVALID = (
+    "The registration service rejected these details. Please check them and try again."
+)
+MESSAGE_REGISTRATION_FAILED = "This registration did not complete. Please start a new registration."
 MESSAGE_RETRY_ATTEMPTED = "Retry attempt recorded. Check registration_status for the result."
 # Operator-facing wording, not a credential.
 MESSAGE_RETRY_NEEDS_PASSWORD = (  # nosec B105
@@ -283,60 +291,78 @@ class RegistrationService:
         self, lead: Lead, result: RegistrationResult, *, is_retry: bool
     ) -> tuple[int, dict]:
         if result.status is ProviderStatus.SUCCESS:
-            updated = self.repository.update_status(
+            # Built from the values the update is about to write, then stored and
+            # returned as the same object — so a replay cannot drift from the
+            # original reply.
+            body = registered_body(
+                lead.lead_id,
+                result.external_customer_id,
+                result.external_customer_code,
+                self.login_url,
+            )
+            self.repository.update_status(
                 lead.lead_id,
                 status=RegistrationStatus.REGISTERED,
                 external_customer_id=result.external_customer_id,
                 external_customer_code=result.external_customer_code,
                 increment_attempt=is_retry,
+                response_status=201,
+                response_body=body,
             )
             logger.info(
                 "lead registered lead_id=%s external_code=%s",
                 lead.lead_id,
                 result.external_customer_code,
             )
-            return 201, _registered_body(updated or lead, self.login_url)
+            return 201, body
 
         if result.status is ProviderStatus.DUPLICATE:
             # The lead row is kept and marked FAILED. We deliberately do not
             # return the existing customer code: knowing a phone number must not
             # be enough to learn a customer's code.
+            #
+            # The 409 envelope is built once and both stored and raised, so the
+            # replay of this request is the same object the original returned.
+            envelope = error_envelope(DUPLICATE_PHONE, MESSAGE_DUPLICATE_PHONE)
             self.repository.update_status(
                 lead.lead_id,
                 status=RegistrationStatus.FAILED,
                 last_error_code="DUPLICATE_PHONE",
                 last_error_message=("The provider reports this phone as already registered."),
                 increment_attempt=is_retry,
+                response_status=409,
+                response_body=envelope,
             )
             logger.info("provider reported duplicate lead_id=%s", lead.lead_id)
-            raise ApiError(
-                409,
-                DUPLICATE_PHONE,
-                "This phone number is already registered. Please sign in to the customer portal.",
-            )
+            raise ApiError(409, DUPLICATE_PHONE, MESSAGE_DUPLICATE_PHONE)
 
         if result.status is ProviderStatus.INVALID:
+            envelope = error_envelope(PROVIDER_INVALID, MESSAGE_PROVIDER_INVALID)
             self.repository.update_status(
                 lead.lead_id,
                 status=RegistrationStatus.FAILED,
                 last_error_code="PROVIDER_INVALID",
                 last_error_message=(result.message or "The provider rejected these details."),
                 increment_attempt=is_retry,
+                response_status=422,
+                response_body=envelope,
             )
-            raise ApiError(
-                422,
-                PROVIDER_INVALID,
-                "The registration service rejected these details. Please check them and try again.",
-            )
+            raise ApiError(422, PROVIDER_INVALID, MESSAGE_PROVIDER_INVALID)
 
         # UNAVAILABLE (and anything unexpected): the lead stays PENDING with a
         # truthful error code, and the client gets a usable 202.
+        #
+        # PENDING is not terminal, so any response stored by an earlier terminal
+        # outcome is cleared. Keeping it would let a replay report a dead
+        # outcome for a lead an admin retry may still complete.
         updated = self.repository.update_status(
             lead.lead_id,
             status=RegistrationStatus.PENDING,
             last_error_code=_unavailable_code(result),
             last_error_message=(result.message or "The registration service is unavailable."),
             increment_attempt=is_retry,
+            response_status=None,
+            response_body=None,
         )
         logger.warning(
             "provider unavailable lead_id=%s code=%s http_status=%s retryable=%s",
@@ -351,12 +377,26 @@ class RegistrationService:
 # --- body builders ----------------------------------------------------------
 
 
-def _registered_body(lead: Lead, login_url: str) -> dict:
+def error_envelope(code: str, message: str) -> dict:
+    """The public error shape, built once so it can be stored and raised.
+
+    ``ApiError.envelope()`` produces exactly this dict. Keeping one builder means
+    the stored body and the raised body cannot drift apart.
+    """
+    return {"error": {"code": code, "message": message}}
+
+
+def registered_body(
+    lead_id: str,
+    external_customer_id: str | None,
+    external_customer_code: str | None,
+    login_url: str,
+) -> dict:
     return {
-        "lead_id": lead.lead_id,
-        "registration_status": lead.registration_status.value,
-        "external_customer_id": lead.external_customer_id,
-        "external_customer_code": lead.external_customer_code,
+        "lead_id": lead_id,
+        "registration_status": RegistrationStatus.REGISTERED.value,
+        "external_customer_id": external_customer_id,
+        "external_customer_code": external_customer_code,
         "message": MESSAGE_REGISTERED,
         "login_url": login_url,
     }
@@ -385,11 +425,58 @@ def _retry_body(lead: Lead, *, retried: bool, message: str) -> dict:
     }
 
 
+#: Derives the reply for a FAILED lead that predates the stored-response columns
+#: (or was written by something other than this service). Keyed on the recorded
+#: cause, which is the only truthful evidence left on the row.
+_LEGACY_FAILED_RESPONSES: dict[str, tuple[int, str, str]] = {
+    "DUPLICATE_PHONE": (409, DUPLICATE_PHONE, MESSAGE_DUPLICATE_PHONE),
+    "PROVIDER_INVALID": (422, PROVIDER_INVALID, MESSAGE_PROVIDER_INVALID),
+}
+
+
 def _response_for(lead: Lead, login_url: str) -> tuple[int, dict]:
-    """Rebuild the response for an already-seen idempotency key."""
+    """Return the reply for an already-seen idempotency key.
+
+    Order matters:
+
+    1. ``PENDING`` is answered from *current state*, always. It is not terminal,
+       so there is no stored reply to honour and a later admin retry legitimately
+       changes it.
+    2. A stored response is returned verbatim. This is the case that was broken:
+       reconstruction turned a 409 into a 202.
+    3. Only for a row written before the stored-response columns existed does
+       the reply get derived. The two causes this service can actually produce
+       are mapped explicitly; anything else **fails closed** with a generic 409
+       rather than guessing a code the client would act on.
+    """
+    if lead.registration_status is RegistrationStatus.PENDING:
+        return 202, _pending_body(lead, login_url)
+
+    if lead.response_status is not None and lead.response_body is not None:
+        return lead.response_status, lead.response_body
+
+    logger.warning(
+        "no stored response for a terminal lead; deriving lead_id=%s status=%s code=%s",
+        lead.lead_id,
+        lead.registration_status.value,
+        lead.last_error_code,
+    )
+
     if lead.registration_status is RegistrationStatus.REGISTERED:
-        return 201, _registered_body(lead, login_url)
-    return 202, _pending_body(lead, login_url)
+        return 201, registered_body(
+            lead.lead_id,
+            lead.external_customer_id,
+            lead.external_customer_code,
+            login_url,
+        )
+
+    known = _LEGACY_FAILED_RESPONSES.get(lead.last_error_code or "")
+    if known is not None:
+        status_code, code, message = known
+        return status_code, error_envelope(code, message)
+
+    # Fail closed: never claim success, never claim pending, never invent a code.
+    return 409, error_envelope(REGISTRATION_FAILED, MESSAGE_REGISTRATION_FAILED)
 
 
 def _status_body(lead: Lead) -> dict:

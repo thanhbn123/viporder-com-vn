@@ -212,6 +212,20 @@ Retries a `PENDING`/`FAILED` lead. The body may carry `{"password": "..."}`.
 > password, or inventing one) would either break the hard constraint or create
 > an account the customer cannot sign in to.
 
+> **There is no retry worker.** `LeadRepository.list_pending()` exists and is
+> tested, but **nothing calls it**: this service has no scheduler, worker, cron
+> job or background task. A `PENDING` lead is completed *only* by
+>
+> * the customer, registering again — a `PENDING`/`FAILED` lead does not block a
+>   new attempt; or
+> * an operator, via the admin retry route above.
+>
+> If the process restarts, or nobody does either of those, the lead stays
+> `PENDING` with its tracking token. It is never lost and never silently
+> completed — but do not assume anything is working the queue.
+> `tests/test_repository.py` asserts this state of affairs, so if someone later
+> wires a worker, that test fails and points back at this note.
+
 ---
 
 ## Configuration
@@ -335,7 +349,7 @@ backend/
     routers/              health, registrations, admin
     services/             registration orchestration
   alembic/                migration environment; 0001_create_leads,
-                          0002_consent_and_fingerprint
+                          0002_consent_and_fingerprint, 0003_stored_response
   tests/                  offline pytest suite
 ```
 
@@ -350,7 +364,9 @@ That rule is a database constraint, not just application logic: two concurrent
 registrations for the same phone cannot both win.
 
 `request_fingerprint`, `consent_given_at` and `consent_version` were added by
-`0002_consent_and_fingerprint`. Both migrations are guarded rather than
+`0002_consent_and_fingerprint`; `response_status` and `response_body` by
+`0003_stored_response` (see *Idempotency* above — an idempotent replay returns
+the stored reply verbatim rather than rebuilding it). Both migrations are guarded rather than
 unconditional, so `alembic upgrade head` is safe whether or not
 `AUTO_CREATE_SCHEMA` already produced the tables — and `0001` now **verifies**
 the shape of an existing `leads` table instead of assuming any table with that

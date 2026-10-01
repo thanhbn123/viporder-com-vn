@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import Lead, LeadType, RegistrationStatus, utcnow
+from .base import UNSET
 
 
 class DuplicateIdempotencyKeyError(RuntimeError):
@@ -51,6 +54,8 @@ class SqlAlchemyLeadRepository:
         last_error_code: str | None = None,
         last_error_message: str | None = None,
         increment_attempt: bool = False,
+        response_status: int | None | Any = UNSET,
+        response_body: dict | None | Any = UNSET,
     ) -> Lead | None:
         lead = self.session.get(Lead, lead_id)
         if lead is None:
@@ -72,6 +77,14 @@ class SqlAlchemyLeadRepository:
         else:
             lead.last_error_code = last_error_code
             lead.last_error_message = _truncate(last_error_message, 500)
+
+        # `UNSET` (omitted) leaves the stored response alone; an explicit None
+        # clears it. A later terminal outcome overwrites it, which is what makes
+        # an admin retry that finally succeeds replay as a 201.
+        if response_status is not UNSET:
+            lead.response_status = response_status
+        if response_body is not UNSET:
+            lead.response_body = response_body
 
         if increment_attempt:
             lead.attempt_count = (lead.attempt_count or 0) + 1

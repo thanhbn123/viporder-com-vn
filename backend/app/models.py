@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     Index,
@@ -134,6 +135,23 @@ class Lead(Base):
         DateTime(timezone=True), nullable=True
     )
     consent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # --- Stored response ----------------------------------------------------
+    #: The exact HTTP status and body this attempt produced, written when the
+    #: attempt reaches a *terminal* outcome.
+    #:
+    #: An idempotency key promises the identical stored response. Rebuilding the
+    #: response from the row's current state is not the same thing: a DUPLICATE
+    #: outcome stores ``FAILED`` and answers ``409``, and a reconstructed reply
+    #: answered ``202`` with the pending wording — a different status code for
+    #: the same request, carrying the false promise "we will complete it
+    #: shortly" about a lead nothing was going to complete.
+    #:
+    #: Both stay NULL while the lead is PENDING: PENDING is not terminal, and an
+    #: admin retry legitimately changes the outcome, so the next terminal write
+    #: replaces whatever is stored here.
+    response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # --- Retry bookkeeping --------------------------------------------------
     attempt_count: Mapped[int] = mapped_column(
