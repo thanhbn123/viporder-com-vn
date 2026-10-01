@@ -1,0 +1,30 @@
+# gitleaks ignore list — known false positives only.
+#
+# Format is gitleaks' own fingerprint: <commit>:<file>:<rule>:<line>
+# A fingerprint pins ONE finding in ONE commit, so an entry here can never
+# blind the scanner to a different secret, a different file, or a future
+# commit. That narrowness is the whole point — see the reasoning below.
+#
+# ---------------------------------------------------------------------------
+# backend/tests/test_password_leakage.py
+#
+# The value matched by generic-api-key is a CANARY used by the tests that prove
+# a registration password is never persisted, logged or traced. It is not a
+# credential and never was. gitleaks matches the `PASSWORD = "<long value>"`
+# shape.
+#
+# The current line also carries an inline `# gitleaks:allow`, which stops the
+# finding being reported for new commits. That is not enough on its own: once a
+# value has been committed, adding a later fix does not remove it from history,
+# and gitleaks correctly keeps reporting the original commit. This entry
+# records that specific historical finding as reviewed and benign.
+#
+# Deliberately NOT used: a path allowlist. Allowlisting the whole file would
+# silently blind the scanner to a real secret added to it later — the exact
+# silent-failure mode this project is trying to avoid.
+#
+# Verified: with this file present, a realistic AWS key committed to a
+# different file is still reported (aws-access-token) while this finding is
+# suppressed. Exactly one finding is removed, none added.
+# ---------------------------------------------------------------------------
+def20a731b04d0cd8928ef058c6c6aa9392ab8b1:backend/tests/test_password_leakage.py:generic-api-key:32
