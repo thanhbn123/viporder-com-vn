@@ -78,6 +78,7 @@ if it is not here, it does not.
 ```bash
 # Website (no dependencies)
 python3 tools/check_site.py            # HTML, links, a11y, SEO, business link rules
+node --test "tools/js/*.test.js"       # registration failure handling (no deps)
 python3 tools/check_nginx_config.py    # add_header inheritance guard
 python3 tools/check_repo_hygiene.py    # secrets, tracked data, oversized files
 

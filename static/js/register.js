@@ -412,50 +412,38 @@
 
   /* --------------------------------------------------------------- outcomes */
 
-  /* The ONLY 409 that means the number is taken for good.
+  /* The failure vocabulary lives in static/js/register-errors.js.
    *
-   * When the server sends no code we fall back to the old behaviour (treat it as
-   * permanent), because that was the only 409 that existed when this was written
-   * and it is the safer assumption: keeping a stale key after a real duplicate
-   * would lock the customer out permanently, while resetting it early merely
-   * costs one redundant attempt. */
+   * It was moved there for one reason: this was the only layer in the project with
+   * NO test. The bug it fixes was not a typo - the service gave an existing HTTP
+   * status a new meaning, and this file was reading the status. No amount of care
+   * in a file nobody can execute is a substitute for a file that runs under
+   * `node --test tools/js/`.
+   *
+   * The module is a plain deferred script loaded before this one, and is also a
+   * CommonJS export, so there is exactly ONE copy of the rule. */
+  var failureRules =
+    typeof window !== "undefined" && window.VipOrderRegisterErrors
+      ? window.VipOrderRegisterErrors
+      : null;
+
+  /* A missing module means the page is mis-deployed, and `check_site.py` fails the
+   * build for that. These two guards exist so the FORM still behaves safely if it
+   * ever slips through, and both pick the recoverable direction:
+   * treating a 409 as permanent costs one redundant attempt, while treating a real
+   * duplicate as transient would lock the customer out. */
   function isPermanentDuplicate(status, code) {
-    if (status !== 409) {
-      return false;
+    if (!failureRules) {
+      return status === 409;
     }
-    return !code || code === "DUPLICATE_PHONE";
+    return failureRules.isPermanentDuplicate(status, code);
   }
 
   function defaultMessageFor(status) {
-    if (status === 422) {
-      return "Thông tin đăng ký chưa hợp lệ. Vui lòng kiểm tra lại các ô được đánh dấu.";
+    if (!failureRules) {
+      return "Không gửi được thông tin đăng ký. Vui lòng thử lại.";
     }
-    if (status === 409) {
-      /* Two different events share this status and they are opposites:
-       *   DUPLICATE_PHONE          — the number is taken, permanently.
-       *   REGISTRATION_IN_PROGRESS — another attempt is running right now; the
-       *                              number is NOT taken and a retry will work.
-       * Without a code we cannot tell which, so the wording must not promise
-       * the first one. Saying "already registered" to a customer whose
-       * registration is merely in flight sends them to sign in to an account
-       * that does not exist yet. */
-      return "Số điện thoại này đã được đăng ký, hoặc một lượt đăng ký cho số này đang " +
-        "được xử lý. Vui lòng thử lại sau vài giây; nếu vẫn không được, hãy đăng nhập " +
-        "hoặc dùng số điện thoại khác.";
-    }
-    if (status === 429) {
-      return "Bạn đã gửi quá nhiều lần trong thời gian ngắn. Vui lòng thử lại sau ít phút.";
-    }
-    if (status === 503) {
-      /* The lead may well have been stored. Never say nothing happened. */
-      return "Hệ thống đăng ký đang tạm bận. Thông tin bạn gửi có thể đã được ghi nhận — " +
-        "vui lòng thử lại sau ít phút và không gửi lại nhiều lần.";
-    }
-    if (status >= 500) {
-      return "Hệ thống đăng ký đang gặp sự cố. Thông tin bạn gửi có thể đã được ghi nhận — " +
-        "vui lòng thử lại sau ít phút và không gửi lại nhiều lần.";
-    }
-    return "Không gửi được thông tin đăng ký. Vui lòng thử lại.";
+    return failureRules.defaultMessageFor(status);
   }
 
   function onRegistered(data, attemptId) {
