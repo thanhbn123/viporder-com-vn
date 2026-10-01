@@ -13,6 +13,18 @@ not exercised, it is stated — see §9.
 Nothing here is a status claim. A mechanism being described does not mean it has
 been exercised in production; §9 lists what has not been verified.
 
+**Update for `f626644` (`docs/phone-claim`, "reserve the phone before calling the
+provider").** That revision added the phone claim — a partial unique index on
+`in_flight_at` that admits one attempt per phone — together with migration
+`0004_phone_claim` and a seventh repository method. §5, §7.1, §7.2, §7.3, §7.4 and
+§9 were updated for it, and every anchor in those sections was re-verified against
+that tree (the additions shifted line numbers in `models.py`, `base.py` and
+`services/registration.py`, so the old anchors in §5 and §7 now pointed at the
+wrong lines; they are corrected rather than left). Anchors outside those sections
+still belong to the revision above and were not re-verified. The behaviour itself
+is documented in `docs/REGISTRATION-FLOW.md` §3.4, and its residual risk as risk 16
+of `docs/SECURITY.md` §12.
+
 ---
 
 ## 1. What runs where
@@ -405,24 +417,35 @@ does the same for the FastAPI-shaped `detail` list (`backend/app/errors.py:97-10
 ## 5. The repository interface
 
 `LeadRepository` is a `runtime_checkable` `Protocol`
-(`backend/app/repositories/base.py:23-24`) with exactly six methods:
+(`backend/app/repositories/base.py:24-25`) with exactly seven methods:
 
 | Method | Purpose | Anchor |
 |---|---|---|
-| `create(lead) -> Lead` | Persist a new lead, return it with defaults applied | `repositories/base.py:27-29` |
-| `get(lead_id) -> Lead \| None` | Primary-key lookup | `:31-33` |
-| `get_by_idempotency_key(key) -> Lead \| None` | Replay lookup | `:35-37` |
-| `update_status(lead_id, *, status, ...) -> Lead \| None` | The **only** mutation | `:39-59` |
-| `find_registered_by_phone(phone) -> Lead \| None` | Duplicate rule | `:61-63` |
-| `list_pending(limit=100) -> list[Lead]` | The retry work queue | `:65-73` |
+| `create(lead) -> Lead` | Persist a new lead, return it with defaults applied. Raises on an in-flight phone claim or a reused idempotency key | `repositories/base.py:28-36` |
+| `release_stale_claims(older_than) -> int` | Clear phone claims abandoned by a dead process; returns how many | `:38-45` |
+| `get(lead_id) -> Lead \| None` | Primary-key lookup | `:47-49` |
+| `get_by_idempotency_key(key) -> Lead \| None` | Replay lookup | `:51-53` |
+| `update_status(lead_id, *, status, ...) -> Lead \| None` | The **only** mutation. The implementation also clears `in_flight_at` (`sqlalchemy_repo.py:151`) — the protocol's docstring does not say so, but it is the contract the service relies on | `:55-75` |
+| `find_registered_by_phone(phone) -> Lead \| None` | Duplicate rule | `:77-79` |
+| `list_pending(limit=100) -> list[Lead]` | The retry work queue | `:81-89` |
+
+The protocol had **six** methods at the revision this document was written
+against; `release_stale_claims` is the seventh and arrived with `f626644`. It is
+the crash-recovery half of the phone claim (`docs/REGISTRATION-FLOW.md` §3.4):
+the claim is taken by `create()` and released by `update_status()`, so a process
+that dies between the two leaves a claim nothing would clear — this method is how
+an *age* test takes over from an owner that no longer exists.
 
 The docstring names what is **absent** on purpose: "there is no method that takes
 or returns a password, and no generic 'update anything' escape hatch"
 (`backend/app/repositories/base.py:5-8`). `update_status` is narrow by design —
 it takes a target status and a fixed set of optional columns, so no caller can
 write an arbitrary field. Note that `request_fingerprint` and the consent columns
-are written once at creation (`services/registration.py:235-237`) and cannot be
-changed through `update_status`, which is the right shape for evidence.
+are written once at creation (`services/registration.py:261-263`) and cannot be
+changed through `update_status`, which is the right shape for evidence. The one
+field `update_status` writes that the caller does not pass is `in_flight_at`,
+which it clears (`sqlalchemy_repo.py:151`) — a claim is released by ending an
+attempt, not by a separate call that a caller could forget.
 
 Why this matters architecturally: the service depends on the protocol, not on
 SQLAlchemy, so the storage engine is replaceable and tests can substitute a fake
@@ -433,10 +456,13 @@ models and the same Alembic migrations serve SQLite and
 Two implementation details are worth recording:
 
 - **Each repository call commits.** `create()` does `session.add` then
-  `session.commit()` (`backend/app/repositories/sqlalchemy_repo.py:35-45`), and
-  `update_status()` commits too (`:92-101`). The class docstring states the reason:
-  "a lead must be on disk *before* the provider call, so a crash mid-request still
-  leaves the customer recoverable" (`:21-25`).
+  `session.commit()` (`backend/app/repositories/sqlalchemy_repo.py:78-98`),
+  `update_status()` commits too (`:100-172`), and so does
+  `release_stale_claims()` (`:58-76`) — the reclamation has to be durable before
+  the INSERT that follows it, or a crash between the two would leave the claim
+  exactly as abandoned as before. The class docstring states the reason for the
+  pattern: "a lead must be on disk *before* the provider call, so a crash
+  mid-request still leaves the customer recoverable" (`:42-48`).
 - **Sessions are per request and always closed.** `get_service` yields a service
   and closes the repository in a `finally` (`backend/app/dependencies.py:33-44`).
 
@@ -511,36 +537,42 @@ accent-stripped and lowercased so both `"Số điện thoại đã được đă
 
 ### 7.1 The `leads` table
 
-Columns are declared in `backend/app/models.py:68-169`. Grouped by purpose:
+Columns are declared in `backend/app/models.py:84-223`. Grouped by purpose:
 
 | Group | Column | Type / null | Anchor |
 |---|---|---|---|
-| Identity | `lead_id` | `String(36)` PK | `models.py:71` |
-| | `lead_type` | enum-as-string, NOT NULL, default `REGISTER_LEAD` | `:73-78` |
-| | `registration_status` | enum-as-string, NOT NULL, default `PENDING` | `:79-89` |
-| Customer | `full_name` | `String(120)` NOT NULL | `:92` |
-| | `phone` | `String(20)` NOT NULL, canonical `+84...` | `:93` |
-| | `phone_display` | `String(32)` NOT NULL, e.g. `0912 345 678` | `:94` |
-| | `email` | `String(254)` NULL | `:95` |
-| | `province` | `String(120)` NULL | `:96` |
-| | `service_interest` | `String(32)` NULL | `:97` |
-| Attribution | `source`, `medium`, `campaign`, `content`, `term`, `landing_page`, `referrer` | each `String(300)` NULL | `:99-106` |
-| Provider outcome | `external_customer_id` | `String(64)` NULL | `:109` |
-| | `external_customer_code` | `String(64)` NULL | `:110` |
-| Dedup / tracking | `idempotency_key` | `String(128)` NULL | `:113` |
-| | `tracking_token` | `String(64)` NOT NULL | `:114` |
-| | `request_fingerprint` | `String(64)` NULL — SHA-256 hex | `:124` |
-| Consent evidence | `consent_given_at` | `DateTime(timezone=True)` NULL | `:134-136` |
-| | `consent_version` | `String(32)` NULL | `:137` |
-| Stored reply | `response_status` | `Integer` NULL — the exact HTTP status the terminal outcome produced | `:153` |
-| | `response_body` | `JSON` NULL — the exact body returned, so a replay is verbatim | `:154` |
-| Retry bookkeeping | `attempt_count` | `Integer` NOT NULL, default/server_default `0` | `:157-159` |
-| | `last_error_code` | `String(64)` NULL | `:160` |
-| | `last_error_message` | `String(500)` NULL | `:161` |
-| Audit | `created_at` | `DateTime(timezone=True)` NOT NULL, default `utcnow` | `:164-166` |
-| | `updated_at` | as above, `onupdate=utcnow` | `:167-169` |
+| Identity | `lead_id` | `String(36)` PK | `models.py:87` |
+| | `lead_type` | enum-as-string, NOT NULL, default `REGISTER_LEAD` | `:89-94` |
+| | `registration_status` | enum-as-string, NOT NULL, default `PENDING` | `:95-105` |
+| Customer | `full_name` | `String(120)` NOT NULL | `:108` |
+| | `phone` | `String(20)` NOT NULL, canonical `+84...` | `:109` |
+| | `phone_display` | `String(32)` NOT NULL, e.g. `0912 345 678` | `:110` |
+| | `email` | `String(254)` NULL | `:111` |
+| | `province` | `String(120)` NULL | `:112` |
+| | `service_interest` | `String(32)` NULL | `:113` |
+| Attribution | `source`, `medium`, `campaign`, `content`, `term`, `landing_page`, `referrer` | each `String(300)` NULL | `:116-122` |
+| Provider outcome | `external_customer_id` | `String(64)` NULL | `:125` |
+| | `external_customer_code` | `String(64)` NULL | `:126` |
+| Dedup / tracking | `idempotency_key` | `String(128)` NULL | `:129` |
+| | `tracking_token` | `String(64)` NOT NULL | `:130` |
+| | `request_fingerprint` | `String(64)` NULL — SHA-256 hex | `:140` |
+| Consent evidence | `consent_given_at` | `DateTime(timezone=True)` NULL | `:150-152` |
+| | `consent_version` | `String(32)` NULL | `:153` |
+| Stored reply | `response_status` | `Integer` NULL — the exact HTTP status the terminal outcome produced | `:169` |
+| | `response_body` | `JSON` NULL — the exact body returned, so a replay is verbatim | `:170` |
+| **Phone claim** | **`in_flight_at`** | `DateTime(timezone=True)` NULL — set when an attempt begins, cleared when it ends; non-null on **at most one row per phone** | `:176` |
+| Retry bookkeeping | `attempt_count` | `Integer` NOT NULL, default/server_default `0` | `:179-181` |
+| | `last_error_code` | `String(64)` NULL | `:182` |
+| | `last_error_message` | `String(500)` NULL | `:183` |
+| Audit | `created_at` | `DateTime(timezone=True)` NOT NULL, default `utcnow` | `:186-188` |
+| | `updated_at` | as above, `onupdate=utcnow` | `:189-191` |
 
-Four deliberate design points:
+Every anchor in this table shifted when `f626644` inserted the phone-claim column
+and its predicate; the previous values were correct for the revision this document
+was written against. `in_flight_at` is the only row that is new rather than
+re-numbered.
+
+Five deliberate design points:
 
 1. **There is no password column.** Stated in the module docstring: "there is
    deliberately no column for it, no shadow column, and no 'recent payload' blob"
@@ -552,23 +584,32 @@ Four deliberate design points:
    (`phone.py:1-7`, `:75-80`).
 3. **Timestamps are timezone-aware.** `utcnow()` returns `datetime.now(UTC)`
    (`models.py:32-34`), and `as_utc()` re-labels values read back from SQLite,
-   which does not persist offsets (`models.py:202-211`).
+   which does not persist offsets (`models.py:232-241`).
 4. **Consent is recorded as evidence, not only enforced.** `consent_given_at` and
    `consent_version` are written on every lead the service creates
-   (`services/registration.py:236-237`), with the version taken from the
+   (`services/registration.py:262-263`), with the version taken from the
    server-side constant `CONSENT_VERSION = "2026-02-v1"` (`config.py:41-45`). The
    distinction is stated in the model comment: "'Consent is required by the
    schema' is *enforcement*; these columns are the *evidence*, which is a
-   different thing" (`models.py:127-130`). Asserted in
+   different thing" (`models.py:143-146`). Asserted in
    `backend/tests/test_consent.py:22-50`, including that evidence is recorded even
    when the provider is down.
+5. **The reservation is a column on the row it reserves.** There is no lock table
+   and no in-memory registry: `in_flight_at` is written by the same INSERT that
+   creates the lead (`services/registration.py:266-270`), and the partial unique
+   index in §7.3 arbitrates. The model comment gives the reason the guarantee is
+   placed here rather than in a service method: it "makes the guarantee a DATABASE
+   invariant rather than a check in application code, which is the only kind that
+   holds under concurrency" (`models.py:72-75`). Mechanics in
+   `docs/REGISTRATION-FLOW.md` §3.4.
 
 `__repr__` is overridden to keep PII out of logs — it prints `lead_id`, status and
-`phone_display` only (`models.py:195-199`).
+`phone_display` only (`models.py:225-229`).
 
 ### 7.2 Constraints
 
-Three `CheckConstraint`s (`models.py:172-180`):
+Three `CheckConstraint`s (`models.py:193-202`; `f626644` added none — the phone
+claim is an index, not a check):
 
 | Name | Predicate |
 |---|---|
@@ -576,31 +617,34 @@ Three `CheckConstraint`s (`models.py:172-180`):
 | `ck_leads_registration_status` | `registration_status IN ('PENDING', 'REGISTERED', 'FAILED')` |
 | `ck_leads_attempt_count` | `attempt_count >= 0` |
 
-The enums are stored as strings with `native_enum=False` (`models.py:74`,
-`:81-85`), so the same DDL works on SQLite and PostgreSQL; the check constraints
+The enums are stored as strings with `native_enum=False` (`models.py:90`,
+`:95-101`), so the same DDL works on SQLite and PostgreSQL; the check constraints
 are the enforcement that survives that choice.
 
-### 7.3 Indexes, including the partial unique index
+### 7.3 Indexes, including the two partial unique indexes
 
-Six indexes (`models.py:181-192`):
+Seven indexes (`models.py:203-222`). Six of them came from `0001_create_leads`;
+the seventh — `uq_leads_in_flight_phone` — came from `0004_phone_claim`
+(`f626644`):
 
 | Name | Columns | Unique | Anchor |
 |---|---|---|---|
-| `ix_leads_phone` | `phone` | no | `:181` |
-| `ix_leads_registration_status` | `registration_status` | no | `:182` |
-| `ix_leads_created_at` | `created_at` | no | `:183` |
-| `uq_leads_idempotency_key` | `idempotency_key` | **yes** | `:184` |
-| `uq_leads_tracking_token` | `tracking_token` | **yes** | `:185` |
-| `uq_leads_registered_phone` | `phone` | **yes, partial** | `:186-192` |
+| `ix_leads_phone` | `phone` | no | `:203` |
+| `ix_leads_registration_status` | `registration_status` | no | `:204` |
+| `ix_leads_created_at` | `created_at` | no | `:205` |
+| `uq_leads_idempotency_key` | `idempotency_key` | **yes** | `:206` |
+| `uq_leads_tracking_token` | `tracking_token` | **yes** | `:207` |
+| `uq_leads_registered_phone` | `phone` | **yes, partial** — `lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'` | `:208-214` |
+| `uq_leads_in_flight_phone` | `phone` | **yes, partial** — `in_flight_at IS NOT NULL` | `:216-222` |
 
-The predicate is a module-level constant (`models.py:65`):
+The first predicate is a module-level constant (`models.py:65`):
 
 ```python
 _REGISTERED_PHONE_PREDICATE = "lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'"
 ```
 
 and is passed as **both** `sqlite_where` and `postgresql_where`
-(`models.py:190-191`):
+(`models.py:212-213`):
 
 ```python
 Index(
@@ -612,7 +656,30 @@ Index(
 ),
 ```
 
-Rendered DDL, compiled from the ORM object for each dialect (no database
+The new index follows the same shape with its own constant (`models.py:81`,
+`:216-222`):
+
+```python
+_IN_FLIGHT_PREDICATE = "in_flight_at IS NOT NULL"
+...
+Index(
+    "uq_leads_in_flight_phone",
+    "phone",
+    unique=True,
+    sqlite_where=text(_IN_FLIGHT_PREDICATE),
+    postgresql_where=text(_IN_FLIGHT_PREDICATE),
+),
+```
+
+Passing the predicate to **both** dialects is load-bearing, and the migration's
+own notes record what happens when it is not: `0004` was first written with only
+`postgresql_where`, which on SQLite would have built a full unique index on
+`phone` — one lead per phone for all time — silently destroying the
+`PENDING`-retry design. That mistake was caught while writing the migration, and
+the constant is passed twice because of it.
+
+Rendered DDL for the first index, quoted from the previous revision of this
+document, where it was compiled from the ORM object for each dialect (no database
 involved — this is SQLAlchemy's own DDL compiler):
 
 ```sql
@@ -625,46 +692,84 @@ CREATE UNIQUE INDEX uq_leads_registered_phone ON leads (phone)
   WHERE lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'
 ```
 
-The Alembic migration declares the identical predicate as its own constant and
-passes it the same way (`backend/alembic/versions/0001_create_leads.py:30`,
-`:115-122`), so the migrated schema and the ORM metadata stay in step. Parity is
-asserted rather than trusted
-(`backend/tests/test_alembic.py:21-56`, `:59`).
+**Not reproduced for `uq_leads_in_flight_phone`:** the DDL above is quoted from
+the previous revision of this document, and the compiler was not re-run for the
+new index while writing this one. The predicate and the two dialect arguments are
+quoted from the source (`models.py:81`, `:220-221`) and from the migration
+(`0004_phone_claim.py:50`, `:77-78`, `:91-92`), which is a reading, not a
+compilation. §9 records this as an open gap.
 
-**Why partial.** The business rule is "at most one `REGISTERED` registration lead
-per phone number", and `PENDING`/`FAILED` rows are deliberately outside the index
-because "a customer whose first attempt failed must be able to try again"
-(`models.py:59-64`). The rule is enforced by the database rather than by
-application code, so two concurrent registrations for the same phone cannot both
-win. Both halves are tested: the index rejects a second `REGISTERED` row
-(`backend/tests/test_duplicate.py:129-150`) and permits many `FAILED` rows
-(`:153-175`).
+The Alembic migration declares the identical predicate as its own constant
+(spelled without the leading underscore) and passes it the same way
+(`backend/alembic/versions/0001_create_leads.py:34`, `:165-174`), so the migrated
+schema and the ORM metadata stay in step; `0004` does the same for the new index
+(`0004_phone_claim.py:49-50`, `:85-93`). Parity is asserted rather than trusted,
+by set **equality** between the migrated schema and `Lead.__table__` — columns,
+nullability and index names (`backend/tests/test_alembic.py:117-141`), and the
+named head (`:183`, `== "0004_phone_claim"`). One gap opened in `f626644`: the
+static enumerations `EXPECTED_COLUMNS` (`:21-54`) and `EXPECTED_INDEXES`
+(`:56-63`) are compared with `<=` (`:105`, `:114`) and were **not** extended with
+`in_flight_at` or `uq_leads_in_flight_phone`, so those two tests no longer name
+the new objects; the equality test at `:117-141` is what covers them.
 
-`update_status()` handles the losing side of that race: an `IntegrityError` on
-commit is rolled back and re-raised so the caller can answer `409` rather than
-inventing a duplicate customer (`backend/app/repositories/sqlalchemy_repo.py:92-101`).
+**Why partial — the registered rule.** The business rule is "at most one
+`REGISTERED` registration lead per phone number", and `PENDING`/`FAILED` rows are
+deliberately outside the index because "a customer whose first attempt failed must
+be able to try again" (`models.py:59-64`). The rule is enforced by the database
+rather than by application code, so two concurrent registrations for the same
+phone cannot both win. Both halves are tested: the index rejects a second
+`REGISTERED` row (`backend/tests/test_duplicate.py:129-150`) and permits many
+`FAILED` rows (`:153-175`).
 
-The two unique indexes are nullable, which is what makes `idempotency_key`
-optional: SQLite and PostgreSQL both allow multiple `NULL`s in a unique index, and
-`_normalise_idempotency_key` returns `None` for a blank header
-(`backend/app/services/registration.py:495-507`).
+`update_status()` handles the losing side of *that* race: an `IntegrityError` on
+commit is rolled back and raised as `DuplicatePhoneError` so the caller can answer
+`409` rather than inventing a duplicate customer
+(`backend/app/repositories/sqlalchemy_repo.py:156-172`, `:217-229`).
+
+**Why partial — the in-flight rule.** The second index answers a different
+question: at most one *attempt* per phone, not one registered lead. It is what
+makes a concurrent duplicate provider call impossible rather than merely
+unrecorded, and it is deliberately **not** time-based — `in_flight_at IS NOT NULL`
+is immutable and therefore a legal partial-index predicate on both dialects,
+whereas `now()` is not. Ageing out an abandoned claim is done in Python instead
+(`release_stale_claims`), which is why that method exists on the repository (§5).
+The loser of this race is refused **at the INSERT**, before the provider is
+reached; the mechanism, the two distinct `409`s and the measured evidence are in
+`docs/REGISTRATION-FLOW.md` §3.4, and the TTL's own residual risk is risk 16 of
+`docs/SECURITY.md` §12.
+
+The four unique indexes are nullable, which is what makes `idempotency_key`
+optional and `in_flight_at` mean "not claimed": SQLite and PostgreSQL both allow
+multiple `NULL`s in a unique index, and `_normalise_idempotency_key` returns
+`None` for a blank header (`backend/app/services/registration.py:558-570`). On the
+in-flight index the consequence is the point — any number of leads may have
+`in_flight_at = NULL`, and only one may have it set.
 
 ### 7.4 Migrations
 
-Three revisions. `0001_create_leads` creates the table and all six indexes
-(`backend/alembic/versions/0001_create_leads.py:44-122`). `0002_consent_and_fingerprint`
+Four revisions (`backend/tests/test_alembic.py:183` asserts the head).
+`0001_create_leads` creates the table and its six indexes
+(`backend/alembic/versions/0001_create_leads.py:98-174`). `0002_consent_and_fingerprint`
 adds three nullable columns (`0002_...py:37-41`), inspecting the live
 schema first so it is a no-op when `AUTO_CREATE_SCHEMA` already produced them
 (`:44-67`). `0003_stored_response` adds the two stored-reply columns
-(`0003_stored_response.py:31-38`), so a replay of an `Idempotency-Key` returns the
+(`0003_stored_response.py:36-39`), so a replay of an `Idempotency-Key` returns the
 reply the original attempt produced instead of a reconstructed one — see
-`docs/REGISTRATION-FLOW.md` §8.3. All five
-columns are nullable so they can be added to an existing
-SQLite database without inventing a server default for rows that predate them;
+`docs/REGISTRATION-FLOW.md` §8.3. **`0004_phone_claim`** (`f626644`) adds
+`in_flight_at` and the partial unique index over it
+(`0004_phone_claim.py:48-50`, `:67-93`), guarded the same way as `0002`/`0003` so
+it is a no-op when the ORM metadata already produced them. Its docstring carries
+the reasoning that this section summarises in §7.3, including why the guarantee
+has to be a database invariant (`:10-19`) and why reclamation is in Python
+(`:28-31`). All six columns added since `0001` are nullable so they can be added
+to an existing SQLite database without inventing a server default for rows that
+predate them;
 "nullable" does not become "usually empty" because every lead the service creates
 sets the consent and fingerprint columns, and a test asserts it (`0002_...py:17-20`,
 `backend/tests/test_consent.py:22-38`). The stored-reply pair stays `NULL` while a
-lead is `PENDING`, because `PENDING` is not terminal.
+lead is `PENDING`, because `PENDING` is not terminal; `in_flight_at` stays `NULL`
+once an attempt has ended, which is what distinguishes "not claimed" from
+"`PENDING`" — a `PENDING` row left by a provider outage is not in flight.
 
 ### 7.5 The request fingerprint
 
@@ -762,12 +867,20 @@ measured in `docs/SECURITY.md` §5.
 
 This section is the honest limit of the document above.
 
-1. **PostgreSQL was never executed.** Every test in the suite runs against a
-   fresh SQLite file under pytest's `tmp_path` (`backend/tests/conftest.py:5-9`,
-   `:111`). The PostgreSQL side of the partial index is verified **only** as
-   compiled DDL text (§7.3) and as a dialect branch in the model
-   (`models.py:191`). No PostgreSQL server was started, no migration was applied
-   to one, and no query was run against one.
+1. **No PostgreSQL server was run *here*.** This item previously said the
+   PostgreSQL side was "verified **only** as compiled DDL text", and that is now
+   wrong at the repository level: a `postgres:16` CI job applies the migrations
+   and runs `test_postgres.py` (`.github/workflows/ci.yml:132-165`), and
+   `test_concurrency.py` — which is where the phone-claim guarantee of §7.3 is
+   actually measured — *cannot* run without a real PostgreSQL URL
+   (`backend/tests/test_concurrency.py:19-22`, `:39-42`), so CI runs it too
+   (`ci.yml:166-171`). It landed in `7cfbde2`
+   (PR #19) and `72d991d` (PR #23), both after the revision this document was
+   written against. What remains true: no PostgreSQL server was started, no
+   migration was applied, and no query was run against one **while writing this
+   revision of the document**, and everything else in the suite still runs on
+   SQLite under `tmp_path` (`backend/tests/conftest.py:5-9`, `:111`). The
+   predicate's dialect branch is in the model (`models.py:212-213`, `:220-221`).
 2. **No live provider call was ever made.** `KHAIBAO9610_MODE` defaults to `mock`
    (`config.py:82`) and the live adapter refuses to construct without both
    switches (`khaibao9610.py:91-102`). The adapter's behaviour is exercised only
@@ -802,4 +915,14 @@ This section is the honest limit of the document above.
    (wall time varied: 4.79 s, 4.86 s), run
    with a venv carrying the pinned versions from
    `backend/requirements-dev.txt`. A passing suite is not a status claim and is
-   recorded elsewhere. This document describes mechanism, not readiness.
+   recorded elsewhere. This document describes mechanism, not readiness. The
+   count belongs to the revision documented at the top; it was **not** re-measured
+   for `f626644`, whose own commit message records different counts.
+8. **The DDL text for `uq_leads_in_flight_phone` was not compiled.** §7.3
+   reproduces the rendered DDL for `uq_leads_registered_phone` — quoted from the
+   previous revision — and deliberately does **not** invent the equivalent block
+   for the new index: the SQLAlchemy compiler was not run here (its dependencies
+   are not installed in the environment this revision was written in), so the
+   predicate and the two dialect arguments are read from source, not produced by
+   the compiler. The parity test (`backend/tests/test_alembic.py`) is what would
+   catch a discrepancy, and it was not run either.

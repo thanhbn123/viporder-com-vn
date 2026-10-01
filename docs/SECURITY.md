@@ -10,6 +10,17 @@ This document describes the security mechanisms that exist at that revision, and
 — with equal weight — their limits. Every non-obvious claim carries a `file:line`
 anchor.
 
+**Update for `f626644` (`docs/phone-claim`, "reserve the phone before calling the
+provider").** That revision added the phone claim — one attempt in flight per
+phone, enforced by a partial unique index rather than by application code — and
+this document was updated for it: §11.1 now names the new column, §12 carries a
+new residual risk 16 and an extended risk 12, §13 records the corrections, and
+§14's PostgreSQL item was corrected because the claim cannot be tested on SQLite
+at all. The mechanism itself is described in `docs/REGISTRATION-FLOW.md` §3.4.
+Anchors outside those sections were not re-verified for this update and still
+belong to the revision above, so a reader following one of them should expect to
+land near, not on, the quoted line.
+
 §2.3 describes a control that **was broken and is now fixed**; it records both the
 measurement that proved the fix and what was wrong before, because a control that
 claimed "works for any handler" while leaving tracebacks untouched is worth
@@ -874,6 +885,16 @@ attribution fields, provider-issued external ids, an idempotency key, a
 request fingerprint, consent timestamp and version, a tracking token, attempt
 count, last error code and message, and two timestamps.
 
+Since `f626644` it also stores **`in_flight_at`**: `DateTime(timezone=True)`,
+nullable, set when an attempt begins and cleared when that attempt ends
+(`models.py:176`; the partial unique index over it is `:216-222`, and §3.4 of
+`docs/REGISTRATION-FLOW.md` describes the mechanism). It carries no personal data
+of its own — it is a timestamp for the attempt the row already represents, and the
+row's `created_at`/`updated_at` already say as much about timing. It is named here
+because "what the lead table stores" is a question this section answers
+exhaustively, and a column that appears in a schema dump should not be a
+surprise.
+
 **It does not store the password** — no column, and the absence is asserted
 structurally (`test_password_leakage.py:152-158`, `models.py:7-9`). The stored
 fingerprint is a hash of the body with the password excluded (§2.1), so the table
@@ -976,10 +997,11 @@ route docstring states (`routers/registrations.py:48`).
 | 9 | Duplicate detection upstream is a text heuristic; a false positive returns `409` to a genuinely new customer (§10.3) | The real contract has not been supplied, so no better signal exists; the lead row is still retained and marked `FAILED` | A machine-readable duplicate code from the provider, per issue #4 |
 | 10 | A **legacy** `FAILED` row with no stored reply relies on a derived fallback: the cause is inferred from `last_error_code`, and an unrecognised cause returns a generic `409 REGISTRATION_FAILED` rather than the original status (`REGISTRATION-FLOW.md` §8.3) | Only rows written before migration `0003_stored_response` are affected, and this service never writes such a row; the fallback never claims success or pending | The fallback is a migration-window concern only — it disappears once no pre-`0003` row remains. Tightening it further means losing the ability to answer those rows at all |
 | 11 | A JavaScript-disabled submission posts form-encoded and receives a raw JSON `422` page (`REGISTRATION-FLOW.md` §2.4) | Nothing advertises a working no-JS registration; the form is JS-driven | Either accept form-encoded bodies (which weakens §6) or make the fallback a static explanation page |
-| 12 | `_is_idempotency_conflict()` matches driver error **text**, so it is tied to SQLite/psycopg wording (`sqlalchemy_repo.py:141-143`) | Only SQLite has been exercised; the substring match works there | Inspect the constraint name structurally, or branch per dialect |
+| 12 | `_is_idempotency_conflict()`, `_is_phone_conflict()` and `_is_phone_uniqueness()` match driver error **text**, so they are tied to SQLite/psycopg wording (`sqlalchemy_repo.py:212-214`, `:217-229`, `:232-246`) | The design does not depend on the text identifying *which* index: at INSERT the row is always `PENDING`, so a phone-uniqueness failure there can only be the in-flight claim (`sqlalchemy_repo.py:88-95`), and the docstring says the two phone indexes are deliberately not told apart because SQLite does not name them (`:232-240`). That disambiguation was exercised on SQLite only when this row was written; the PostgreSQL-only concurrency job now runs the same insert path against psycopg, where the index *is* named (`.github/workflows/ci.yml:132-151`, `:166-171`) — a reading of the job, not a run made here | Inspect the constraint name structurally where the driver supplies it, and keep the context-based fallback for SQLite; or branch per dialect explicitly instead of matching substrings |
 | 13 | No retention or deletion of personal data (§11.3) | No policy has been agreed, and there is no production data yet | A retention window and a deletion path, on the indexed `created_at` |
 | 14 | `last_error_message` stores up to 500 characters of upstream-provided text (§11.3) | It is the only diagnostic available for a `PENDING` lead, and the adapter avoids copying the body wholesale | A whitelist of upstream error codes mapped to local messages |
 | 15 | The static-site CSP allows `'unsafe-inline'` and third-party analytics domains, while the API's CSP is default-deny (§5.1) | The analytics layer is dormant and its domains are pre-declared so enabling it is a one-line change | Tighten the nginx CSP when the vendor scripts are actually enabled, or enable them with a nonce/hash instead of `'unsafe-inline'` |
+| 16 | **A process killed between the INSERT and the terminal update leaves a phone claimed** until `PHONE_CLAIM_TTL_SECONDS` elapses; during that window the customer is told `REGISTRATION_IN_PROGRESS` — see `docs/REGISTRATION-FLOW.md` §3.4. The TTL is a tradeoff: too short and a slow provider lets two attempts through, reintroducing the duplicate call the claim exists to prevent; too long and a crash locks a phone out for longer. It must exceed `KHAIBAO9610_TIMEOUT_SECONDS` | Both alternatives are worse. Without the claim the provider is called once per concurrent attempt — measured at **6 calls for one phone** before it existed and exactly 1 after (`backend/tests/test_concurrency.py:362-395`), and a duplicate customer created upstream is a thing nothing on this side records or can explain. Without a TTL the abandoned claim blocks the phone **forever**. The window is bounded by configuration rather than by an operator acting: the TTL floors at 30 s against a 10 s provider timeout (`config.py:113`, `:84`), and reclamation runs before every INSERT (`services/registration.py:132-136`), so the exposure is one transient refusal — the lead row itself is already committed (`docs/REGISTRATION-FLOW.md` §5). The cost of the tradeoff is *not* measured here: no test exercises `release_stale_claims()` or the TTL (`docs/REGISTRATION-FLOW.md` §10, item 11) | Make the reservation reapable on death rather than aged out — a PostgreSQL session-scoped advisory lock, or a lease with a heartbeat, either of which releases the moment the owner dies instead of after a fixed interval; failing that, a per-attempt owner id and a scheduled reaper instead of an inline age test. Either way it needs the test this risk has none of: kill a process mid-attempt and assert the phone is refused until the TTL and accepted after it |
 
 Risks 1–2 are recorded because they are the honest remainder of a control that is
 now correct; risks 3 and 5 are the two places where the shipped process
@@ -987,6 +1009,15 @@ configuration differs from the assumption the application code was written under
 Risk 10 is no longer the status/body contradiction it once was — that was fixed
 in `4d026def` (PR #13) and the history is kept in `docs/REGISTRATION-FLOW.md`
 §8.3; what remains is the derived fallback for pre-migration rows.
+
+**Risk 16 is new in `f626644` and is the price of the phone claim.** It is listed
+rather than accepted silently because it is the one place where this service
+deliberately refuses a customer who has done nothing wrong: a crash can hand a
+customer `REGISTRATION_IN_PROGRESS` for up to the TTL, and the refusal is truthful
+about *state* but not about *cause*. The alternative — no claim — was measured,
+and it was worse. Risk 12 grew with the same revision: the claim added two more
+driver-text matchers, and the SQLite caveat in `sqlalchemy_repo.py:232-240` is now
+the clearest statement in the codebase of why that matching is fragile.
 
 ---
 
@@ -1010,6 +1041,21 @@ did not rate-limit the API path. It does, and had already done so at the revisio
 the claim was written against — §10.3 now documents both zones, and §12 records it
 as risk 6.
 
+**Corrections made when this document was updated for `f626644`** (the phone
+claim). These are listed separately because they belong to a different revision
+than the three above, and one of them was already wrong before it — but it
+contradicted the new mechanism directly, so leaving it would have made this
+document argue against the code it describes.
+
+| Previous claim | Status now | Why it changed |
+|---|---|---|
+| "**No PostgreSQL run.** Everything was exercised on SQLite under pytest's `tmp_path` … The partial-index race, the `IntegrityError` text matching (risk 12) and every CHECK constraint have been verified on SQLite only" (§14, item 2) | **partly STALE** — corrected in item 2, and risk 12 updated | The `postgres:16` CI job landed in `7cfbde2` (PR #19) and the concurrency tests in `72d991d` (PR #23), both *after* the `4d026def` this document was written against; `f626644` then built the phone claim on top of exactly those tests. The partial-index race and the phone-claim guarantee cannot be measured on SQLite at all (`test_concurrency.py:19-22`), so the old sentence now understates the coverage while the new risk 16 needs it stated correctly. **Still true:** no PostgreSQL server was started while updating this document, so nothing here is a run I made. |
+| "The `leads` table … stores: name … attempt count, last error code and message, and two timestamps" (§11.1) | **incomplete, not wrong** — extended in place | `f626644` added `in_flight_at` (`models.py:176`). §11.1 answers "what does the table store" exhaustively, so the new column is named there with its purpose, and with the judgement that it carries no personal data of its own. |
+
+Risk 16 is the only *new* residual recorded for this revision, and it is a
+consequence of the claim rather than a defect found in it; §12 says why it is
+accepted instead of fixed.
+
 ---
 
 ## 14. What is not verified
@@ -1017,10 +1063,17 @@ as risk 6.
 1. **No penetration test, no security review, no threat model** was performed for
    this document. It is a reading of the code and of commands whose output is
    quoted inline. No vulnerability scanner was run against a live system.
-2. **No PostgreSQL run.** Everything was exercised on SQLite under pytest's
-   `tmp_path` (`backend/tests/conftest.py:5-9`, `:111`). The partial-index race,
-   the `IntegrityError` text matching (risk 12) and every CHECK constraint have
-   been verified on SQLite only.
+2. **No PostgreSQL run *here*.** The suite's baseline is SQLite under pytest's
+   `tmp_path` (`backend/tests/conftest.py:5-9`, `:111`), and that is where every
+   CHECK constraint and the `IntegrityError` text matching of risk 12 were
+   verified. It is no longer the whole story for the phone claim, whose tests
+   *cannot* run on SQLite: `backend/tests/test_concurrency.py` is gated on
+   `TEST_DATABASE_URL` (`:19-22`, `:39-42`) because "SQLite's locking would make
+   the result an artefact of the test harness", and CI runs it, together with
+   `test_postgres.py`, against a `postgres:16` service
+   (`.github/workflows/ci.yml:132-151`, `:163-171`). No PostgreSQL server was
+   started while updating this document, so the mechanism in risk 16 rests on the
+   revision's own test runs, not on a run made here. See §13.
 3. **No live provider call was ever made** (§10.3). The upstream contract, its
    duplicate phrasing, and its error bodies are unverified.
 4. **nginx was run locally but never against the production host.** The 0/6 vs
