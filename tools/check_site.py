@@ -159,15 +159,6 @@ class Doc(HTMLParser):
             self._stack.pop()
 
     def handle_endtag(self, tag):
-        if tag == "title":
-            self._in_title = False
-            self.title = "".join(self._title_buf).strip()
-        for i in range(len(self._stack) - 1, -1, -1):
-            if self._stack[i] == tag:
-                del self._stack[i:]
-                break
-
-    def handle_endtag(self, tag):
         if tag == "script" and self._jsonld_buf is not None:
             self.jsonld_blocks.append("".join(self._jsonld_buf))
             self._jsonld_buf = None
