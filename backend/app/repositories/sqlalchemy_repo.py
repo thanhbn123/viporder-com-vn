@@ -16,6 +16,17 @@ class DuplicateIdempotencyKeyError(RuntimeError):
     """Two concurrent requests claimed the same idempotency key."""
 
 
+class DuplicatePhoneError(RuntimeError):
+    """Two concurrent requests tried to register the same phone number.
+
+    The partial unique index permits exactly one REGISTERED lead per phone, so
+    when two attempts race, one of them loses at the database. That is the
+    correct outcome — but the loser must be told the truth (409), not handed a
+    500. This exception is how the repository says "you lost a race" rather than
+    "something went wrong".
+    """
+
+
 class SqlAlchemyLeadRepository:
     """Repository backed by a SQLAlchemy session.
 
@@ -91,11 +102,18 @@ class SqlAlchemyLeadRepository:
 
         try:
             self.session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             # The partial unique index rejected a second REGISTERED lead for
-            # this phone: another writer won the race. Surface it so the caller
+            # this phone: another writer won the race. Raise a TYPE so the caller
             # can answer 409 rather than inventing a duplicate customer.
+            #
+            # This comment previously described behaviour that did not exist —
+            # it re-raised the raw IntegrityError, nothing caught it, and the
+            # winner's race left the loser with a 500. Concurrency tests in
+            # tests/test_concurrency.py now hold it to the promise.
             self.session.rollback()
+            if _is_phone_conflict(exc):
+                raise DuplicatePhoneError(lead_id) from exc
             raise
         self.session.refresh(lead)
         return lead
@@ -141,6 +159,21 @@ class SqlAlchemyLeadRepository:
 def _is_idempotency_conflict(exc: IntegrityError) -> bool:
     message = str(getattr(exc, "orig", exc)).lower()
     return "idempotency" in message or "uq_leads_idempotency_key" in message
+
+
+def _is_phone_conflict(exc: IntegrityError) -> bool:
+    """True when the failure is the one-REGISTERED-lead-per-phone rule.
+
+    Matched on the constraint name first, because that is precise, then on the
+    PostgreSQL/psycopg wording as a fallback. Driver text is dialect-specific —
+    this is the one place in the project that depends on it, and
+    tests/test_concurrency.py exercises both supported dialects' behaviour
+    through the same path.
+    """
+    message = str(getattr(exc, "orig", exc)).lower()
+    if "uq_leads_registered_phone" in message:
+        return True
+    return "unique" in message and "phone" in message and "idempotency" not in message
 
 
 def _truncate(value: str | None, limit: int) -> str | None:

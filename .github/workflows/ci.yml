@@ -163,6 +163,12 @@ jobs:
       - name: PostgreSQL smoke tests
         working-directory: backend
         run: python -m pytest tests/test_postgres.py -q
+      - name: Concurrency tests
+        # These need a real database and real threads. SQLite's locking would
+        # make the result an artefact of the harness rather than a measurement
+        # of the application, so they live behind the same gate.
+        working-directory: backend
+        run: python -m pytest tests/test_concurrency.py -q
       - name: Negative control — the guard must refuse a production-looking database
         # These tests DROP the leads table. The guard that refuses a database
         # whose name looks like production is itself a safety control, so it is

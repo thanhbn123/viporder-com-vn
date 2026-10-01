@@ -45,7 +45,10 @@ from ..providers.base import (
     RegistrationResult,
 )
 from ..repositories.base import LeadRepository
-from ..repositories.sqlalchemy_repo import DuplicateIdempotencyKeyError
+from ..repositories.sqlalchemy_repo import (
+    DuplicateIdempotencyKeyError,
+    DuplicatePhoneError,
+)
 from ..schemas import RegistrationCreate
 
 logger = logging.getLogger(__name__)
@@ -300,15 +303,47 @@ class RegistrationService:
                 result.external_customer_code,
                 self.login_url,
             )
-            self.repository.update_status(
-                lead.lead_id,
-                status=RegistrationStatus.REGISTERED,
-                external_customer_id=result.external_customer_id,
-                external_customer_code=result.external_customer_code,
-                increment_attempt=is_retry,
-                response_status=201,
-                response_body=body,
-            )
+            try:
+                self.repository.update_status(
+                    lead.lead_id,
+                    status=RegistrationStatus.REGISTERED,
+                    external_customer_id=result.external_customer_id,
+                    external_customer_code=result.external_customer_code,
+                    increment_attempt=is_retry,
+                    response_status=201,
+                    response_body=body,
+                )
+            except DuplicatePhoneError:
+                # Another request registered this phone while the provider call
+                # for this one was in flight. The partial unique index is the
+                # arbiter and it picked the other writer, which is correct — but
+                # this caller must be told the truth.
+                #
+                # Leaving it as a 500 was the previous behaviour, and worse than
+                # it looked: by this point the PROVIDER HAS ALREADY BEEN CALLED,
+                # so the row would have been stranded in PENDING with an
+                # upstream customer that nothing recorded. Marking it FAILED is
+                # truthful and lets it be retried or reconciled.
+                self.repository.update_status(
+                    lead.lead_id,
+                    status=RegistrationStatus.FAILED,
+                    last_error_code=DUPLICATE_PHONE,
+                    last_error_message=(
+                        "Another registration for this phone completed first; "
+                        "this attempt lost the race."
+                    ),
+                    increment_attempt=is_retry,
+                )
+                logger.warning(
+                    "duplicate phone detected at the database, not by the "
+                    "pre-check lead_id=%s — concurrent registration",
+                    lead.lead_id,
+                )
+                raise ApiError(
+                    409,
+                    DUPLICATE_PHONE,
+                    "This phone number is already registered. Please sign in to the customer portal.",
+                ) from None
             logger.info(
                 "lead registered lead_id=%s external_code=%s",
                 lead.lead_id,
