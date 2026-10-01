@@ -17,6 +17,17 @@ lose a lead. That ordering is visible in the source, not inferred.
 `4d026def` (PR #13). The defect and its reproduction are kept, because the fact
 that no test covered it is the useful part of the record.
 
+**Update for revision `f626644` (`docs/phone-claim`, "reserve the phone before
+calling the provider").** That revision added the phone claim described in §3.4:
+a lead row is now inserted with `in_flight_at` set, and a partial unique index
+admits at most one such row per phone, so a second concurrent attempt is refused
+**at the INSERT** with `409 REGISTRATION_IN_PROGRESS` instead of being detected
+later — by which point both attempts had already called the provider. §3, §3.4,
+§5.1, §7.3 and §8.4 were re-verified against that tree and their line numbers
+updated; §1.2 and §10 were corrected where this revision made them wrong (§9
+records both). The rest of the document still carries line numbers from the
+revision it was written against, which have drifted since — see §9.
+
 ---
 
 ## 1. The client: `static/js/register.js`
@@ -108,14 +119,27 @@ down" (`:505-508`).
 
 **One precision worth recording, because the comment is narrower than the code.**
 The comment at `:177-183` justifies the `409` reset with the phone-taken case
-("the phone is taken"). But the server returns `409` for three different reasons
-— `DUPLICATE_PHONE`, `IDEMPOTENCY_KEY_REUSED` and `REGISTRATION_FAILED`
-(`errors.py:26-30`) — and `onFailed` resets on the *status code*, not on the error
-code (`:499-509`). So an `IDEMPOTENCY_KEY_REUSED` refusal also rotates the key.
-That outcome is consistent
+("the phone is taken"). But the server returns `409` for four different reasons
+— `DUPLICATE_PHONE` (`errors.py:26`), `REGISTRATION_IN_PROGRESS`
+(`errors.py:29`, added in `f626644`, §3.4), `IDEMPOTENCY_KEY_REUSED`
+(`errors.py:31`) and `REGISTRATION_FAILED` (`errors.py:33`) — and `onFailed`
+resets on the *status code*, not on the error code (`:499-509`). So an
+`IDEMPOTENCY_KEY_REUSED` refusal also rotates the key. That outcome is consistent
 with the server's own wording ("Start a new registration",
 `services/registration.py:207-208`) and is arguably the desired behaviour; the
 comment simply does not mention it.
+
+This paragraph previously said "three different reasons". It was accurate when
+written and became wrong when `f626644` added the fourth, so the count is
+corrected here rather than the sentence being dropped. The same reasoning covers
+`REGISTRATION_IN_PROGRESS`, which `onFailed` cannot distinguish from the
+phone-taken case: it resets the key and paints the message on the `phone` control
+(`:516-519`). Rotating the key on a *transient* refusal is not what the comment's
+reasoning describes, but it is safe — that refusal happens before any
+`REGISTERED` row exists for the phone (§3.4), so the fresh key starts an attempt
+the duplicate rule would not have blocked either way. What the customer reads is
+still the server's wording, "already in progress … try again", not "your number
+is taken".
 
 ### 1.3 What the form sends
 
@@ -353,20 +377,29 @@ no-JS registration.
 ## 3. The server sequence
 
 The whole journey lives in `RegistrationService.register()`
-(`backend/app/services/registration.py:99-142`). Order matters and is exactly
+(`backend/app/services/registration.py:104-168`). Order matters and is exactly
 this:
 
 | # | Step | Anchor |
 |---|---|---|
-| 1 | Normalise the `Idempotency-Key` header (strip; blank → `None`; >128 chars → `400`) | `services/registration.py:103`, `:495-507` |
-| 2 | Compute the SHA-256 request fingerprint (password excluded) | `:104`, `:516-547` |
-| 3 | If a key was given and a lead already has it → `_replay()`, which compares fingerprints | `:106-109`, `:187-211` |
-| 4 | If the phone already has a `REGISTERED` lead → raise `409 DUPLICATE_PHONE` | `:115-122` |
-| 5 | Build the `Lead` with `registration_status=PENDING`, fingerprint, consent evidence | `:124`, `:213-240` |
-| 6 | **`repository.create(lead)` — commit #1** | `:126` |
-| 7 | Log that the lead exists | `:135-140` |
-| 8 | Call the provider via `_attempt()` | `:142`, `:242-288` |
-| 9 | Map the outcome and **commit #2** via `update_status()` | `:290-374` |
+| 1 | Normalise the `Idempotency-Key` header (strip; blank → `None`; >128 chars → `400`) | `services/registration.py:111`, `:579-599` |
+| 2 | Compute the SHA-256 request fingerprint (password excluded) | `:112`, `:600-632` |
+| 3 | If a key was given and a lead already has it → `_replay()`, which compares fingerprints | `:114-117`, `:234-259` |
+| 4 | If the phone already has a `REGISTERED` lead → raise `409 DUPLICATE_PHONE` | `:123-130` |
+| 5 | **Reclaim phone claims abandoned by a dead process** (`release_stale_claims`) | `:135-139` — §3.4 |
+| 6 | Build the `Lead` with `registration_status=PENDING`, fingerprint, consent evidence **and `in_flight_at=utcnow()`** | `:141`, `:260-292` |
+| 7 | **`repository.create(lead)` — commit #1. The INSERT is where the phone claim is taken** | `:143` — §3.4 |
+| 8 | On `PhoneBusyError` → ask which case it is; raise `409 DUPLICATE_PHONE` or `409 REGISTRATION_IN_PROGRESS`. The attempt stops here and **never reaches step 10** | `:144-164` — §3.4 |
+| 9 | Log that the lead exists | `:173-178` |
+| 10 | Call the provider via `_attempt()` | `:180`, `:294-341` |
+| 11 | Map the outcome and **commit #2** via `update_status()`, which also releases the claim | `:342-465` |
+
+Steps 5–8 are new in `f626644`. Before that revision the table went straight from
+the duplicate pre-check (step 4) to building the row: there was no claim to take
+and no refusal at the INSERT, which is precisely the gap §3.4 describes. The
+numbering below step 4 is therefore different from the previous revision of this
+document; the two rows that matter are 6/7 (the claim is written *with* the row)
+and 8 (the second attempt is refused before step 10).
 
 ### 3.1 Validation happens before step 1
 
@@ -405,18 +438,19 @@ provider call (`services/registration.py:245`).
 
 ### 3.2 What the lead row captures at creation
 
-`_build_lead()` (`services/registration.py:213-240`) writes, besides the customer
+`_build_lead()` (`services/registration.py:239-271`) writes, besides the customer
 and attribution fields:
 
 | Column | Value | Anchor |
 |---|---|---|
-| `registration_status` | `PENDING` | `:220` |
-| `idempotency_key` | the normalised key, or `None` | `:234` |
-| `request_fingerprint` | SHA-256 hex (64 chars) | `:235` |
-| `consent_given_at` | `utcnow()` | `:236` |
-| `consent_version` | `CONSENT_VERSION` = `"2026-02-v1"` | `:229`, `config.py:45` |
-| `tracking_token` | `secrets.token_urlsafe(32)` | `:230` |
-| `attempt_count` | `1` | `:231` |
+| `registration_status` | `PENDING` | `:246` |
+| `idempotency_key` | the normalised key, or `None` | `:260` |
+| `request_fingerprint` | SHA-256 hex (64 chars) | `:261` |
+| `consent_given_at` | `utcnow()` | `:262` |
+| `consent_version` | `CONSENT_VERSION` = `"2026-02-v1"` | `:263`, `config.py:45` |
+| `tracking_token` | `secrets.token_urlsafe(32)` | `:264` |
+| `attempt_count` | `1` | `:265` |
+| `in_flight_at` | `utcnow()` — the phone claim, added in `f626644` (§3.4) | `:270` |
 
 Measured on a fresh lead:
 
@@ -430,18 +464,236 @@ Consent evidence is recorded regardless of the provider outcome — asserted by
 
 ### 3.3 The two commits
 
-**Commit #1** — `repository.create(lead)` (`services/registration.py:126`).
+**Commit #1** — `repository.create(lead)` (`services/registration.py:140`).
 `create()` does `session.add` then `session.commit()` then `session.refresh`
-(`backend/app/repositories/sqlalchemy_repo.py:35-45`). The row is durable when
-this returns.
+(`backend/app/repositories/sqlalchemy_repo.py:78-98`). The row is durable when
+this returns — and, since `f626644`, so is the phone claim, because the claim is
+a column on that same row (§3.4).
 
 **Commit #2** — `repository.update_status(...)`, which commits
-(`sqlalchemy_repo.py:92-101`). Which branch of `_apply_result` runs determines the
-new status and the HTTP code (§7).
+(`sqlalchemy_repo.py:100-172`). It also sets `in_flight_at = None`
+(`sqlalchemy_repo.py:151`), releasing the claim, and *every* call ends an attempt
+— including the one that ends `PENDING` when the provider is unavailable. Which
+branch of `_apply_result` runs determines the new status and the HTTP code (§7).
 
-`attempt_count` starts at `1` on creation (`services/registration.py:239`) and is
-incremented only on a retry (`:284`, `:308`, `:332`, `:346`, `:363` — all pass
-`increment_attempt=is_retry`), so it counts *attempts*, not rows.
+`attempt_count` starts at `1` on creation (`services/registration.py:265`) and is
+incremented only on a retry (`:315`, `:340`, `:363`, `:395`, `:409`, `:426` — all
+pass `increment_attempt=is_retry`), so it counts *attempts*, not rows.
+
+### 3.4 The phone claim — one attempt in flight per phone
+
+**Added in `f626644`; the rule it enforces was replaced in `0005_live_phone_rule`.**
+Both designs are recorded here, because the first one was wrong in a way CI caught
+and a faster local run did not.
+
+**The guarantee.** At most one registration attempt per phone number is *in
+flight* at any moment, and a phone that is already registered can never be
+claimed again. An attempt is in flight from the INSERT of its lead row until that
+attempt ends. A second concurrent attempt for the same phone is refused **before
+the provider is called** — `409 REGISTRATION_IN_PROGRESS` if the phone is merely
+busy, `409 DUPLICATE_PHONE` if it is already registered (§7.3).
+
+**Why this is a database invariant and not a code check.** The obvious fix —
+look for an in-flight attempt and refuse if one exists — cannot work, and the
+migration says why in its own words: "A check in application code cannot close
+that: both requests read 'no registered lead for this phone' before either
+writes" (`backend/alembic/versions/0004_phone_claim.py:17-19`). Two requests
+running step 4 of §3 (§3 table, `services/registration.py:120-127`) both see zero
+`REGISTERED` rows, because neither has written yet; the interleaving that matters
+is invisible to both. Only a constraint evaluated *by the database at the moment
+of the write* closes it — the model comment states the rule: "That makes the
+guarantee a DATABASE invariant rather than a check in application code, which is
+is the only kind that holds under concurrency" (`backend/app/models.py:82-91`).
+
+**The row is the reservation.** There is no lock table and no in-memory map:
+
+- `leads.in_flight_at` — `DateTime(timezone=True)`, nullable (`models.py:195`).
+- `uq_leads_live_phone` — **one** partial unique index on `phone`, unique, whose
+  predicate covers *both* states, on both dialects (`models.py:229-234`):
+
+  ```sql
+  CREATE UNIQUE INDEX uq_leads_live_phone ON leads (phone)
+    WHERE lead_type = 'REGISTER_LEAD'
+      AND (in_flight_at IS NOT NULL OR registration_status = 'REGISTERED');
+  ```
+
+  The predicate is the module constant `_LIVE_PHONE_PREDICATE`
+  (`models.py:78-80`); the migration declares it again
+  (`0005_live_phone_rule.py:55-58`), creates the new index and drops the two it
+  replaces (`:52-53`, `:88-101`). The migration head is now
+  `0005_live_phone_rule` (`:47-48`).
+- `_build_lead()` inserts the row **with the claim already set**
+  (`services/registration.py:291`), so there is no window in which a row exists
+  without its claim.
+- The arbitration happens at `session.commit()` inside `create()`
+  (`sqlalchemy_repo.py:124-144`). The `IntegrityError` on the phone index becomes
+  `PhoneBusyError` (`:140-141`, class at `:31-39`), which the service maps to one
+  of the two `409`s (`services/registration.py:144-164`).
+
+Because the refusal happens at step 7 and the provider is called at step 10,
+**the losing attempt never reaches the provider at all** — the comment in the
+repository states the contrast with the old behaviour: the conflict used to be
+"detected on the UPDATE, by which time **the provider had already been called**
+for both requests" (`sqlalchemy_repo.py:34-38`).
+
+**One conflict, two meanings.** Because a *single* index now covers both reasons a
+phone can be unavailable, the exception alone does not say which case it is — the
+repository cannot tell, and says so (`sqlalchemy_repo.py:134-139`). The service
+asks instead (`services/registration.py:150`) and answers accordingly
+(`:144-164`). The two refusals share a status code and mean opposite things, so
+`error.code` — not the status code — is what a client must branch on (§7.3):
+
+| Code | Meaning | Customer action |
+|---|---|---|
+| `DUPLICATE_PHONE` | **Permanent.** A `REGISTERED` lead already exists for this phone; they are registered | Sign in to the portal |
+| `REGISTRATION_IN_PROGRESS` | **Transient.** Another attempt for this phone is running right now; nothing is registered yet | Wait a moment and retry |
+
+The transient envelope's `message` is the literal string in the service
+(`services/registration.py:162-163`; code at `errors.py:29`):
+
+```json
+{
+  "error": {
+    "code": "REGISTRATION_IN_PROGRESS",
+    "message": "A registration for this phone number is already in progress. Please wait a moment and try again."
+  }
+}
+```
+
+The distinction is not cosmetic: the customer–provider side of a registration is
+not idempotent from the customer's perspective, so telling someone "your number is
+taken" when it is not would send them to the portal for an account that does not
+exist. `backend/tests/test_concurrency.py:390-395` asserts that every loser of the
+race receives one of those two codes and nothing else.
+
+**The claim belongs to the attempt, not to the status.** Every `update_status()`
+call releases it (`sqlalchemy_repo.py:142-151`, assignment at `:151`). The first
+version of this code released it only for terminal statuses, and that was wrong:
+an attempt that ends `PENDING` because the provider was unavailable is *over*, and
+holding the claim would make the customer's own retry collide with a reservation
+nobody was holding — inverting §5's rule that an outage never loses a lead. The
+repository comment keeps the mistake and its consequence
+(`sqlalchemy_repo.py:146-150`), and
+`test_a_pending_outcome_releases_the_claim_so_the_customer_can_retry`
+(`test_concurrency.py:398-431`) guards it. Note that the **column** comment is
+narrower than the code — `models.py:173` says the claim is cleared "when it
+reaches a terminal outcome", which is what the code used to do; the behaviour is
+the broader one described here.
+
+**Stale claims are reclaimed in Python, not by the index.** A process killed
+between the INSERT and the terminal update leaves a claim nobody will release, so
+before each INSERT the service clears claims older than
+`PHONE_CLAIM_TTL_SECONDS` (`services/registration.py:135-139`, calling
+`release_stale_claims`, `sqlalchemy_repo.py:58-91`). The reclamation is a plain
+`UPDATE … WHERE in_flight_at < older_than` and does not decide who wins: the
+index still arbitrates the INSERT that follows (`sqlalchemy_repo.py:66-68`).
+
+It is done in Python because a time-based partial-index predicate would be
+illegal: `now()` is not immutable, so neither PostgreSQL nor SQLite accepts it —
+which is why the single rule cannot simply say "and not older than the TTL"
+(`0005_live_phone_rule.py:34-35`). The predicate actually used is a null check
+and a column comparison, both immutable, and therefore legal on both engines
+(`models.py:78-80`). The TTL defaults to 120 seconds and has a floor of 30
+(`config.py:113`); it must stay comfortably above `KHAIBAO9610_TIMEOUT_SECONDS`,
+which defaults to 10 s (`config.py:84`). The residual the TTL cannot remove is
+risk 16 of `docs/SECURITY.md` §12.
+
+**This path was untested, and testing it found a production bug.** Five tests now
+cover it (`backend/tests/test_repository.py:264`, `:281`, `:297`, `:304`, `:361`),
+including the negative that a **live** claim is not reclaimed (`:281`). Writing
+them exposed a real defect: `release_stale_claims` raised
+`TypeError: can't compare offset-naive and offset-aware datetimes` on SQLite
+**whenever a row actually held a claim**, because the ORM evaluated the `WHERE`
+in Python and SQLite returns the column naive (`sqlalchemy_repo.py:74-88`). It had
+been invisible because the reclaim runs *before* the insert, when no row holds a
+claim — so every existing SQLite test passed over it. Fixed with
+`synchronize_session="fetch"` (`:88`).
+
+**Superseded measurement: "six calls became one".** The earlier revision of this
+section reported that six simultaneous registrations for one phone produced six
+provider calls before the claim existed and exactly one after. **That figure is
+withdrawn as evidence, and the reason is the useful part.** It was measured on a
+fast machine and it is *timing-dependent*: the claim only refused an attempt that
+arrived while another held it, so the count depended on how the six interleaved.
+On CI it collapsed — PR #26 failed with
+
+```
+the provider was called 2 time(s) for one phone; expected exactly 1
+Statuses: [201, 409, 409, 409, 409, 409]
+```
+
+That was not flakiness in the test. It was the *design*: `0003`/`0004` gave the
+claim and the registration two separate partial indexes, so between "A releases
+its claim" and "A's REGISTERED row exists" there was a window in which a B whose
+duplicate pre-check had already run could insert, take the free claim, and call
+the provider a **second** time — colliding only afterwards. The claim guarded a
+*window*, not a rule (`0005_live_phone_rule.py:17-32`). The timing-dependent
+measurement was the only evidence for the guarantee, which is exactly why the
+guarantee was not real.
+
+**What replaces it is deterministic.**
+`backend/tests/test_repository.py:335`
+(`test_a_registered_phone_cannot_be_claimed_by_a_new_attempt`) creates a
+`REGISTERED` row and then attempts a fresh claim **with no pre-check consulted** —
+exactly the position request B occupies — with no threads and no timing at all.
+Under the old predicate it fails with `DID NOT RAISE PhoneBusyError`; under
+`uq_leads_live_phone` it passes. The concurrency tests still exist and still
+assert `len(provider.calls) == 1` (`test_concurrency.py:362-395`), but they need
+PostgreSQL and run only when `TEST_DATABASE_URL` is set
+(`test_concurrency.py:19-22`); the deterministic test needs neither.
+
+**Verified while updating this section** (the previous documentation pass could
+not run anything): `python -m pytest -q` → `378 passed, 12 skipped`, the skips
+being the PostgreSQL tests with `TEST_DATABASE_URL` unset. The six claim tests in
+`test_repository.py` were run directly and pass.
+
+**The SQLite caveat.** SQLite reports `UNIQUE constraint failed: leads.phone`
+without naming *which* index, so at the INSERT the code cannot tell the in-flight
+index from the registered-phone index by text. `_is_phone_uniqueness()` therefore
+deliberately does not try (`sqlalchemy_repo.py:232-246`); the **context**
+disambiguates instead — at INSERT the row is always `PENDING`, so only the
+in-flight index can be the cause (`sqlalchemy_repo.py:88-95`). Matching on the
+index name alone would let the refusal through as a `500` on SQLite while passing
+on PostgreSQL.
+
+**The operator route now takes the same claim — a limit became behaviour.** The
+previous revision of this section listed "the operator retry takes no claim" as a
+*limit*: the admin route called `_attempt()` directly, so a manual retry could
+reach the provider while a customer attempt for the same phone was in flight — the
+exact race the claim exists to close, reopened through the one door a human drives
+by hand. That is now closed. `retry()` calls `claim_phone()` before `_attempt()`
+(`services/registration.py:222-223`) and returns an explanatory refusal while a
+claim is held (`:224-226`), and `claim_phone` additionally refuses when *this
+row's own* attempt is still running — a case the partial unique index cannot see,
+because re-claiming the same row inserts no new row
+(`sqlalchemy_repo.py:93-122`, check at `:111-114`).
+
+The stated limit that remains:
+
+- It does not depend on the single-worker deployment. Unlike the in-process rate
+  limiter (`docs/ARCHITECTURE.md` §1.3(a)), the claim is a database constraint, so
+  it would hold across workers — but no multi-worker run exists (§10.8), and that
+  is the only sense in which that sentence is verified.
+
+**What documenting this found: five gaps in code the docs pass could not touch.**
+Writing §3.4 found five things outside `docs/`. They were reported rather than
+fixed (`backend/**` was out of scope for a documentation task), and all five are
+**now closed** — in PR #27 unless noted:
+
+| # | Finding | Status |
+|---|---|---|
+| **A** | `tests/test_alembic.py`'s `EXPECTED_COLUMNS`/`EXPECTED_INDEXES` were not extended with `in_flight_at` and the new index, and were compared with `<=`, so two tests silently stopped enumerating the new objects | **closed** — both sets are now **derived from the ORM** (`test_alembic.py:25-39`) |
+| **B** | The admin retry route called `_attempt()` directly and **took no claim**, so a manual retry could reach the provider while a customer attempt was in flight for the same phone | **closed** — `retry()` takes the claim (`services/registration.py:222-223`), and `claim_phone` also refuses a *live claim on the row's own attempt* (`sqlalchemy_repo.py:111-114`), which the index cannot see |
+| **C** | `release_stale_claims` and `PHONE_CLAIM_TTL_SECONDS` appeared nowhere under `backend/tests/` — the crash-recovery path was untested | **closed** — five tests (`test_repository.py:264`, `:281`, `:297`, `:304`, `:361`), including that a **live** claim is not reclaimed. Writing them found the SQLite `TypeError` described above |
+| **D** | `models.py` said the claim is cleared "when it reaches a terminal outcome"; the code clears it on **every** `update_status` | **closed** for the `models.py` comment (`models.py:188-195`); one instance remains — see below |
+| **E** | A docstring in `test_concurrency.py` was stale since PR #23 | **closed** in PR #27 |
+
+**One residual instance of D, in code this document may not edit.**
+`services/registration.py:288-290` still says the claim is "Cleared when the
+attempt reaches a terminal outcome" — the pre-fix wording. The behaviour is the
+broader one (`sqlalchemy_repo.py:189-197`) and the `models.py` comment now states
+it correctly; only this one comment still understates the code. It is recorded
+here rather than fixed, because `backend/**` is out of scope for this PR.
 
 ---
 
@@ -477,12 +729,20 @@ Full replay semantics are in §8.
 
 ### 5.1 Where it happens
 
-`services/registration.py:124-142`:
+`services/registration.py:138-159`:
 
 ```python
         lead = self._build_lead(payload, key=key, fingerprint=fingerprint)
         try:
             self.repository.create(lead)
+        except PhoneBusyError:
+            # Another attempt for this phone is in flight RIGHT NOW, and it has
+            # not yet reached the provider. Refusing here is the point: ...
+            raise ApiError(
+                409,
+                REGISTRATION_IN_PROGRESS,
+                ...
+            ) from None
         except DuplicateIdempotencyKeyError:
             # Another writer won the race for this key. Replay only if the body
             # matches; otherwise it is the same misuse, not a retry.
@@ -499,16 +759,25 @@ Full replay semantics are in §8.
         return self._attempt(lead, payload)          # <-- provider call is here
 ```
 
-`self.repository.create(lead)` at **`services/registration.py:126`** commits the
-row (`sqlalchemy_repo.py:38`). `self._attempt(...)` at
-**`services/registration.py:142`** is the only path that reaches
-`self.provider.register(request)` at **`services/registration.py:259`**. There is
+The snippet's first `except` clause is abridged; the full block and its comment are
+at `:141-152`. It was **not** in the previous revision of this document, because
+the branch did not exist: the code went straight from `create()` to
+`DuplicateIdempotencyKeyError`, which is the gap §3.4 closes. The claim is written
+by `_build_lead()` before this snippet runs (`:266-270`), so the INSERT that
+commits the row is also the INSERT that takes the claim.
+
+`self.repository.create(lead)` at **`services/registration.py:140`** commits the
+row (`sqlalchemy_repo.py:81`). `self._attempt(...)` at
+**`services/registration.py:168`** is the only path that reaches
+`self.provider.register(request)` at **`services/registration.py:290`**. There is
 no code path in which the provider is contacted before the row is committed.
 
 The row is created with `registration_status=PENDING`
-(`services/registration.py:220`), which is also the column default
-(`models.py:87-88`) — so even a process that died between the two commits leaves a
-`PENDING` row, not a missing one.
+(`services/registration.py:246`), which is also the column default
+(`models.py:103-104`) — so even a process that died between the two commits leaves a
+`PENDING` row, not a missing one. Since `f626644` such a process leaves something
+else too: a phone claim that nobody is left to release, reclaimed only after
+`PHONE_CLAIM_TTL_SECONDS` (§3.4, and risk 16 of `docs/SECURITY.md` §12).
 
 ### 5.2 Every provider failure mode keeps the lead
 
@@ -668,12 +937,22 @@ Written by `_pending_body()` (`services/registration.py:405-414`).
 (`:352-374`), provider raised or violated the contract (`:268-286`), and
 idempotent replay of a non-`REGISTERED` lead (`:437-467` — see §8.3).
 
-### 7.3 `409` — three different meanings, one status code
+### 7.3 `409` — four different meanings, one status code
 
-**(a) The phone is already registered.** Raised from two places, both with the
+This heading said "three" until `f626644` added the fourth; the previous count is
+kept here rather than dropped, because a client written against the old document
+branches on three codes and now has four to handle. See §9.
+
+**(a) The phone is already registered.** Raised from three places, all with the
 same code and message: the pre-check when a `REGISTERED` lead already exists
-(`services/registration.py:115-122`), and the provider reporting a duplicate
-(`:319-337`).
+(`services/registration.py:120-127`), the **insert-race loser** whose
+`update_status()` hit the one-`REGISTERED`-per-phone index
+(`:344-374`, class `DuplicatePhoneError` at `sqlalchemy_repo.py:20-28`), and the
+provider reporting a duplicate (`:382-400`). The middle one is the case this
+section used to describe as two, before `edc5e30` (PR #23) turned it from a `500`
+into a truthful `409`; it is the losing side of the *same-phone* race, and it is
+distinct from the in-flight refusal in (d) — this one loses **after** the provider
+has been called, which is why the lead is marked `FAILED` and kept (`:355-364`).
 
 ```json
 {
@@ -720,9 +999,9 @@ apart; `error.code` is the discriminator. `register.js` resets the key on either
 
 **(c) A terminal reply could not be reproduced.** Raised by `_response_for()`
 only for a row that predates the stored-response columns, whose cause is not one
-the service recognises (`services/registration.py:478-479`). The code is
+the service recognises (`services/registration.py:541-542`). The code is
 `REGISTRATION_FAILED`, which is **not** in the original contract
-(`errors.py:29-30`):
+(`errors.py:33`):
 
 ```json
 {
@@ -736,6 +1015,29 @@ the service recognises (`services/registration.py:478-479`). The code is
 It fails closed rather than guessing: the reply never claims success, never
 claims pending, and never invents a cause-specific code the client would act on.
 See §8.3 for when it is reachable — it is a shape this service never writes.
+
+**(d) Another attempt for this phone is in flight right now.** Raised at the
+insert by the phone claim, and **added in `f626644`** — it is the fourth meaning,
+where the previous revision of this document counted three
+(`services/registration.py:141-152`, code at `errors.py:29`):
+
+```json
+{
+  "error": {
+    "code": "REGISTRATION_IN_PROGRESS",
+    "message": "A registration for this phone number is already in progress. Please wait a moment and try again."
+  }
+}
+```
+
+The message is the literal string built in the service
+(`services/registration.py:150-151`). Unlike (a), this one is **transient and the
+phone is not taken**: no row for that phone is `REGISTERED`, the provider has not
+been called for this attempt, and retrying after the other attempt ends is the
+correct action. §3.4 has the mechanism and why the refusal has to happen at the
+INSERT rather than at the UPDATE. A client that maps every `409` to "this number
+is already registered" is now wrong in a way that costs a customer a support
+ticket; `error.code` is the discriminator, as it already was for (b) and (c).
 
 ### 7.4 `413` — the body exceeds `MAX_REQUEST_BYTES`
 
@@ -971,12 +1273,22 @@ each legacy-derivation branch is covered including the fail-closed one
 Two simultaneous requests with the same key are resolved by the database, not by
 a read-then-write check. `create()` catches `IntegrityError`, rolls back, and
 raises `DuplicateIdempotencyKeyError` when the conflict is on the idempotency
-index (`sqlalchemy_repo.py:35-45`, `:141-143`); the service then applies the same
+index (`sqlalchemy_repo.py:84-87`, `:212-214`); the service then applies the same
 fingerprint check and either replays or re-raises
-(`services/registration.py:127-133`). The detection is a substring match on the
+(`services/registration.py:153-159`). The detection is a substring match on the
 driver's error text — `"idempotency" in message or
-"uq_leads_idempotency_key" in message` (`sqlalchemy_repo.py:141-143`) — so it is
+"uq_leads_idempotency_key" in message` (`sqlalchemy_repo.py:212-214`) — so it is
 tied to the index name and to SQLite/psycopg error wording.
+
+`create()` arbitrates a **second** race in the same `except` block, and it is not
+an idempotency race: the same phone with two different keys. Before `f626644` the
+loser was detected at the UPDATE — after both requests had called the provider.
+It is now refused at the INSERT by the claim, with `409 REGISTRATION_IN_PROGRESS`
+(§3.4). The two conflicts are told apart by context rather than by driver text:
+at INSERT the row is always `PENDING`, so a phone-uniqueness failure there is the
+in-flight claim (`sqlalchemy_repo.py:88-95`), while at UPDATE it is the
+one-`REGISTERED`-per-phone rule (`:217-229`). That matters on SQLite, which names
+neither index — §3.4 and `docs/SECURITY.md` §12 risk 12.
 
 ### 8.5 Client and server responsibilities
 
@@ -1017,6 +1329,32 @@ the two commits, the retry paths, the response bodies, the `PENDING`/`FAILED`
 recovery routes — was re-verified against `df9b84ea` and still holds, with line
 numbers updated throughout.
 
+**Added when this document was updated for `f626644`.** Three further claims went
+stale, all of them because of the phone claim. The previous revision of this
+document implied, without stating it, that a losing same-phone concurrent request
+was detected when it tried to write `REGISTERED` — i.e. **on the update**, after
+both attempts had already called the provider. That is now wrong: it is detected
+**at the insert** (§3.4). The claim did not exist when the sentences below were
+written, so they are recorded as they stood and corrected in place.
+
+| Previous claim (as this document stood before `f626644`) | Status now | What replaced it |
+|---|---|---|
+| "the server returns `409` for three different reasons — `DUPLICATE_PHONE`, `IDEMPOTENCY_KEY_REUSED` and `REGISTRATION_FAILED`" (§1.2) | **STALE — corrected in place** | Four, since `f626644` added `REGISTRATION_IN_PROGRESS`. §1.2 keeps the old count and the reason it changed; §7.3 gained item (d). |
+| "`409` — three different meanings, one status code" (§7.3 heading) | **STALE — heading corrected** | Four meanings. Two of them (`DUPLICATE_PHONE` from the insert-race loser, and `REGISTRATION_IN_PROGRESS`) are about the same phone and mean opposite things to the customer, which is why §7.3 now separates "permanent" from "transient" explicitly. |
+| The `409` was `DUPLICATE_PHONE` "raised from two places" (§7.3(a)) | **STALE — corrected in place** | Three: the pre-check, the insert-race loser that `edc5e30` (PR #23) turned from a `500` into a `409`, and the provider's own duplicate verdict. |
+| "No PostgreSQL run … the partial-index race … exercised on SQLite only" (§10 item 5, as it stood) | **STALE — corrected in place** | The concurrency tests for this mechanism require a real PostgreSQL and CI runs them against `postgres:16` (§3.4). They are still not run here — §10 says which. |
+
+Everything else in the previous version was left untouched by `f626644`, and the
+anchors outside §3, §3.4, §5.1, §7.3 and §8.4 were **not** re-verified for this
+update. They carry a systematic offset from the revision they were written
+against: measured on the pre-`f626644` tree, `registration.py` anchors in §3 were
+three lines ahead of the file (`register()` was documented at `:99-142`, the file
+had it at `:102`), and `sqlalchemy_repo.py` anchors in §8.4 were four lines ahead
+(`create()` documented at `:35-45`, actually `:46`). That offset predates this
+revision and is left in place rather than silently rewritten, but a reader
+following an anchor in an untouched section should expect to land near — not on —
+the quoted line.
+
 ---
 
 ## 10. What is not verified
@@ -1039,14 +1377,25 @@ numbers updated throughout.
    (`config.py:82`) and the live adapter refuses to construct without both
    switches (`khaibao9610.py:91-102`). Every provider outcome in §5.2 and §7 comes
    from the mock provider or an injected fake.
-5. **No PostgreSQL run.** Every test uses SQLite under pytest's `tmp_path`
-   (`conftest.py:5-9`). The `FAILED`-row behaviour, the partial-index race, and
-   the `IntegrityError` text matching were all exercised on SQLite only.
-   psycopg's error wording differs, and `_is_idempotency_conflict()` matching is
-   driver-wording-dependent (`sqlalchemy_repo.py:141-143`).
+5. **No PostgreSQL run *here*.** This item previously said the partial-index race
+   "was exercised on SQLite only", and that is now wrong for the mechanism in
+   §3.4: the concurrency tests are gated on `TEST_DATABASE_URL` and are skipped
+   without it (`test_concurrency.py:19-22`, `:39-42`, `:48-58`), so the phone-claim
+   guarantee **cannot** be measured on SQLite at all — the file's own docstring
+   says SQLite's locking would make the result an artefact of the harness. CI
+   provides a `postgres:16` service and runs both files
+   (`.github/workflows/ci.yml:132-151`, `:163-171`). What remains true is the
+   narrower statement: **no PostgreSQL server was started while updating this
+   document** (§3.4's figures are the revision's, not mine), and the SQLite-only
+   parts of the suite still cannot exercise psycopg's error wording, on which
+   `_is_idempotency_conflict()` and `_is_phone_uniqueness()` depend.
 6. **The crash-between-requests window (§5.3) was not tested.** There is no test
    that kills a process between commit #1 and the provider call. The claim that
-   the row survives rests on reading `create()`'s commit.
+   the row survives rests on reading `create()`'s commit. Since `f626644` that
+   window has a second consequence: the killed process also leaves a phone claim
+   nobody releases, so the phone is refused with `REGISTRATION_IN_PROGRESS` until
+   `PHONE_CLAIM_TTL_SECONDS` elapses (§3.4, and risk 16 of `docs/SECURITY.md`
+   §12). Neither the crash nor the reclamation is covered by a test — see item 11.
 7. **`list_pending()` is never called in application code.** The repository method
    exists and is tested, but there is no scheduler, cron, worker or CLI that
    drives it. A `PENDING` lead is only completed if a customer retries or an
@@ -1054,14 +1403,28 @@ numbers updated throughout.
 8. **The multi-worker case was never run.** Both deployment paths start a single
    uvicorn worker (`deploy/systemd/viporder-web.service:51`), so the cross-worker
    race is not reachable as deployed. It would become reachable the moment
-   `--workers` is raised, and the unique index on `idempotency_key`
-   (`models.py:166`) is what would make it safe — the database doing the work, not
-   the application. That race was not exercised, because every test runs in one
-   process.
+   `--workers` is raised, and the unique indexes — on `idempotency_key`
+   (`models.py:206`) and, since `f626644`, the partial one on `in_flight_at`
+   (`models.py:216-222`) — are what would make it safe: the database doing the
+   work, not the application. That race was not exercised, because every test runs
+   in one process.
 9. **The final response bodies in §7 come from the mock provider.** No body in
    this document was observed from `apiviporder.com`. The real upstream's response
    shape, error strings and duplicate phrasing are unverified
-   (`khaibao9610.py:1-9`).
+   (`khaibao9610.py:1-9`). The `REGISTRATION_IN_PROGRESS` body in §7.3(d) is one
+   of these: it was read from the source strings
+   (`services/registration.py:147-152`), not captured from a running server.
 10. **The 328-test suite passes at this revision** (`python -m pytest -q` →
     `328 passed, 1 warning`), but a passing suite is not a status claim, and it
-    does not cover the client at all.
+    does not cover the client at all. The count belongs to the revision documented
+    at the top of this file and was **not** re-measured for `f626644`; the suite
+    has grown since (the revision's own commit message records its counts, which
+    are not reproduced here as verified).
+11. **The stale-claim path has no test.** `release_stale_claims()` and
+    `PHONE_CLAIM_TTL_SECONDS` are not referenced by any file in `backend/tests/`
+    (searched: `release_stale_claims`, `stale`, `ttl`). What is tested is the
+    *release* on a normal attempt end — including the `PENDING` case, which has a
+    named regression test (`test_concurrency.py:398-431`) — and the at-most-once
+    provider call (`:362-395`). The reclamation of an abandoned claim, and the
+    relationship between the TTL and `KHAIBAO9610_TIMEOUT_SECONDS`, rest on
+    reading the code.
