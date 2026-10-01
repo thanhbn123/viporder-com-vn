@@ -122,6 +122,61 @@ jobs:
         working-directory: backend
         run: python -m pytest -q
 
+  # ---------------------------------------------------------------------------
+  # PostgreSQL. The rest of the suite is SQLite by design (fast, no server), but
+  # three things production depends on cannot be verified there at all: the
+  # partial unique index (declared with postgresql_where), the JSON column, and
+  # the migration DDL. Until this job existed, all three were honestly recorded
+  # as "never executed on PostgreSQL".
+  # ---------------------------------------------------------------------------
+  backend-tests-postgres:
+    name: Backend tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    needs: head
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: viporder
+          POSTGRES_PASSWORD: viporder
+          POSTGRES_DB: viporder_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://viporder:viporder@127.0.0.1:5432/viporder_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.head.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: PostgreSQL smoke tests
+        working-directory: backend
+        run: python -m pytest tests/test_postgres.py -q
+      - name: Negative control — the guard must refuse a production-looking database
+        # These tests DROP the leads table. The guard that refuses a database
+        # whose name looks like production is itself a safety control, so it is
+        # tested rather than trusted: this step PASSES only if pytest fails.
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://viporder:viporder@127.0.0.1:5432/viporder_prod
+        run: |
+          if python -m pytest tests/test_postgres.py -q; then
+            echo "::error::the destructive-test guard did NOT refuse a production-looking database"
+            exit 1
+          fi
+          echo "guard refused the production-looking database, as intended"
+
   backend-lint:
     name: Backend lint (ruff)
     runs-on: ubuntu-latest
