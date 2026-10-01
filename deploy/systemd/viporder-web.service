@@ -1,0 +1,76 @@
+# =============================================================================
+# VIPORDER.COM.VN — application service
+# =============================================================================
+# Install:
+#   useradd --system --home /srv/viporder --shell /usr/sbin/nologin viporder
+#   cp deploy/systemd/viporder-web.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now viporder-web
+#
+# Secrets live in /etc/viporder/viporder.env (mode 0600, owned by root). They
+# are NEVER committed and never placed in this repository.
+# =============================================================================
+
+[Unit]
+Description=VIPORDER.COM.VN web application (registration + lead core)
+Documentation=https://github.com/thanhbn123/viporder-com-vn
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=viporder
+Group=viporder
+WorkingDirectory=/srv/viporder/app
+
+EnvironmentFile=/etc/viporder/viporder.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# Binds to loopback only — Nginx is the only thing that may talk to it.
+ExecStart=/srv/viporder/venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 2 \
+    --proxy-headers \
+    --no-server-header \
+    --log-level info
+
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+# --- Hardening -------------------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallArchitectures=native
+
+# The only writable paths: the SQLite lead database and the log directory.
+# With PostgreSQL in production this can be reduced to the log directory alone.
+ReadWritePaths=/var/lib/viporder /var/log/viporder
+
+# --- Resources -------------------------------------------------------------
+LimitNOFILE=8192
+MemoryMax=512M
+
+# --- Logging ---------------------------------------------------------------
+StandardOutput=append:/var/log/viporder/app.log
+StandardError=append:/var/log/viporder/app.err.log
+
+[Install]
+WantedBy=multi-user.target
