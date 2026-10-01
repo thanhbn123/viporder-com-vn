@@ -26,8 +26,26 @@
   "use strict";
 
   var API_URL = "/api/v1/registrations";
-  var PORTAL_URL = "https://khachhang.viporder.com.vn";
-  var PORTAL_HOST = "khachhang.viporder.com.vn";
+  /* The redirect guard and the form's validation live in
+   * static/js/register-validation.js.
+   *
+   * They were the two most consequential decisions still sitting in a file with
+   * nothing executing it. `safePortalUrl` is an OPEN-REDIRECT GUARD - it decides
+   * where a customer who has just typed their password is sent - and `validate`
+   * decides whether they may submit at all. Both are pure functions of their
+   * arguments, so both can be tested WITHOUT adding a DOM library: that is the
+   * answer to the question round 4 left open. Extract what does not need a DOM;
+   * do not add a dependency for the rest.
+   *
+   * A plain deferred script loaded before this one, and a CommonJS export, so
+   * there is ONE copy of each rule. */
+  var rules =
+    typeof window !== "undefined" && window.VipOrderRegisterValidation
+      ? window.VipOrderRegisterValidation
+      : null;
+
+  var PORTAL_URL = rules ? rules.PORTAL_URL : "https://khachhang.viporder.com.vn";
+  var PORTAL_HOST = rules ? rules.PORTAL_HOST : "khachhang.viporder.com.vn";
   var IDEM_STORAGE_KEY = "vo_idem_key_v1";
   /* The phone the stored key was minted for, so the binding survives a reload. */
   var IDEM_PHONE_STORAGE_KEY = "vo_idem_phone_v1";
@@ -37,7 +55,9 @@
   /* Vietnamese phone shapes: mobile 03/05/07/08/09 + 8 digits (optionally
    * written as +84 or 84), landline 02x. Spaces, dots, dashes and brackets are
    * stripped before matching; the server owns the final normalisation. */
-  var VN_PHONE = /^(?:(?:\+84)|84|0)(?:[35789]\d{8}|2\d{8,9})$/;
+  var VN_PHONE = rules
+    ? rules.VN_PHONE
+    : /^(?:(?:\+84)|84|0)(?:[35789]\d{8}|2\d{8,9})$/;
 
   var form = document.getElementById("registerForm");
   if (!form) {
@@ -69,16 +89,17 @@
   }
 
   function own(obj, key) {
-    return Object.prototype.hasOwnProperty.call(obj, key);
+    if (!rules) {
+      return Object.prototype.hasOwnProperty.call(obj, key);
+    }
+    return rules.own(obj, key);
   }
 
   function hasKeys(obj) {
-    for (var key in obj) {
-      if (own(obj, key)) {
-        return true;
-      }
+    if (!rules) {
+      return false;
     }
-    return false;
+    return rules.hasKeys(obj);
   }
 
   function newId() {
@@ -102,7 +123,10 @@
   }
 
   function normalisePhone(value) {
-    return String(value == null ? "" : value).replace(/[\s.\-()]/g, "");
+    if (!rules) {
+      return String(value == null ? "" : value).replace(/[\s.\-()]/g, "");
+    }
+    return rules.normalisePhone(value);
   }
 
   function parseJson(text) {
@@ -215,26 +239,12 @@
   }
 
   function validate(v) {
-    var errors = {};
-    if (!v.full_name) {
-      errors.full_name = "Vui lòng nhập họ và tên.";
-    } else if (v.full_name.length < 2) {
-      errors.full_name = "Họ và tên quá ngắn.";
+    if (!rules) {
+      /* Mis-deployed page: report the module as missing rather than let the
+       * customer submit something the server will reject with no explanation. */
+      return { consent: "Không tải được phần kiểm tra. Vui lòng tải lại trang." };
     }
-    if (!v.phone) {
-      errors.phone = "Vui lòng nhập số điện thoại.";
-    } else if (!VN_PHONE.test(normalisePhone(v.phone))) {
-      errors.phone = "Số điện thoại chưa đúng định dạng Việt Nam (ví dụ: 0912345678).";
-    }
-    if (!v.password) {
-      errors.password = "Vui lòng nhập mật khẩu.";
-    } else if (v.password.length < 8) {
-      errors.password = "Mật khẩu cần tối thiểu 8 ký tự.";
-    }
-    if (!v.consent) {
-      errors.consent = "Vui lòng đồng ý để VIPORDER tạo tài khoản và hỗ trợ dịch vụ.";
-    }
-    return errors;
+    return rules.validate(v);
   }
 
   function errorAnchor(el) {
@@ -326,18 +336,21 @@
   /* The portal host is a business rule: an API response may not redirect
    * existing customers anywhere else. */
   function safePortalUrl(candidate) {
-    try {
-      if (candidate && typeof window.URL === "function") {
-        var url = new window.URL(candidate, window.location.origin);
-        if (url.protocol === "https:" && url.host === PORTAL_HOST) {
-          return url.href;
-        }
-        debug("login_url ignored, not the approved portal host", candidate);
-      }
-    } catch (err) {
-      debug("login_url unparseable, using the approved portal", err);
+    var origin =
+      typeof window !== "undefined" && window.location
+        ? window.location.origin
+        : undefined;
+    if (!rules) {
+      return PORTAL_URL;
     }
-    return PORTAL_URL;
+    var safe = rules.safePortalUrl(candidate, origin);
+    /* Log every refusal: the module cannot report, and a refused login_url is
+     * worth seeing. A page that silently redirects to the approved portal
+     * instead of where the server said is a symptom, not a non-event. */
+    if (candidate && safe === PORTAL_URL && String(candidate) !== PORTAL_URL) {
+      debug("login_url ignored, not the approved portal", candidate);
+    }
+    return safe;
   }
 
   function showPortalCta(candidate) {
