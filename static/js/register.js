@@ -29,6 +29,8 @@
   var PORTAL_URL = "https://khachhang.viporder.com.vn";
   var PORTAL_HOST = "khachhang.viporder.com.vn";
   var IDEM_STORAGE_KEY = "vo_idem_key_v1";
+  /* The phone the stored key was minted for, so the binding survives a reload. */
+  var IDEM_PHONE_STORAGE_KEY = "vo_idem_phone_v1";
   var BUSY_LABEL = "Đang gửi thông tin…";
   var DONE_LABEL = "Đã gửi đăng ký";
 
@@ -50,6 +52,7 @@
   var started = false;
   var inFlight = false;
   var idemKey = null;
+  var idemPhone = null;
 
   /* ------------------------------------------------------------------ utils */
 
@@ -124,37 +127,67 @@
 
   /* --------------------------------------------------------- idempotency key */
 
-  function getIdempotencyKey() {
-    if (idemKey) {
-      return idemKey;
+  /* The key is bound to the submitted IDENTITY, not merely to the form session.
+   *
+   * Reusing one key across two DIFFERENT bodies is the dangerous direction: if
+   * the backend caches responses by key alone, a corrected resubmit would
+   * replay the first response forever. Concretely, after a 409 "phone taken" a
+   * customer who fixes their number would keep being told it is taken and could
+   * never register — a silent, permanent dead end.
+   *
+   * So the key is re-minted whenever the phone being submitted changes, and is
+   * kept for a retry of exactly the same details. The phone is the identity
+   * here because it is the uniqueness key the API deduplicates customers on.
+   */
+  function getIdempotencyKey(phone) {
+    if (idemKey && idemPhone !== null && idemPhone !== phone) {
+      debug("submitted phone changed; re-minting the Idempotency-Key");
+      resetIdempotencyKey();
     }
-    try {
-      if (window.sessionStorage) {
-        idemKey = window.sessionStorage.getItem(IDEM_STORAGE_KEY);
+    if (!idemKey) {
+      try {
+        if (window.sessionStorage) {
+          idemKey = window.sessionStorage.getItem(IDEM_STORAGE_KEY);
+          idemPhone = window.sessionStorage.getItem(IDEM_PHONE_STORAGE_KEY);
+        }
+      } catch (err) {
+        debug("sessionStorage read failed", err);
       }
-    } catch (err) {
-      debug("sessionStorage read failed", err);
+      /* Same guard across a page reload, where only the stored values survive. */
+      if (idemKey && idemPhone !== null && idemPhone !== phone) {
+        debug("stored Idempotency-Key belongs to a different phone; re-minting");
+        resetIdempotencyKey();
+      }
     }
     if (!idemKey) {
       idemKey = newId();
-      try {
-        if (window.sessionStorage) {
-          window.sessionStorage.setItem(IDEM_STORAGE_KEY, idemKey);
-        }
-      } catch (err) {
-        debug("sessionStorage write failed", err);
+    }
+    idemPhone = phone;
+    try {
+      if (window.sessionStorage) {
+        window.sessionStorage.setItem(IDEM_STORAGE_KEY, idemKey);
+        window.sessionStorage.setItem(IDEM_PHONE_STORAGE_KEY, phone);
       }
+    } catch (err) {
+      debug("sessionStorage write failed", err);
     }
     return idemKey;
   }
 
-  /* Only cleared once the registration actually completed, so a genuine new
-   * registration gets a fresh key while a retry keeps the original one. */
+  /* Cleared only once the details being submitted are finished with:
+   *   * after a completed registration (201), and
+   *   * after a 409 — the phone is taken, so the corrected details are a NEW
+   *     attempt, and a fresh key cannot create a duplicate customer.
+   *
+   * Deliberately NOT cleared on a network error, 429, 5xx or 202: those are
+   * retries of the same registration attempt and MUST reuse the key. */
   function resetIdempotencyKey() {
     idemKey = null;
+    idemPhone = null;
     try {
       if (window.sessionStorage) {
         window.sessionStorage.removeItem(IDEM_STORAGE_KEY);
+        window.sessionStorage.removeItem(IDEM_PHONE_STORAGE_KEY);
       }
     } catch (err) {
       debug("sessionStorage clear failed", err);
@@ -463,6 +496,18 @@
     var fields = error.fields && typeof error.fields === "object" ? error.fields : {};
     var name;
 
+    if (status === 409) {
+      /* The phone is taken, so the details the customer submits next are a NEW
+       * attempt. A fresh key is safe here (a duplicate cannot be created for a
+       * phone that already exists) and it is necessary: replaying a cached 409
+       * against corrected details would lock the customer out permanently.
+       *
+       * Done before any rendering on purpose — this is the correctness-critical
+       * side effect of the whole function, so it must not be skippable by a
+       * failure further down. */
+      resetIdempotencyKey();
+    }
+
     for (name in fields) {
       if (own(fields, name) && field(name)) {
         showFieldError(name, fields[name]);
@@ -476,7 +521,8 @@
     /* Mirrors the server wording whenever the server sent any. */
     setMessage(error.message ? String(error.message) : defaultMessageFor(status), "error");
     trackRegisterFailed(status, code, attemptId);
-    /* Same Idempotency-Key on retry: the attempt did not succeed. */
+    /* Every other failure — network, 429, 5xx — keeps the key so a retry of the
+     * SAME details stays one idempotent attempt. */
     focusResult();
   }
 
@@ -551,7 +597,9 @@
       return;
     }
 
-    var attemptId = getIdempotencyKey();
+    /* Keyed on the phone actually being submitted, so the key and the body can
+     * never drift apart. */
+    var attemptId = getIdempotencyKey(normalisePhone(values.phone));
     var payload = buildPayload(values);
 
     if (typeof window.fetch !== "function") {
@@ -605,6 +653,19 @@
   form.addEventListener("focusin", trackRegisterStart);
   form.addEventListener("input", trackRegisterStart);
   form.addEventListener("change", trackRegisterStart);
+
+  /* Defence in depth for FIX 2: the submit path already re-mints the key when
+   * the phone changes, but dropping it the moment the customer edits the number
+   * also removes any window in which a stale key could be reused. */
+  var phoneField = field("phone");
+  if (phoneField) {
+    phoneField.addEventListener("input", function () {
+      if (idemKey && idemPhone !== null && normalisePhone(phoneField.value) !== idemPhone) {
+        debug("phone edited after a previous attempt; re-minting the Idempotency-Key");
+        resetIdempotencyKey();
+      }
+    });
+  }
 
   if (portalLink) {
     portalLink.setAttribute("href", PORTAL_URL);

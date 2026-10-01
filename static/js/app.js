@@ -40,12 +40,18 @@
   }
 
   /* Every analytics call is optional: if analytics.js failed to load, the page
-   * must still work perfectly. */
-  function fire(method, params) {
+   * must still work perfectly.
+   *
+   * Every argument after `method` is forwarded. The forwarding is variadic on
+   * purpose: the API is not uniformly unary — `serviceView(service, params)`
+   * takes two arguments while `phoneClick(params)` takes one — and a fixed
+   * single-argument forward silently shifted the first parameter of any
+   * two-argument method into the second. */
+  function fire(method) {
     var api = analytics();
     if (api && typeof api[method] === "function") {
       try {
-        return api[method](params);
+        return api[method].apply(api, Array.prototype.slice.call(arguments, 1));
       } catch (err) {
         debug(method + " failed", err);
       }
@@ -241,15 +247,20 @@
    *
    * `service_view` fires once per service per session. IntersectionObserver
    * gives a genuine "viewed" signal; the click listener covers browsers without
-   * it and doubles as a safety net. Both routes go through the same idempotent
-   * call, so the event cannot double-count.
+   * it and doubles as a safety net. Both routes go through this one function
+   * and the same idempotent call, so the event cannot double-count.
+   *
+   * `serviceView(service, params)` takes the slug FIRST. Passing the object as
+   * the only argument made the slug "[object Object]", which also collapsed the
+   * per-service de-duplication key so that only one service could ever report
+   * per session.
    */
   function reportServiceView(card, placement) {
     var service = card.getAttribute("data-service");
     if (!service) {
       return;
     }
-    fire("serviceView", { service: service, placement: placement });
+    fire("serviceView", service, { placement: placement });
   }
 
   var serviceCards = document.querySelectorAll(".service-card[data-service]");
