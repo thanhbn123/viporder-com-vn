@@ -210,23 +210,31 @@
    *        rel="noopener" target="_blank">Chat Zalo</a>
    * and the events below start reporting with no further code change.
    */
+  /* The classification rules live in static/js/contact-links.js.
+   *
+   * They were the last piece of pure logic in the page with nothing executing
+   * them, and getting them wrong is quiet in both directions: a missed link is a
+   * click never counted, a false match makes the numbers wrong. The module takes
+   * plain strings so it can be called in a test; this reads the two attributes. */
+  var contactLinks =
+    typeof window !== "undefined" && window.VipOrderContactLinks
+      ? window.VipOrderContactLinks
+      : null;
+
   function contactKind(anchor) {
     try {
       var declared = anchor.getAttribute("data-viporder-contact");
-      if (declared === "phone" || declared === "zalo") {
-        return declared;
-      }
       var href = anchor.getAttribute("href") || "";
-      if (/^tel:/i.test(href)) {
-        return "phone";
+      if (!contactLinks) {
+        /* Mis-deployed page: label nothing rather than guess. A wrong label
+         * corrupts the numbers, which is worse than a missing one. */
+        return null;
       }
-      if (/^https?:\/\/([a-z0-9-]+\.)*zalo\.(me|com)\//i.test(href)) {
-        return "zalo";
-      }
+      return contactLinks.contactKind(declared, href);
     } catch (err) {
       debug("could not classify a contact link", err);
+      return null;
     }
-    return null;
   }
 
   document.addEventListener("click", function (event) {
