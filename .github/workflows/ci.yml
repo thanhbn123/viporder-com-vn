@@ -82,6 +82,11 @@ jobs:
           python-version: "3.12"
       - name: Site checks
         run: python tools/check_site.py
+      - name: Nginx config guard (add_header inheritance)
+        # Nginx drops ALL server-level add_header for any location that declares
+        # its own, which once cost this project its entire security-header set
+        # on the homepage. Checked as a program, not a comment.
+        run: python tools/check_nginx_config.py
 
 # Backend jobs (pytest, ruff, bandit, pip-audit) are added by G02 once the
 # backend exists. CI only ever asserts what is actually present in the tree.
