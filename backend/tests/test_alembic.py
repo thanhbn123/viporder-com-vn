@@ -48,6 +48,9 @@ EXPECTED_COLUMNS = {
     "request_fingerprint",
     "consent_given_at",
     "consent_version",
+    # Added by 0003_stored_response.
+    "response_status",
+    "response_body",
 }
 
 EXPECTED_INDEXES = {
@@ -177,7 +180,7 @@ def test_migration_revision_is_named_as_documented() -> None:
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_current_head() == "0002_consent_and_fingerprint"
+    assert script.get_current_head() == "0003_stored_response"
 
 
 def test_alembic_upgrades_one_revision_at_a_time(tmp_path: Path) -> None:
@@ -263,3 +266,88 @@ def test_0001_refuses_a_wrong_shaped_leads_table(tmp_path: Path) -> None:
             assert stamped == [], f"refused migration must not stamp, got {stamped}"
     finally:
         engine.dispose()
+
+
+def test_0003_adds_the_stored_response_columns(tmp_path: Path) -> None:
+    url = f"sqlite:///{tmp_path / 'stepped3.db'}"
+
+    assert _run_alembic(url, "upgrade", "0002_consent_and_fingerprint").returncode == 0
+
+    engine = sa.create_engine(url)
+    try:
+        before = {c["name"] for c in sa.inspect(engine).get_columns("leads")}
+    finally:
+        engine.dispose()
+    assert "response_status" not in before
+    assert "response_body" not in before
+
+    assert _run_alembic(url, "upgrade", "head").returncode == 0
+
+    engine = sa.create_engine(url)
+    try:
+        after = {c["name"] for c in sa.inspect(engine).get_columns("leads")}
+    finally:
+        engine.dispose()
+    assert {"response_status", "response_body"} <= after
+
+
+def test_0003_is_a_no_op_when_the_columns_already_exist(tmp_path: Path) -> None:
+    """The AUTO_CREATE_SCHEMA path, one revision deeper."""
+    from app.db import Database
+    from app.models import Base
+
+    url = f"sqlite:///{tmp_path / 'precreated3.db'}"
+    database = Database(url)
+    Base.metadata.create_all(database.engine)
+    database.dispose()
+
+    for revision in ("0001_create_leads", "0002_consent_and_fingerprint", "head"):
+        result = _run_alembic(url, "upgrade", revision)
+        assert result.returncode == 0, f"{revision}: {result.stderr}"
+
+    engine = sa.create_engine(url)
+    try:
+        columns = {c["name"] for c in sa.inspect(engine).get_columns("leads")}
+    finally:
+        engine.dispose()
+    assert {"response_status", "response_body"} <= columns
+
+
+def test_a_json_body_survives_a_migration_round_trip(tmp_path: Path) -> None:
+    """The stored reply is JSON, so it must still load as a dict afterwards."""
+    from fastapi.testclient import TestClient
+
+    from app.config import Settings
+    from app.db import Database
+    from app.main import create_app
+
+    url = f"sqlite:///{tmp_path / 'roundtrip.db'}"
+    assert _run_alembic(url, "upgrade", "head").returncode == 0
+
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        database_url=url,
+        rate_limit_enabled=False,
+        auto_create_schema=False,
+        mock_provider_behaviour="duplicate",
+    )
+    database = Database(url)
+    client = TestClient(
+        create_app(settings, database=database, create_schema=False),
+        raise_server_exceptions=False,
+    )
+    with client:
+        headers = {"Idempotency-Key": "migration-round-trip"}
+        body = {
+            "full_name": "Nguyễn Văn A",
+            "phone": "0912000011",
+            "password": "secret-at-least-8",
+            "email": "",
+            "consent": True,
+        }
+        first = client.post("/api/v1/registrations", json=body, headers=headers)
+        replay = client.post("/api/v1/registrations", json=body, headers=headers)
+
+    assert first.status_code == 409, first.text
+    assert replay.status_code == 409, replay.text
+    assert replay.json() == first.json()

@@ -9,6 +9,7 @@ they must reproduce.
 from __future__ import annotations
 
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -177,3 +178,51 @@ def test_indexes_exist_on_the_table() -> None:
         "uq_leads_tracking_token",
         "uq_leads_registered_phone",
     } <= indexes
+
+
+# --- the retry work queue has no consumer -----------------------------------
+
+
+def test_list_pending_has_no_production_caller() -> None:
+    """`list_pending` is a queue with nothing reading it.
+
+    There is no scheduler, worker, cron job or background task in this service,
+    so a PENDING lead is completed only by a customer retry or the admin route.
+    That is a documented limitation, not a hidden bug — and this test is what
+    keeps the documentation honest.
+
+    If this test fails, someone has wired a worker. That is good news: move the
+    note in backend/README.md out of "Known limitations" and describe the worker
+    (its cadence, its retry policy, and what happens on repeated failure).
+    """
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    callers = {
+        path.relative_to(app_dir).as_posix()
+        for path in app_dir.rglob("*.py")
+        if "list_pending" in path.read_text(encoding="utf-8")
+    }
+
+    assert callers == {
+        "repositories/base.py",
+        "repositories/sqlalchemy_repo.py",
+    }, (
+        "list_pending gained a caller in "
+        f"{sorted(callers - {'repositories/base.py', 'repositories/sqlalchemy_repo.py'})}. "
+        "Update the retry note in backend/README.md."
+    )
+
+
+def test_no_scheduler_or_worker_exists() -> None:
+    """The other half of the same claim, asserted rather than assumed."""
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    source = "\n".join(path.read_text(encoding="utf-8") for path in app_dir.rglob("*.py"))
+
+    for forbidden in (
+        "BackgroundTasks",
+        "apscheduler",
+        "celery",
+        "from rq",
+        "import rq",
+        "schedule.every",
+    ):
+        assert forbidden not in source, f"a worker appeared: {forbidden}"

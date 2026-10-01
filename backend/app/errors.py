@@ -26,6 +26,8 @@ INVALID_REQUEST = "INVALID_REQUEST"
 DUPLICATE_PHONE = "DUPLICATE_PHONE"
 #: The Idempotency-Key was seen before, but with a *different* request body.
 IDEMPOTENCY_KEY_REUSED = "IDEMPOTENCY_KEY_REUSED"
+#: A terminal reply could not be reproduced from the stored row. Fails closed.
+REGISTRATION_FAILED = "REGISTRATION_FAILED"
 PROVIDER_INVALID = "PROVIDER_INVALID"
 NOT_FOUND = "NOT_FOUND"
 PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
