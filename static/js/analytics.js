@@ -104,11 +104,25 @@
   var ATTR_FIRST_KEY = "vo_attr_first_v1";
   var ATTR_LAST_KEY = "vo_attr_last_v1";
   var EVENT_IDS_KEY = "vo_event_ids_v1";
-  var UTM_KEYS = [
-    "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"
-  ];
-  var MAX_FIELD = 200;
-  var MAX_URL = 1000;
+  /* Attribution rules live in static/js/analytics-attribution.js.
+   *
+   * That file is the BOUNDARY: what may be remembered and what may be sent. It
+   * was moved out for one reason - this layer had nothing executing it, and a
+   * boundary enforced by habit is not enforced. It is a plain deferred script
+   * loaded before this one, and a CommonJS export, so there is ONE copy. */
+  var attribution =
+    typeof window !== "undefined" && window.VipOrderAttribution
+      ? window.VipOrderAttribution
+      : null;
+
+  /* A missing module means a mis-deployed page, and `check_site.py` fails the
+   * build for that. These fallbacks keep the page working and, crucially, keep it
+   * sending NOTHING: a page that cannot compute attribution must not invent it. */
+  var UTM_KEYS = attribution
+    ? attribution.UTM_KEYS
+    : ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"];
+  var MAX_FIELD = attribution ? attribution.MAX_FIELD : 200;
+  var MAX_URL = attribution ? attribution.MAX_URL : 1000;
 
   /* =====================================================================
    * Safe primitives. Nothing in this section may throw.
@@ -178,8 +192,11 @@
   }
 
   function clip(value, max) {
-    var s = value == null ? "" : String(value);
-    return s.length > max ? s.slice(0, max) : s;
+    if (!attribution) {
+      var s = value == null ? "" : String(value);
+      return s.length > max ? s.slice(0, max) : s;
+    }
+    return attribution.clip(value, max);
   }
 
   function newId() {
@@ -252,48 +269,27 @@
    * ================================================================== */
 
   function readUtms(search) {
-    var out = {};
-    var i;
-    for (i = 0; i < UTM_KEYS.length; i += 1) {
-      out[UTM_KEYS[i]] = "";
+    if (!attribution) {
+      return {};
     }
-    try {
-      if (typeof window.URLSearchParams !== "function") {
-        return out;
-      }
-      var params = new window.URLSearchParams(search || "");
-      for (i = 0; i < UTM_KEYS.length; i += 1) {
-        out[UTM_KEYS[i]] = clip(params.get(UTM_KEYS[i]) || "", MAX_FIELD);
-      }
-    } catch (err) {
+    /* `debug` is passed in rather than the failure being swallowed: a broken
+     * attribution read looks exactly like a page nobody arrived at with UTMs,
+     * which is a real answer that would be wrong. */
+    return attribution.readUtms(search, function (err) {
       debug("could not read UTM parameters", err);
-    }
-    return out;
+    });
   }
 
   function hasAnyUtm(utms) {
-    for (var i = 0; i < UTM_KEYS.length; i += 1) {
-      if (utms[UTM_KEYS[i]]) {
-        return true;
-      }
-    }
-    return false;
+    return attribution ? attribution.hasAnyUtm(utms) : false;
   }
 
   function emptyTouch() {
-    return { captured_at: 0, landing_page: "", referrer: "", utm: readUtms("") };
+    return attribution ? attribution.emptyTouch() : { captured_at: 0, landing_page: "", referrer: "", utm: {} };
   }
 
   function normaliseTouch(value) {
-    if (!value || typeof value !== "object") {
-      return emptyTouch();
-    }
-    var utm = value.utm && typeof value.utm === "object" ? value.utm : {};
-    var out = { captured_at: value.captured_at || 0, landing_page: value.landing_page || "", referrer: value.referrer || "", utm: {} };
-    for (var i = 0; i < UTM_KEYS.length; i += 1) {
-      out.utm[UTM_KEYS[i]] = clip(utm[UTM_KEYS[i]] || "", MAX_FIELD);
-    }
-    return out;
+    return attribution ? attribution.normaliseTouch(value) : emptyTouch();
   }
 
   function captureAttribution() {
@@ -346,15 +342,28 @@
   /* Exactly the shape POST /api/v1/registrations expects. No extra keys. */
   function toApiAttribution() {
     var a = getAttribution();
-    return {
-      utm_source: a.utm_source,
-      utm_medium: a.utm_medium,
-      utm_campaign: a.utm_campaign,
-      utm_content: a.utm_content,
-      utm_term: a.utm_term,
+    if (!attribution) {
+      /* Mis-deployed page. Send the seven fields explicitly rather than sending
+       * nothing: the registration still has to work, and the server validates. */
+      return {
+        utm_source: a.utm_source,
+        utm_medium: a.utm_medium,
+        utm_campaign: a.utm_campaign,
+        utm_content: a.utm_content,
+        utm_term: a.utm_term,
+        landing_page: a.landing_page,
+        referrer: a.referrer
+      };
+    }
+    /* Routed through the tested boundary, which clips and emits exactly seven
+     * fields. Copying them by hand here would be a SECOND place that decides what
+     * may leave the page - and the one without tests. */
+    return attribution.toApiAttributionFrom({
+      captured_at: 0,
       landing_page: a.landing_page,
-      referrer: a.referrer
-    };
+      referrer: a.referrer,
+      utm: a
+    });
   }
 
   /* =====================================================================
