@@ -58,48 +58,79 @@ redundancy (SHA retained above for recovery).
 
 | Gate | Scope | Status | Evidence |
 |---|---|---|---|
-| **G00** | Discovery / baseline, CI foundation | **PASS** | drift measured and corrected; `tools/check_site.py` + `tools/check_repo_hygiene.py` green; CI workflow added |
-| **G01** | Homepage | **PASS** (pre-existing) | merged via PR #1; verified sound, not rewritten |
-| **G02** | Registration + lead core | **NOT STARTED** | — |
-| **G03** | Data / lead store | **NOT STARTED** | — |
-| **G04** | KHAIBAO9610 integration contract | **BLOCKED_EXTERNAL** | contract not supplied — issue #4 |
-| **G05** | Marketing / analytics | **NOT STARTED** | — |
-| **G06** | SEO / public website | **NOT STARTED** | — |
-| **G07** | UX / conversion | **NOT STARTED** | — |
-| **G08** | Security | **NOT STARTED** | — |
-| **G09** | Testing | **NOT STARTED** | — |
-| **G10** | CI | **PASS** (baseline jobs only) | `.github/workflows/ci.yml` — backend jobs added by G02 |
-| **G11** | Documentation | **NOT STARTED** | — |
-| **G12** | Staging | **NOT STARTED** | — |
-| **G13** | Release | **BLOCKED_EXTERNAL** | release PR not opened; production READY not claimed |
+| **G00** | Discovery / baseline, CI foundation | **PASS** | drift measured and corrected (§2); PR #5 → `9e851286` |
+| **G01** | Homepage | **PASS** (pre-existing) | merged via PR #1; verified sound, **not rewritten** |
+| **G02** | Registration + lead core | **PASS** | PR #11 → `df9b84ea`; replay CR PR #13 → `4d026def`. Live: exact browser payload → **201**; provider down → **202** `PENDING` with the lead **retained**; duplicate → **409** leaking nothing; **replay of a 409 returns 409 with a byte-identical body** |
+| **G03** | Data / lead store | **PASS on SQLite** | repository interface, Alembic `0001`+`0002`, partial unique index, `request_fingerprint`, `consent_given_at`/`consent_version`. **PostgreSQL never executed** |
+| **G04** | KHAIBAO9610 integration contract | **BLOCKED_EXTERNAL** | adapter + MOCK shipped; contract not supplied — **issue #4**. `docs/KHAIBAO9610-INTEGRATION.md` |
+| **G05** | Marketing / analytics | **PASS** | PR #10. All 7 events + `viporder_lead_pending`; UTM captured server-side. **No PII in any payload** (adversarially verified). Tracking **dormant** |
+| **G06** | SEO / public website | **PASS** | OG/Twitter, static JSON-LD, `sitemap.xml`, `robots.txt`, favicon + OG image (1200×630). JSON-LD is parsed by CI |
+| **G07** | UX / conversion | **PASS** | two primary actions, accessible mobile nav, success/pending/error states. **Mobile not visually verified** (no browser) |
+| **G08** | Security | **PASS, with named residuals** | `docs/SECURITY.md`. Four real defects were found by adversarial review and fixed: password in exception tracebacks; a cross-customer data leak via a reused idempotency key; nginx dropping **all** security headers from the homepage (0/6 → 6/6); and `--workers 2` doubling the in-process rate limit while the app-level proxy setting implied a control it did not provide |
+| **G09** | Testing | **PASS** | **365** backend tests + 3 CI-enforced repo tools. Negative controls run for the site checker, the nginx guard, the deploy check, and by mutation for the backend's own tests |
+| **G10** | CI | **PASS** | `.github/workflows/ci.yml`, 9 jobs, all pinned to the PR **head SHA** |
+| **G11** | Documentation | **PASS** | `docs/` — architecture, flow, integration, deployment, security, go-live |
+| **G12** | Staging | **PASS (config only)** | PR #6, plus CR PR #15 (`--workers 1`, pinned `--forwarded-allow-ips`, upstream made deployment-specific). **Nothing deployed** — no VPS or DNS access. **Docker was never executed** |
+| **G13** | Release | **BLOCKED_EXTERNAL** | release PR (`develop` → `main`) opened as a **candidate only**, awaiting owner authorization. Staging acceptance cannot be performed without infrastructure, and KHAIBAO9610 is MOCK |
 
 Statuses in this table are updated by the gate that changes them. If a row and a
 PR disagree, **the PR is wrong** — re-measure. A gate is `PASS` only when the
 command output that proves it is quoted in the gate's PR.
 
+### What `PASS` does not mean here
+
+`PASS` means *the stated mechanism was measured to work in the environment named
+in the Evidence column*. It is not a claim about production. Three things are
+deliberately **not** covered:
+
+| Not verified | Why it matters |
+|---|---|
+| **PostgreSQL** | Every migration, index and constraint was exercised on SQLite only. The `postgresql_where` partial index has never run on a real server. |
+| **The real KHAIBAO9610 API** | No live call has ever been made from this repository. `MOCK` is not working registration. |
+| **A real browser at real breakpoints** | The mobile nav and layout were reviewed as code and through a DOM stub, never rendered. No session here had image input. |
+
 ---
 
 ## 4. Verification commands
 
-Commands that exist **today**:
-
 ```bash
-# Site checks (HTML, links, assets, a11y, SEO baseline, business link rules)
+# Site checks: HTML, links, assets, a11y, SEO baseline, business link rules
 python tools/check_site.py
 
-# Repository hygiene (secrets, tracked data, oversized files)
+# Nginx add_header inheritance guard (nginx silently drops server-level headers
+# in any location that declares its own — this once cost the whole set)
+python tools/check_nginx_config.py
+
+# Repository hygiene: secrets, tracked runtime/lead data, oversized files
 python tools/check_repo_hygiene.py
+
+# Backend test suite
+cd backend && python -m pytest -q
 ```
 
-Added by later gates, and listed here only once they exist:
+External verification, after a deploy (it measures over the public internet and
+does **not** trust `systemctl status`):
 
 ```bash
-# Backend test suite — lands with G02
-cd backend && python -m pytest -q
+./deploy/post-deploy-check.sh https://viporder.com.vn
 ```
 
 A `PASS` in this document is only valid together with the command output that
 produced it.
+
+### Measurements actually taken (01/10/2026)
+
+| Measurement | Result |
+|---|---|
+| `pytest -q` (backend) | `365 passed` |
+| `check_site.py` / `check_nginx_config.py` / `check_repo_hygiene.py` | 0 errors each |
+| CI jobs on the merged PR heads | 9 / 9 green |
+| Live POST, exact browser payload | `201`, lead row written, no password in DB bytes or logs |
+| Live POST, provider down | `202` `PENDING`, **lead retained** |
+| Live POST, same `Idempotency-Key` + different phone | `409 IDEMPOTENCY_KEY_REUSED`, no other customer's data |
+| Live same-origin POST through the dev proxy | `201` |
+| Live replay of a `409` (same key, same body) | `409` with a byte-identical body |
+| nginx security headers on the homepage | `6/6` (was **0/6** before PR #12) |
 
 ---
 
