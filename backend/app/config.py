@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_attempts: int = Field(default=10, ge=1)
     rate_limit_window_seconds: int = Field(default=600, ge=1)
+    # How long an unanswered phone claim is believed before another attempt may
+    # reclaim it. This is the crash-recovery bound: a process killed mid-attempt
+    # would otherwise block that phone forever. It must comfortably exceed the
+    # provider timeout, or a slow provider would let a second attempt through and
+    # reintroduce the duplicate call the claim exists to prevent.
+    phone_claim_ttl_seconds: int = Field(default=120, ge=30)
     trust_proxy_headers: bool = False
     # Comma-separated origins. Empty = CORS disabled entirely (same-origin).
     cors_allow_origins: str = ""

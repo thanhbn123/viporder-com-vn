@@ -180,7 +180,7 @@ def test_migration_revision_is_named_as_documented() -> None:
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_current_head() == "0003_stored_response"
+    assert script.get_current_head() == "0004_phone_claim"
 
 
 def test_alembic_upgrades_one_revision_at_a_time(tmp_path: Path) -> None:

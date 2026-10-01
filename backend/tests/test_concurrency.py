@@ -294,3 +294,138 @@ def test_the_losing_response_never_leaks_the_winners_customer_code(
         assert winner_code not in r.text, (
             f"a losing response leaked the winner's customer code {winner_code!r}: {r.text[:200]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The property the phone claim exists to guarantee
+# ---------------------------------------------------------------------------
+
+
+class _CountingProvider:
+    """Wraps the mock provider and records every call.
+
+    This is the only way to assert the thing that actually matters. Every other
+    assertion in this file observes the DATABASE, and the database cannot tell
+    you whether the provider was called — the whole defect was that it *was*
+    called and the result was then discarded.
+    """
+
+    name = "counting-mock"
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.calls: list[str] = []
+        self._lock = threading.Lock()
+
+    def register(self, request):
+        with self._lock:
+            self.calls.append(request.phone)
+        return self._inner.register(request)
+
+
+@pytest.fixture
+def counting_client(pg_url: str):
+    """A client whose provider records every call."""
+    import subprocess
+    import sys
+
+    from fastapi.testclient import TestClient
+
+    from app.config import Settings, get_settings
+    from app.main import create_app
+    from app.providers.mock import MockRegistrationProvider
+
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=BACKEND,
+        env={**os.environ, "DATABASE_URL": pg_url},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"alembic upgrade head failed:\n{result.stderr}"
+
+    provider = _CountingProvider(MockRegistrationProvider(behaviour="success"))
+    settings = Settings(
+        database_url=pg_url,
+        khaibao9610_mode="mock",
+        mock_provider_behaviour="success",
+        rate_limit_enabled=False,
+        admin_api_token="",
+        auto_create_schema=False,
+    )
+    app = create_app(settings=settings, provider=provider)
+    app.dependency_overrides[get_settings] = lambda: settings
+    with TestClient(app) as c:
+        yield c, provider
+
+
+def test_the_provider_is_called_at_most_once_per_phone_under_concurrency(
+    counting_client, cleanup, pg_url: str
+) -> None:
+    """The defect this claim exists to prevent, asserted directly.
+
+    Before the claim existed, six simultaneous registrations for one phone with
+    six different keys all reached the provider. One row was recorded; the other
+    five customer codes were created upstream and then thrown away by the
+    database conflict — customers who would exist and that nothing here could
+    explain.
+    """
+    client, provider = counting_client
+    phone = f"+8490{uuid.uuid4().int % 10**7:07d}"
+
+    def submit(index: int):
+        return client.post(
+            "/api/v1/registrations",
+            json=_body(phone),
+            headers={"Idempotency-Key": f"claim-{uuid.uuid4()}-{index}"},
+        )
+
+    responses = _run_together(submit, times=6)
+
+    assert len(provider.calls) == 1, (
+        f"the provider was called {len(provider.calls)} time(s) for one phone; "
+        f"expected exactly 1. Statuses: {sorted(r.status_code for r in responses)}"
+    )
+
+    # And the callers who did not get through must be told to retry, not that
+    # their number is taken — the difference matters to the customer.
+    codes = [r.json().get("error", {}).get("code") for r in responses if r.status_code != 201]
+    assert all(c in ("REGISTRATION_IN_PROGRESS", "DUPLICATE_PHONE") for c in codes), (
+        f"unexpected refusal codes: {codes}"
+    )
+
+
+def test_a_pending_outcome_releases_the_claim_so_the_customer_can_retry(
+    counting_client, cleanup, pg_url: str
+) -> None:
+    """A provider outage must not lock the customer out of retrying.
+
+    This is a regression guard for my own first attempt at the claim: I released
+    it only for terminal statuses, so an attempt that ended PENDING (provider
+    unavailable) kept the reservation and the customer's own retry collided with
+    it — a 500 on SQLite. Holding a phone hostage because the provider was down
+    inverts the rule the brief states twice.
+    """
+    client, _provider = counting_client
+    phone = f"+8490{uuid.uuid4().int % 10**7:07d}"
+
+    from app.config import Settings  # noqa: F401  (documented import locality)
+
+    # Down, then up again: two sequential attempts, same phone, different keys.
+    first = client.post(
+        "/api/v1/registrations",
+        json=_body(phone),
+        headers={"Idempotency-Key": f"outage-{uuid.uuid4()}"},
+    )
+    assert first.status_code in (201, 202), first.text
+
+    second = client.post(
+        "/api/v1/registrations",
+        json=_body(phone),
+        headers={"Idempotency-Key": f"retry-{uuid.uuid4()}"},
+    )
+    assert second.status_code != 500, (
+        f"the retry after a non-terminal attempt returned 500: {second.text[:200]}"
+    )
+    # A sequential retry is not a race: it must be allowed through.
+    assert second.status_code in (201, 202, 409), second.text

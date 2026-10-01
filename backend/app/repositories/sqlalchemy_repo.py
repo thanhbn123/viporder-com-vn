@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,17 @@ class DuplicatePhoneError(RuntimeError):
     """
 
 
+class PhoneBusyError(RuntimeError):
+    """Another attempt for this phone is already in flight.
+
+    Raised at INSERT, which is the point of the design: the previous behaviour
+    detected the conflict on the UPDATE, by which time **the provider had already
+    been called** for both requests, so a duplicate customer could exist upstream
+    with nothing here pointing at it. Refusing at INSERT means the second attempt
+    never reaches the provider at all.
+    """
+
+
 class SqlAlchemyLeadRepository:
     """Repository backed by a SQLAlchemy session.
 
@@ -43,14 +55,44 @@ class SqlAlchemyLeadRepository:
 
     # -- writes --------------------------------------------------------------
 
+    def release_stale_claims(self, older_than: datetime) -> int:
+        """Clear in-flight claims abandoned by a process that died mid-attempt.
+
+        A phone claim is released when an attempt reaches a terminal outcome. If
+        the process is killed between the INSERT and that update, the claim would
+        otherwise block that phone forever — a worse failure than the duplicate
+        call the claim exists to prevent.
+
+        Safe against races: two callers may both reclaim, and the partial unique
+        index still arbitrates the subsequent INSERT. This only decides *when* a
+        claim is considered abandoned, never who wins.
+        """
+        result = self.session.execute(
+            update(Lead)
+            .where(Lead.in_flight_at.is_not(None), Lead.in_flight_at < older_than)
+            .values(in_flight_at=None)
+        )
+        self.session.commit()
+        return int(result.rowcount or 0)
+
     def create(self, lead: Lead) -> Lead:
         self.session.add(lead)
         try:
             self.session.commit()
         except IntegrityError as exc:
             self.session.rollback()
+            # Idempotency first: it is named in the error on both dialects, so it
+            # is never ambiguous.
             if lead.idempotency_key and _is_idempotency_conflict(exc):
                 raise DuplicateIdempotencyKeyError(lead.idempotency_key) from exc
+            # Then phone. At INSERT the row is always PENDING, so the
+            # one-REGISTERED-per-phone index cannot be the cause — any
+            # phone-uniqueness failure here IS the in-flight claim. That matters
+            # because SQLite reports "UNIQUE constraint failed: leads.phone"
+            # without naming which index, so matching on the name alone would let
+            # this through as a 500 on SQLite while passing on PostgreSQL.
+            if lead.in_flight_at is not None and _is_phone_uniqueness(exc):
+                raise PhoneBusyError(lead.phone) from exc
             raise
         self.session.refresh(lead)
         return lead
@@ -96,6 +138,17 @@ class SqlAlchemyLeadRepository:
             lead.response_status = response_status
         if response_body is not UNSET:
             lead.response_body = response_body
+
+        # The claim belongs to the ATTEMPT, not to the status, and every
+        # update_status call in this service happens at the end of an attempt —
+        # so every one of them releases it.
+        #
+        # Gating this on "status is not PENDING" was wrong, and a test caught it:
+        # an attempt that ends PENDING because the provider was unavailable is
+        # OVER, and keeping the claim would make the customer's own retry collide
+        # with a reservation nobody was holding. That would break the one rule the
+        # brief states twice — a lead is never lost to an outage.
+        lead.in_flight_at = None
 
         if increment_attempt:
             lead.attempt_count = (lead.attempt_count or 0) + 1
@@ -174,6 +227,23 @@ def _is_phone_conflict(exc: IntegrityError) -> bool:
     if "uq_leads_registered_phone" in message:
         return True
     return "unique" in message and "phone" in message and "idempotency" not in message
+
+
+def _is_phone_uniqueness(exc: IntegrityError) -> bool:
+    """True when a phone column violated a unique constraint, whichever index.
+
+    Deliberately does NOT try to tell the two phone indexes apart from the error
+    text, because it cannot: SQLite reports ``UNIQUE constraint failed:
+    leads.phone`` for both, and only PostgreSQL names the index. The caller
+    disambiguates from context instead — at INSERT the row is PENDING, so only the
+    in-flight index can fire; at UPDATE it is the registered index.
+    """
+    message = str(getattr(exc, "orig", exc)).lower()
+    if "idempotency" in message:
+        return False
+    if "uq_leads_in_flight_phone" in message or "uq_leads_registered_phone" in message:
+        return True
+    return "unique" in message and "phone" in message
 
 
 def _truncate(value: str | None, limit: int) -> str | None:

@@ -64,6 +64,22 @@ class ServiceInterest(StrEnum):
 # the index: a customer whose first attempt failed must be able to try again.
 _REGISTERED_PHONE_PREDICATE = "lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'"
 
+# One attempt in flight per phone. This is what stops two concurrent
+# registrations for the same number from BOTH calling the customer-code
+# provider — which could create a duplicate customer upstream that nothing on
+# our side points at.
+#
+# The lead row IS the reservation: it is inserted with `in_flight_at` set, and
+# this partial unique index arbitrates. That makes the guarantee a DATABASE
+# invariant rather than a check in application code, which is the only kind that
+# holds under concurrency.
+#
+# `IS NOT NULL` is immutable, so it is a legal partial-index predicate on both
+# PostgreSQL and SQLite. A time-based predicate would not be — `now()` is not
+# immutable — which is why stale claims are reclaimed in Python instead; see
+# `release_stale_claims`.
+_IN_FLIGHT_PREDICATE = "in_flight_at IS NOT NULL"
+
 
 class Lead(Base):
     __tablename__ = "leads"
@@ -153,6 +169,12 @@ class Lead(Base):
     response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # --- Phone claim (one attempt in flight per phone) ----------------------
+    # Set when the attempt begins, cleared when it reaches a terminal outcome.
+    # Non-null on at most one row per phone, enforced by the partial unique index
+    # declared in __table_args__.
+    in_flight_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # --- Retry bookkeeping --------------------------------------------------
     attempt_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
@@ -189,6 +211,14 @@ class Lead(Base):
             unique=True,
             sqlite_where=text(_REGISTERED_PHONE_PREDICATE),
             postgresql_where=text(_REGISTERED_PHONE_PREDICATE),
+        ),
+        # At most one attempt in flight per phone. See _IN_FLIGHT_PREDICATE.
+        Index(
+            "uq_leads_in_flight_phone",
+            "phone",
+            unique=True,
+            sqlite_where=text(_IN_FLIGHT_PREDICATE),
+            postgresql_where=text(_IN_FLIGHT_PREDICATE),
         ),
     )
 
