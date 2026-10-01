@@ -621,96 +621,102 @@ The enums are stored as strings with `native_enum=False` (`models.py:90`,
 `:95-101`), so the same DDL works on SQLite and PostgreSQL; the check constraints
 are the enforcement that survives that choice.
 
-### 7.3 Indexes, including the two partial unique indexes
+### 7.3 Indexes, including the partial unique index that states the phone rule
 
-Seven indexes (`models.py:203-222`). Six of them came from `0001_create_leads`;
-the seventh — `uq_leads_in_flight_phone` — came from `0004_phone_claim`
-(`f626644`):
+Six indexes (`models.py:222-234`). Five came from `0001_create_leads`; the sixth —
+`uq_leads_live_phone` — replaced two indexes in `0005_live_phone_rule`. (The phone
+claim itself landed earlier, in `0004_phone_claim` / `f626644`, PR #24.)
 
 | Name | Columns | Unique | Anchor |
 |---|---|---|---|
-| `ix_leads_phone` | `phone` | no | `:203` |
-| `ix_leads_registration_status` | `registration_status` | no | `:204` |
-| `ix_leads_created_at` | `created_at` | no | `:205` |
-| `uq_leads_idempotency_key` | `idempotency_key` | **yes** | `:206` |
-| `uq_leads_tracking_token` | `tracking_token` | **yes** | `:207` |
-| `uq_leads_registered_phone` | `phone` | **yes, partial** — `lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'` | `:208-214` |
-| `uq_leads_in_flight_phone` | `phone` | **yes, partial** — `in_flight_at IS NOT NULL` | `:216-222` |
+| `ix_leads_phone` | `phone` | no | `:222` |
+| `ix_leads_registration_status` | `registration_status` | no | `:223` |
+| `ix_leads_created_at` | `created_at` | no | `:224` |
+| `uq_leads_idempotency_key` | `idempotency_key` | **yes** | `:225` |
+| `uq_leads_tracking_token` | `tracking_token` | **yes** | `:226` |
+| `uq_leads_live_phone` | `phone` | **yes, partial** — `lead_type = 'REGISTER_LEAD' AND (in_flight_at IS NOT NULL OR registration_status = 'REGISTERED')` | `:229-234` |
 
-The first predicate is a module-level constant (`models.py:65`):
+Read out of the ORM at this revision:
+
+```
+predicate constant: "lead_type = 'REGISTER_LEAD' AND (in_flight_at IS NOT NULL OR registration_status = 'REGISTERED')"
+indexes in ORM: ['ix_leads_created_at', 'ix_leads_phone', 'ix_leads_registration_status', 'uq_leads_idempotency_key', 'uq_leads_live_phone', 'uq_leads_tracking_token']
+```
+
+The predicate is a module-level constant (`models.py:78-80`):
 
 ```python
-_REGISTERED_PHONE_PREDICATE = "lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'"
+_LIVE_PHONE_PREDICATE = (
+    "lead_type = 'REGISTER_LEAD' "
+    "AND (in_flight_at IS NOT NULL OR registration_status = 'REGISTERED')"
+)
 ```
 
 and is passed as **both** `sqlite_where` and `postgresql_where`
-(`models.py:212-213`):
+(`models.py:233-234`):
 
 ```python
 Index(
-    "uq_leads_registered_phone",
+    "uq_leads_live_phone",
     "phone",
     unique=True,
-    sqlite_where=text(_REGISTERED_PHONE_PREDICATE),
-    postgresql_where=text(_REGISTERED_PHONE_PREDICATE),
+    sqlite_where=text(_LIVE_PHONE_PREDICATE),
+    postgresql_where=text(_LIVE_PHONE_PREDICATE),
 ),
 ```
 
-The new index follows the same shape with its own constant (`models.py:81`,
-`:216-222`):
-
-```python
-_IN_FLIGHT_PREDICATE = "in_flight_at IS NOT NULL"
-...
-Index(
-    "uq_leads_in_flight_phone",
-    "phone",
-    unique=True,
-    sqlite_where=text(_IN_FLIGHT_PREDICATE),
-    postgresql_where=text(_IN_FLIGHT_PREDICATE),
-),
-```
-
-Passing the predicate to **both** dialects is load-bearing, and the migration's
-own notes record what happens when it is not: `0004` was first written with only
-`postgresql_where`, which on SQLite would have built a full unique index on
-`phone` — one lead per phone for all time — silently destroying the
-`PENDING`-retry design. That mistake was caught while writing the migration, and
-the constant is passed twice because of it.
-
-Rendered DDL for the first index, quoted from the previous revision of this
-document, where it was compiled from the ORM object for each dialect (no database
+**Compiled at this revision** for both dialects from the ORM object (no database
 involved — this is SQLAlchemy's own DDL compiler):
 
 ```sql
 -- sqlite
-CREATE UNIQUE INDEX uq_leads_registered_phone ON leads (phone)
-  WHERE lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'
+CREATE UNIQUE INDEX uq_leads_live_phone ON leads (phone)
+  WHERE lead_type = 'REGISTER_LEAD' AND (in_flight_at IS NOT NULL OR registration_status = 'REGISTERED')
 
 -- postgresql
-CREATE UNIQUE INDEX uq_leads_registered_phone ON leads (phone)
-  WHERE lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'
+CREATE UNIQUE INDEX uq_leads_live_phone ON leads (phone)
+  WHERE lead_type = 'REGISTER_LEAD' AND (in_flight_at IS NOT NULL OR registration_status = 'REGISTERED')
 ```
 
-**Not reproduced for `uq_leads_in_flight_phone`:** the DDL above is quoted from
-the previous revision of this document, and the compiler was not re-run for the
-new index while writing this one. The predicate and the two dialect arguments are
-quoted from the source (`models.py:81`, `:220-221`) and from the migration
-(`0004_phone_claim.py:50`, `:77-78`, `:91-92`), which is a reading, not a
-compilation. §9 records this as an open gap.
+Passing the predicate to **both** dialects is load-bearing, and `0004` had already
+been caught by its absence: it was first written with only `postgresql_where`,
+which on SQLite would have built a full unique index on `phone` — one lead per
+phone for all time — silently destroying the `PENDING`-retry design. `0005`
+follows the corrected shape (`0005_live_phone_rule.py:74-85`).
 
-The Alembic migration declares the identical predicate as its own constant
-(spelled without the leading underscore) and passes it the same way
-(`backend/alembic/versions/0001_create_leads.py:34`, `:165-174`), so the migrated
-schema and the ORM metadata stay in step; `0004` does the same for the new index
-(`0004_phone_claim.py:49-50`, `:85-93`). Parity is asserted rather than trusted,
+**Why one index and not two — a correction this document had to make.** The
+previous revision of this section described **two** partial unique indexes,
+`uq_leads_registered_phone` and `uq_leads_in_flight_phone`, and argued that the
+claim could not be time-based because a partial-index predicate must be immutable.
+Both of those statements are now superseded: the two indexes are **gone**
+(`0005_live_phone_rule.py:52-53`), replaced by one, and the immutability argument
+is *why the rule is stated this way* rather than why there are two indexes.
+
+The two-index design covered the two states **separately**, which left a window
+between them: A releases its claim, and B — whose duplicate pre-check ran before A
+committed — inserts into the now-free claim, calls the provider a second time, and
+only then collides with A's `REGISTERED` row. CI measured it as
+`the provider was called 2 time(s) for one phone; expected exactly 1`, roughly one
+run in twelve, and never on a faster local machine. One index whose predicate is
+`(in_flight_at IS NOT NULL OR registration_status = 'REGISTERED')` closes the
+window, because A's registered row stays inside the predicate after A releases its
+claim (`0005_live_phone_rule.py:17-32`). `docs/REGISTRATION-FLOW.md` §3.4 holds the
+reproduction and the deterministic test that replaced the timing-dependent
+measurement.
+
+The Alembic migration declares the same predicate as its own constant and passes
+it the same way (`0005_live_phone_rule.py:55-58`, `:74-85`), and drops the two
+indexes it replaces (`:52-53`, `:88-101`). Parity is asserted rather than trusted,
 by set **equality** between the migrated schema and `Lead.__table__` — columns,
 nullability and index names (`backend/tests/test_alembic.py:117-141`), and the
-named head (`:183`, `== "0004_phone_claim"`). One gap opened in `f626644`: the
-static enumerations `EXPECTED_COLUMNS` (`:21-54`) and `EXPECTED_INDEXES`
-(`:56-63`) are compared with `<=` (`:105`, `:114`) and were **not** extended with
-`in_flight_at` or `uq_leads_in_flight_phone`, so those two tests no longer name
-the new objects; the equality test at `:117-141` is what covers them.
+named head (`:159`, now `== "0005_live_phone_rule"`, was `0004_phone_claim`).
+The enumerations `EXPECTED_COLUMNS` and `EXPECTED_INDEXES` are compared with
+`<=`, so they can under-enumerate without failing — which is exactly what
+happened when the claim landed: they were **not** extended with `in_flight_at` or
+the new index, and two tests quietly stopped meaning what they look like. That gap
+is **closed**: both sets are now derived from the ORM (`test_alembic.py:25-39`), so
+they cannot drift by omission again, and the equality test at `:117-141` remains
+the stronger check.
 
 **Why partial — the registered rule.** The business rule is "at most one
 `REGISTERED` registration lead per phone number", and `PENDING`/`FAILED` rows are
@@ -918,11 +924,12 @@ This section is the honest limit of the document above.
    recorded elsewhere. This document describes mechanism, not readiness. The
    count belongs to the revision documented at the top; it was **not** re-measured
    for `f626644`, whose own commit message records different counts.
-8. **The DDL text for `uq_leads_in_flight_phone` was not compiled.** §7.3
-   reproduces the rendered DDL for `uq_leads_registered_phone` — quoted from the
-   previous revision — and deliberately does **not** invent the equivalent block
-   for the new index: the SQLAlchemy compiler was not run here (its dependencies
-   are not installed in the environment this revision was written in), so the
-   predicate and the two dialect arguments are read from source, not produced by
-   the compiler. The parity test (`backend/tests/test_alembic.py`) is what would
+8. **The DDL gap is closed; the DDL is now compiled.** The previous revision
+   recorded that the phone index's DDL could not be compiled because SQLAlchemy
+   was not installed where it was written, and quoted the *old* index's DDL from
+   an even earlier revision instead. That constraint no longer holds: this
+   revision compiled `uq_leads_live_phone` from the ORM for both dialects, §7.3
+   quotes the output, and the same run lists `Lead.__table__`'s indexes so the
+   six-name inventory is measured rather than transcribed. The two indexes the
+   old text described no longer exist (`0005_live_phone_rule.py:52-53`). The parity test (`backend/tests/test_alembic.py`) is what would
    catch a discrepancy, and it was not run either.
