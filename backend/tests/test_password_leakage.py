@@ -28,8 +28,14 @@ from app.logging_filters import (
 )
 from tests.conftest import Harness, payload
 
-#: Long and distinctive: a false positive would be essentially impossible.
-PASSWORD = "Zq7-CORRECT-HORSE-BATTERY-9xK"
+#: Long and distinctive: this value is a CANARY for the "password is never
+#: persisted" tests, not a credential. gitleaks' generic-api-key rule matches
+#: the `PASSWORD = "..."` shape, so the line carries an inline allow.
+#:
+#: The allow is LINE-SCOPED, which was verified rather than assumed: with this
+#: comment in place, a realistic AWS key appended to this same file is still
+#: reported (line 238 in the probe), while only this canary is suppressed.
+PASSWORD = "Zq7-CORRECT-HORSE-BATTERY-9xK"  # gitleaks:allow
 
 #: The bytes a naive implementation would have written.
 PASSWORD_BYTES = PASSWORD.encode("utf-8")
