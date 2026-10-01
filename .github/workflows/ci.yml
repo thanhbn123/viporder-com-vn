@@ -88,6 +88,29 @@ jobs:
         # on the homepage. Checked as a program, not a comment.
         run: python tools/check_nginx_config.py
 
+  js-tests:
+    name: JS tests (registration failure handling)
+    runs-on: ubuntu-latest
+    needs: head
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.head.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Registration failure handling
+        # No dependencies and no browser: `node:test` and `node:assert` are built
+        # in, so this adds no supply-chain surface to a project that audits its
+        # dependencies and has no lockfile to police.
+        #
+        # This job exists because the browser layer was the ONLY part of the
+        # project verified by reading. The bug it now guards was not a typo - a
+        # change in the SERVICE gave an existing HTTP status a new meaning, and
+        # the client was reading the status. Nothing about that shape is specific
+        # to this one file, so the layer needs to be executable.
+        run: node --test "tools/js/*.test.js"
+
   # ---------------------------------------------------------------------------
   # Backend jobs (G02/G03). Each one verifies the PR head SHA, not GitHub's
   # synthetic merge commit. The suite is fully offline: it must never reach a
