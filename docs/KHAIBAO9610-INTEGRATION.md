@@ -82,7 +82,13 @@ Everything in this section comes from the owner's own prior integration work,
 not from documentation. It is labelled by confidence, and **none of it has been
 verified against the live system from this repository.**
 
-### 4.1 Observed in working code — endpoint almost certainly exists
+### 4.1 Where the earlier beliefs came from
+
+> Superseded by §4.2 for everything the public client can settle. Kept because
+> this is the source of the *login-as-the-customer* idea, and knowing where a
+> belief came from is how you tell later whether it still applies.
+
+Observed in the owner's own prior automation:
 
 Source: a customer-code flow the owner runs today.
 
@@ -99,30 +105,106 @@ Source: a customer-code flow the owner runs today.
 | Transport gotcha | Cloudflare **Error 1010** rejects non-browser clients → a real browser `User-Agent` is required |
 | Separate admin API | `https://apiviporder.com/api/v1` (Laravel + JWT), used with a read-only account |
 
-### 4.2 Unknown — must be answered by the provider
+### 4.2 Measured directly from the live client — 2026-10-01
 
-See §6. These are not gaps in effort; they are information only the other side
-holds.
+On 2026-10-01 the public customer portal's own JavaScript bundle was fetched and
+read. This is the code the real registration form runs, so it is a **measurement
+of the shipped client**, not documentation and not a guess.
 
-### 4.3 A real architectural problem, not a detail
+Method (read-only; no account was created and no POST was ever sent):
 
-The observed flow obtains the customer code by **logging in as the customer**
-with a shared default password (`confirmPassword`, then `POST /login`).
+```
+GET https://khachhang.viporder.com.vn/                      -> 200, 3,061 bytes
+GET https://khachhang.viporder.com.vn/assets/index.e00575c6.js -> 200, 2,091,266 bytes
+```
 
-That cannot be how a public website works:
+**Confirmed, verbatim from the bundle:**
 
-* the customer chooses **their own** password here, and this project forbids
-  storing plaintext passwords at any layer — so the site cannot log in as them
-  afterwards;
-* a shared default password on a public signup form would give anyone who knows
-  a phone number access to that customer's account;
-* it would mean the website holds a credential that unlocks a third-party
-  account, which is a liability the owner should not accept.
+| Fact | Value |
+|---|---|
+| API base | `baseURL: "https://apiviporder.com/frontend/v1/"` |
+| Registration call | `await en.post("register", payload)` |
+| Effective endpoint | **`POST https://apiviporder.com/frontend/v1/register`** |
+| Request body | exactly `{ name, phone, email, password, confirmPassword, acceptTerms }` |
+| Login | `en.post("login", ...)` |
+| Profile | `en.get("auth/profile")` |
+| Other client calls | `auth/logout`, `auth/profile-update`, `password/email`, `password/reset`, `/customers`, `/warehouse-imports`, `/package-sealings`, `/dashboard/*` |
 
-**Therefore the customer code must be returned by the registration response
-itself, or the provider must expose a purpose-built endpoint.** This is question
-5/6 in §6, and it is the single most important thing to settle. Everything else
-is mechanical.
+Client-side rules the portal itself enforces (useful for matching validation, not
+for trusting it):
+
+* `password !== confirmPassword` → *"Mật khẩu xác nhận không khớp!"*
+* phone must match `/^[0-9]{10,11}$/` → *"Số điện thoại không hợp lệ!"*
+* password strength: length ≥ 8, lower + upper, digit, symbol → weak/medium/strong
+
+### 4.3 The blocking question — now ANSWERED, and the answer is no
+
+The register call site, verbatim (identifiers shortened):
+
+```js
+const { data: u } = await en.post("register", l);
+ii.success(u.message || "Đăng ký thành công! Vui lòng đăng nhập.");
+t.push("/login");
+```
+
+**The client reads only `u.message` from the registration response and then
+redirects to `/login`.** It never reads a customer code — and `customer_code` /
+`customerCode` appear **zero** times anywhere in the bundle.
+
+So: **`POST /frontend/v1/register` does not hand back the customer code.** The
+code is obtained only after authenticating, from the profile/customer endpoints.
+
+This changes the question from "we don't know" to a definite constraint:
+
+> A public site on `viporder.com.vn` that collects the customer's **own**
+> password cannot then authenticate as that customer to read their code. The
+> register endpoint alone is therefore **not sufficient** to complete PATH A.
+
+The three options, and the decision is the owner's:
+
+1. **The provider adds (or reveals) an endpoint that returns the code from the
+   registration call itself.** Cleanest. This is question 5/6 in §6 and is now
+   the *only* thing needed to unblock real integration.
+2. **VIPORDER registers the customer, then the customer logs in at
+   `khachhang.viporder.com.vn` and reads their own code there.** No credential
+   handling on our side. The new site's success screen would then say "your
+   account is created — sign in to see your customer code", which is truthful
+   and needs nothing new from the provider.
+3. **The site logs in as the customer**, which requires storing or minting a
+   password. **Rejected on this project's own rules**: it would put a credential
+   that unlocks a third-party account into our lead store, and a shared default
+   password on a public form would expose every customer to anyone who knows a
+   phone number.
+
+**Option 2 is available today and needs nothing external.** It was not obvious
+before this measurement, because the client code had not been read.
+
+### 4.4 Still unknown — genuinely provider-only
+
+Everything below cannot be obtained by reading a public client, because it is
+server-side behaviour or a business decision. See §6.
+
+* whether the register **response** carries the code in a field this client
+  simply ignores (possible — the client only reads `message`); this is the one
+  fact that would move option 1 from "ask" to "verify"
+* duplicate-customer response shape
+* validation-failure response shape
+* rate limits
+* timeout and retry safety (is the call idempotent?)
+* whether a staging endpoint and credentials exist
+* the **consent basis**: is VIPORDER permitted to register customers on their
+  behalf from `viporder.com.vn`?
+* IP allow-listing requirements
+
+### 4.5 A note on how §4.3 was previously described
+
+An earlier revision of this document called the login-as-the-customer flow *"the
+observed flow"*. It was observed in the owner's own prior automation, but it is
+**not** what the customer portal does — the portal redirects to login and lets
+the customer see their own code. The distinction matters, because it changes the
+recommendation: the portal's own behaviour (option 2) is both safe and available
+now, whereas copying the automation's behaviour would import a credential risk
+the portal itself does not have.
 
 ---
 
@@ -153,12 +235,12 @@ than a guess.**
 
 | # | Question | Why it matters |
 |---|---|---|
-| 1 | Full registration endpoint URL | base configuration |
-| 2 | HTTP method | adapter |
+| 1 | Full registration endpoint URL | **ANSWERED** by measurement — `POST https://apiviporder.com/frontend/v1/register` (§4.2) |
+| 2 | HTTP method | **ANSWERED** — `POST` (§4.2) |
 | 3 | Auth mechanism (none / API key / Basic / OAuth / JWT) and where the secret goes | adapter + secret handling |
-| 4 | Exact request field names, types, required vs optional | request mapping |
-| 5 | Is a password required? Must the **customer's own** password be forwarded? | §4.3 — the blocking design question |
-| 6 | Does the success response return the customer code **directly**? | determines whether a second call is needed at all |
+| 4 | Exact request field names, types, required vs optional | **PARTLY ANSWERED** — body is exactly `{name, phone, email, password, confirmPassword, acceptTerms}`; which are *required server-side* is still unknown (§4.2) |
+| 5 | Is a password required? Must the **customer's own** password be forwarded? | **ANSWERED: yes, required** — the endpoint takes `password` + `confirmPassword`. So the customer's own password must be forwarded; it is never stored (§4.2, §4.3) |
+| 6 | Does the success response return the customer code **directly**? | **ANSWERED: not for this client** — it reads only `message` and redirects to login; `customer_code` appears zero times in the bundle. A server-side field may still exist that the client ignores — that is the one thing worth confirming (§4.3, §4.4) |
 | 7 | Duplicate-customer response: status code + body | `DUPLICATE` mapping |
 | 8 | Validation-failure response: status code + body | `INVALID` mapping |
 | 9 | Is the call idempotent? Is retrying safe? | retry policy |
