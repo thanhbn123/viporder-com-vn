@@ -18,49 +18,25 @@ import sqlalchemy as sa
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
-EXPECTED_COLUMNS = {
-    "lead_id",
-    "lead_type",
-    "registration_status",
-    "full_name",
-    "phone",
-    "phone_display",
-    "email",
-    "province",
-    "service_interest",
-    "source",
-    "medium",
-    "campaign",
-    "content",
-    "term",
-    "landing_page",
-    "referrer",
-    "external_customer_id",
-    "external_customer_code",
-    "idempotency_key",
-    "tracking_token",
-    "attempt_count",
-    "last_error_code",
-    "last_error_message",
-    "created_at",
-    "updated_at",
-    # Added by 0002_consent_and_fingerprint.
-    "request_fingerprint",
-    "consent_given_at",
-    "consent_version",
-    # Added by 0003_stored_response.
-    "response_status",
-    "response_body",
-}
 
-EXPECTED_INDEXES = {
-    "ix_leads_phone",
-    "ix_leads_registration_status",
-    "ix_leads_created_at",
-    "uq_leads_idempotency_key",
-    "uq_leads_tracking_token",
-    "uq_leads_registered_phone",
-}
+def _orm_columns() -> set[str]:
+    from app.models import Lead
+
+    return {c.name for c in Lead.__table__.columns}
+
+
+def _orm_indexes() -> set[str]:
+    from app.models import Lead
+
+    return {i.name for i in Lead.__table__.indexes if i.name}
+
+
+# Derived, never hand-listed. These were two hand-maintained sets of 29 names and
+# 7 index names — the same fact written down twice — and they silently stopped
+# enumerating the moment a migration added a column, because the assertions use
+# `<=`. Deriving them means a new column is covered the instant the model has it.
+EXPECTED_COLUMNS = _orm_columns()
+EXPECTED_INDEXES = _orm_indexes()
 
 
 def _run_alembic(url: str, *args: str) -> subprocess.CompletedProcess:
@@ -180,11 +156,15 @@ def test_migration_revision_is_named_as_documented() -> None:
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_current_head() == "0004_phone_claim"
+    assert script.get_current_head() == "0005_live_phone_rule"
 
 
-def test_alembic_upgrades_one_revision_at_a_time(tmp_path: Path) -> None:
-    """0001 then 0002, so each step is exercised on its own."""
+def test_alembic_upgrades_from_0001_to_head(tmp_path: Path) -> None:
+    """0001, then head — asserting the columns 0002 adds actually appear.
+
+    Named honestly: this jumps to head, so it does NOT exercise 0003 or 0004 as
+    individual steps. `test_every_revision_applies_one_step_at_a_time` does that.
+    """
     url = f"sqlite:///{tmp_path / 'stepped.db'}"
 
     first = _run_alembic(url, "upgrade", "0001_create_leads")
@@ -351,3 +331,58 @@ def test_a_json_body_survives_a_migration_round_trip(tmp_path: Path) -> None:
     assert first.status_code == 409, first.text
     assert replay.status_code == 409, replay.text
     assert replay.json() == first.json()
+
+
+def test_every_revision_applies_one_step_at_a_time(tmp_path: Path) -> None:
+    """Walk the entire migration chain, one revision per command.
+
+    This is how a production deploy applies migrations, and it was not actually
+    tested: the neighbouring test steps 0001 then jumps to head, so 0003 and 0004
+    were only ever applied as part of a single jump. A migration that works in a
+    jump and fails on its own is precisely the kind of thing that turns up during
+    a deploy.
+
+    The chain is derived from the script directory rather than hand-listed, so a
+    new migration is covered the moment it is added instead of when someone
+    remembers to extend a hard-coded list.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(BACKEND_DIR / "alembic.ini"))
+    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    script = ScriptDirectory.from_config(config)
+
+    chain = [rev.revision for rev in script.walk_revisions()][::-1]  # base -> head
+    assert len(chain) >= 4, f"expected at least four revisions, got {chain}"
+    assert script.get_current_head() == chain[-1]
+
+    url = f"sqlite:///{tmp_path / 'stepped-all.db'}"
+    for revision in chain:
+        result = _run_alembic(url, "upgrade", revision)
+        assert result.returncode == 0, (
+            f"upgrading to {revision} on its own failed:\n{result.stderr}"
+        )
+
+    # Stepping to the head again must be a no-op, not an error.
+    again = _run_alembic(url, "upgrade", chain[-1])
+    assert again.returncode == 0, again.stderr
+
+    engine = sa.create_engine(url)
+    try:
+        inspector = sa.inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("leads")}
+        indexes = {i["name"] for i in inspector.get_indexes("leads")}
+    finally:
+        engine.dispose()
+
+    # The last migration's artefacts must be present after the walk.
+    assert "in_flight_at" in columns, f"0004 did not apply; columns: {sorted(columns)}"
+    assert "uq_leads_live_phone" in indexes, (
+        f"0005's phone rule is missing; indexes: {sorted(indexes)}"
+    )
+    # 0005 REPLACES these two, so their absence is the point, not an oversight.
+    assert "uq_leads_in_flight_phone" not in indexes, "0005 did not drop the old index"
+    assert "uq_leads_registered_phone" not in indexes, "0005 did not drop the old index"
+    # And the earlier columns too — a later migration must not remove them.
+    assert {"consent_version", "request_fingerprint", "response_body"} <= columns
