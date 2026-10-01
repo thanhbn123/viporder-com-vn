@@ -82,6 +82,11 @@ jobs:
           python-version: "3.12"
       - name: Site checks
         run: python tools/check_site.py
+      - name: Nginx config guard (add_header inheritance)
+        # Nginx drops ALL server-level add_header for any location that declares
+        # its own, which once cost this project its entire security-header set
+        # on the homepage. Checked as a program, not a comment.
+        run: python tools/check_nginx_config.py
 
   # ---------------------------------------------------------------------------
   # Backend jobs (G02/G03). Each one verifies the PR head SHA, not GitHub's

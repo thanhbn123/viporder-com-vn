@@ -16,6 +16,7 @@ Warnings never fail the build; they are surfaced so they cannot be forgotten.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from html.parser import HTMLParser
@@ -41,6 +42,24 @@ VOID_TAGS = {
 }
 
 SKIP_ID_CHECK = {"#"}  # placeholder links are rejected separately
+
+# Script `type` values that mean "this block is executable JavaScript".
+# An absent or empty type means JavaScript (the HTML default).
+# Anything else — application/ld+json, application/json, text/template — is
+# DATA, is never executed, and must not be treated as an inline-script risk.
+JS_SCRIPT_TYPES = {
+    "", "module", "text/javascript", "application/javascript",
+    "text/ecmascript", "application/ecmascript",
+}
+DATA_SCRIPT_TYPES = {"application/ld+json", "application/json"}
+
+
+def is_executable_script_type(type_attr: str | None) -> bool:
+    return (type_attr or "").strip().lower() in JS_SCRIPT_TYPES
+
+
+def is_jsonld_type(type_attr: str | None) -> bool:
+    return (type_attr or "").strip().lower() == "application/ld+json"
 
 
 class Findings:
@@ -76,6 +95,8 @@ class Doc(HTMLParser):
         self._in_title = False
         self._title_buf: list[str] = []
         self._tag_counts: dict[str, int] = {}
+        self.jsonld_blocks: list[str] = []   # content of application/ld+json
+        self._jsonld_buf: list[str] | None = None
 
     # -- helpers
     def count(self, tag: str) -> int:
@@ -106,6 +127,10 @@ class Doc(HTMLParser):
             self.links.append(a["href"])
         if tag == "script" and a.get("src"):
             self.scripts.append(a["src"])
+        if tag == "script" and is_jsonld_type(a.get("type")):
+            # Capture the body so it can be parsed as JSON later. A malformed
+            # block is silently ignored by search engines, so it must fail here.
+            self._jsonld_buf = []
         if tag == "img":
             self.images.append((a.get("src"), a.get("alt")))
         if tag == "input":
@@ -134,6 +159,21 @@ class Doc(HTMLParser):
             self._stack.pop()
 
     def handle_endtag(self, tag):
+        if tag == "script" and self._jsonld_buf is not None:
+            self.jsonld_blocks.append("".join(self._jsonld_buf))
+            self._jsonld_buf = None
+        if tag == "title":
+            self._in_title = False
+            self.title = "".join(self._title_buf).strip()
+        for i in range(len(self._stack) - 1, -1, -1):
+            if self._stack[i] == tag:
+                del self._stack[i:]
+                break
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self._jsonld_buf is not None:
+            self.jsonld_blocks.append("".join(self._jsonld_buf))
+            self._jsonld_buf = None
         if tag == "title":
             self._in_title = False
             self.title = "".join(self._title_buf).strip()
@@ -145,6 +185,8 @@ class Doc(HTMLParser):
     def handle_data(self, data):
         if self._in_title:
             self._title_buf.append(data)
+        if self._jsonld_buf is not None:
+            self._jsonld_buf.append(data)
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +252,41 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
     if inline:
         f.error(where, f"inline event handler attributes present on: {sorted(set(inline))}")
 
-    # Inline <script> bodies (CSP-hostile)
-    if doc.count("script") > len(doc.scripts):
-        f.error(where, "inline <script> without src present (CSP-hostile)")
+    # Inline <script> bodies (CSP-hostile).
+    # A <script> element is only "executable" when it has no `src` AND its type
+    # is JavaScript. Data blocks such as application/ld+json are NOT executable
+    # and must not be flagged — flagging them would push people to move
+    # structured data out of the page, which is worse for SEO, not better.
+    inline_js = [
+        a for t, a in doc.tags
+        if t == "script" and not a.get("src") and is_executable_script_type(a.get("type"))
+    ]
+    if inline_js:
+        f.error(where, f"{len(inline_js)} inline executable <script> block(s) "
+                       f"without src (CSP-hostile)")
+
+    # Structured data must actually parse. A malformed JSON-LD block is worse
+    # than none: search engines silently ignore it while the page still looks
+    # correct to a human.
+    for idx, block in enumerate(doc.jsonld_blocks):
+        stripped = block.strip()
+        if not stripped:
+            f.error(where, f"JSON-LD block #{idx + 1} is empty")
+            continue
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            f.error(where, f"JSON-LD block #{idx + 1} is not valid JSON: {exc}")
+            continue
+        if not isinstance(data, (dict, list)):
+            f.error(where, f"JSON-LD block #{idx + 1} must be an object or array")
+            continue
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            if not isinstance(item, dict) or "@context" not in item:
+                f.warn(where, f"JSON-LD block #{idx + 1} has an entry without @context")
+        f.warn(where, f"JSON-LD block #{idx + 1} present ({len(items)} entr(ies)) — "
+                      f"verify every property is true, not aspirational")
 
 
 def check_anchors_and_links(doc: Doc, page: Path, f: Findings) -> None:
