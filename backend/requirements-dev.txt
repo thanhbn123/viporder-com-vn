@@ -5,3 +5,6 @@ pytest==9.1.1
 ruff==0.16.9
 bandit==1.9.4
 pip-audit==2.10.1
+# Used by tests/test_env_templates.py to read docker-compose.yml. Declared
+# explicitly rather than relied on transitively through bandit.
+PyYAML==6.0.3

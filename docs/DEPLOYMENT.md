@@ -116,7 +116,7 @@ chown -R viporder:viporder /srv/viporder/site
 install -m 0640 -o root -g viporder \
   deploy/env.production.example /etc/viporder/viporder.env
 $EDITOR /etc/viporder/viporder.env
-#   DATABASE_URL, SECRET_KEY, ADMIN_API_TOKEN
+#   DATABASE_URL, ADMIN_API_TOKEN
 #   KHAIBAO9610_MODE stays "mock" until issue #4 is resolved
 chmod 0640 /etc/viporder/viporder.env
 ```
