@@ -18,7 +18,9 @@ of a short random substring.
 
 from __future__ import annotations
 
+import io
 import logging
+import sys
 
 from app.logging_filters import (
     PasswordRedactionFilter,
@@ -158,28 +160,126 @@ def test_lead_model_has_no_password_column() -> None:
     assert "password" not in columns
 
 
+class PasswordEchoingProvider:
+    """A provider that puts the password into its exception message.
+
+    This is the shape the verifier used to falsify the first version of this
+    control: the password reaches the *traceback*, not the log message, so
+    scrubbing ``record.msg`` alone was not enough.
+    """
+
+    name = "password-echoing"
+
+    def register(self, request):  # type: ignore[no-untyped-def]
+        raise RuntimeError(f"upstream rejected credentials for {request.password}")
+
+
 def test_provider_failure_traceback_does_not_leak_the_password(make_harness, caplog) -> None:
     """An exception raised while holding the password must not print it.
 
-    The provider's local variables include the plaintext password; Python's
-    default traceback formatting prints source lines, not locals — and the
-    redacting formatter is the second line of defence.
+    The provider's exception message and its local variables both contain the
+    plaintext password. Rendered tracebacks are scrubbed at the *record*, not in
+    a formatter, so this holds for any handler.
     """
-    from app.providers.base import ProviderConfigurationError
-
-    class ExplodingProvider:
-        name = "exploding"
-
-        def register(self, request):  # type: ignore[no-untyped-def]
-            raise ProviderConfigurationError(f"provider exploded {request.phone}")
-
-    harness = make_harness(provider=ExplodingProvider())
+    harness = make_harness(provider=PasswordEchoingProvider())
     caplog.set_level(logging.DEBUG)
     response = harness.post_registration(payload(password=PASSWORD))
 
     assert response.status_code == 202
     assert PASSWORD not in response.text
+
+    # Positive control: the traceback really was logged and really did reach
+    # caplog. Without this, "PASSWORD not in caplog.text" could pass because
+    # nothing was captured at all.
+    assert "Traceback (most recent call last)" in caplog.text
+    assert "upstream rejected credentials for" in caplog.text
+    assert "<redacted>" in caplog.text
+
     assert PASSWORD not in caplog.text
+    for record in caplog.records:
+        assert PASSWORD not in record.getMessage()
+        assert PASSWORD not in (record.exc_text or "")
+
+
+def test_exception_traceback_is_scrubbed_before_any_handler_formats_it() -> None:
+    """The record itself must carry no readable password — unit level.
+
+    A handler that formats the record itself bypasses any formatter we install,
+    so the guarantee has to live on the record.
+    """
+    from app.logging_filters import scrub_record
+
+    try:
+        raise RuntimeError(f"rejected credentials for {PASSWORD}")
+    except RuntimeError:
+        exc_info = sys.exc_info()
+
+    record = logging.LogRecord(
+        "test.traceback", logging.ERROR, __file__, 1, "registration failed", (), exc_info
+    )
+    scrub_record(record)
+
+    assert record.exc_info is None, "exc_info must be cleared so no formatter can render it"
+    assert getattr(record, "exc_info_scrubbed", False) is True
+    assert record.exc_text is not None
+    assert PASSWORD not in record.exc_text
+    assert "rejected credentials for" in record.exc_text
+    # And through a plain formatter — the kind any third-party handler would use.
+    assert PASSWORD not in logging.Formatter().format(record)
+
+
+def test_password_does_not_leak_through_a_handler_registered_before_the_app(
+    make_harness,
+) -> None:
+    """A library installing a root handler before `create_app()`.
+
+    That is an ordinary habit, and it produces a handler this application never
+    configured and cannot install a formatter on. Redaction therefore has to
+    happen at record creation.
+    """
+    buffer = io.StringIO()
+    handler = logging.StreamHandler(buffer)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        harness = make_harness(provider=PasswordEchoingProvider())
+        response = harness.post_registration(payload(password=PASSWORD))
+    finally:
+        root.removeHandler(handler)
+        handler.close()
+
+    captured = buffer.getvalue()
+    assert response.status_code == 202
+
+    # Positive control: this foreign handler really did receive the traceback.
+    assert "Traceback (most recent call last)" in captured
+    assert "upstream rejected credentials for" in captured
+    assert "<redacted>" in captured
+
+    assert PASSWORD not in captured
+
+
+def test_basicconfig_handler_is_covered_too(make_harness) -> None:
+    """The same hole, via the exact API a library would use."""
+    buffer = io.StringIO()
+    root = logging.getLogger()
+    before = list(root.handlers)
+    logging.basicConfig(level=logging.DEBUG, stream=buffer, force=True)
+    try:
+        harness = make_harness(provider=PasswordEchoingProvider())
+        harness.post_registration(payload(password=PASSWORD))
+    finally:
+        for added in [h for h in root.handlers if h not in before]:
+            root.removeHandler(added)
+        root.handlers[:] = before
+
+    captured = buffer.getvalue()
+    # `force=True` guarantees basicConfig installed its own handler, so the
+    # positive controls cannot pass vacuously on an empty buffer.
+    assert "Traceback (most recent call last)" in captured
+    assert "upstream rejected credentials for" in captured
+    assert PASSWORD not in captured
 
 
 # --- the redaction filter itself -------------------------------------------

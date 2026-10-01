@@ -44,6 +44,10 @@ EXPECTED_COLUMNS = {
     "last_error_message",
     "created_at",
     "updated_at",
+    # Added by 0002_consent_and_fingerprint.
+    "request_fingerprint",
+    "consent_given_at",
+    "consent_version",
 }
 
 EXPECTED_INDEXES = {
@@ -173,4 +177,89 @@ def test_migration_revision_is_named_as_documented() -> None:
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_current_head() == "0001_create_leads"
+    assert script.get_current_head() == "0002_consent_and_fingerprint"
+
+
+def test_alembic_upgrades_one_revision_at_a_time(tmp_path: Path) -> None:
+    """0001 then 0002, so each step is exercised on its own."""
+    url = f"sqlite:///{tmp_path / 'stepped.db'}"
+
+    first = _run_alembic(url, "upgrade", "0001_create_leads")
+    assert first.returncode == 0, first.stderr
+
+    engine = sa.create_engine(url)
+    try:
+        after_0001 = {c["name"] for c in sa.inspect(engine).get_columns("leads")}
+    finally:
+        engine.dispose()
+    assert "consent_given_at" not in after_0001
+
+    second = _run_alembic(url, "upgrade", "head")
+    assert second.returncode == 0, second.stderr
+
+    engine = sa.create_engine(url)
+    try:
+        after_0002 = {c["name"] for c in sa.inspect(engine).get_columns("leads")}
+    finally:
+        engine.dispose()
+    assert {"consent_given_at", "consent_version", "request_fingerprint"} <= after_0002
+
+
+def test_0002_is_a_no_op_when_the_columns_already_exist(tmp_path: Path) -> None:
+    """The AUTO_CREATE_SCHEMA path: metadata made the columns, Alembic follows."""
+    from app.db import Database
+    from app.models import Base
+
+    url = f"sqlite:///{tmp_path / 'precreated2.db'}"
+    database = Database(url)
+    Base.metadata.create_all(database.engine)
+    database.dispose()
+
+    for revision in ("0001_create_leads", "head"):
+        result = _run_alembic(url, "upgrade", revision)
+        assert result.returncode == 0, f"{revision}: {result.stderr}"
+
+    engine = sa.create_engine(url)
+    try:
+        columns = {c["name"] for c in sa.inspect(engine).get_columns("leads")}
+    finally:
+        engine.dispose()
+    assert {"consent_given_at", "consent_version", "request_fingerprint"} <= columns
+
+
+def test_0001_refuses_a_wrong_shaped_leads_table(tmp_path: Path) -> None:
+    """A differently-shaped `leads` must not be silently stamped as migrated.
+
+    The old guard returned early whenever *anything* named `leads` existed,
+    which marks an unrelated table as being at this revision. Now it verifies.
+    """
+    url = f"sqlite:///{tmp_path / 'wrongshape.db'}"
+
+    engine = sa.create_engine(url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text("CREATE TABLE leads (lead_id TEXT PRIMARY KEY, something_else TEXT)")
+            )
+    finally:
+        engine.dispose()
+
+    result = _run_alembic(url, "upgrade", "head")
+
+    assert result.returncode != 0, "must fail loudly, not stamp a foreign table"
+    assert "not the table this revision creates" in (result.stderr + result.stdout)
+
+    # Alembic creates its bookkeeping table before running anything, so the
+    # meaningful assertion is that no revision was *stamped*: the database must
+    # not claim to be at head.
+    engine = sa.create_engine(url)
+    try:
+        inspector = sa.inspect(engine)
+        if "alembic_version" in inspector.get_table_names():
+            with engine.connect() as connection:
+                stamped = connection.execute(
+                    sa.text("SELECT version_num FROM alembic_version")
+                ).fetchall()
+            assert stamped == [], f"refused migration must not stamp, got {stamped}"
+    finally:
+        engine.dispose()

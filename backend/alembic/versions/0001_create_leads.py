@@ -8,12 +8,16 @@ Creates the ``leads`` table exactly as ``app.models.Lead`` describes it, so the
 migrated schema and the ORM metadata stay in step. ``tests/test_alembic.py``
 asserts that parity rather than trusting this comment.
 
-Note on the early return: ``AUTO_CREATE_SCHEMA`` lets the application create the
-tables itself (the default for a bare ``uvicorn app.main:app`` in development).
-When that has already happened, running ``alembic upgrade head`` afterwards must
-not explode with "table leads already exists" — the schema is already correct,
-so the migration is a no-op. Real deployments set ``AUTO_CREATE_SCHEMA=no`` and
-let Alembic own the schema.
+Note on the guard: ``AUTO_CREATE_SCHEMA`` lets the application create the tables
+itself (the default for a bare ``uvicorn app.main:app`` in development). When
+that has already happened, running ``alembic upgrade head`` afterwards must not
+explode with "table leads already exists" — the schema is already correct, so
+the migration is a no-op.
+
+"The schema is already correct" is now *checked*, not assumed. An earlier version
+returned early whenever anything named ``leads`` existed, which would silently
+stamp a differently-shaped table as being at this revision. The guard now
+verifies the column set and raises with a clear message when it does not match.
 """
 
 from __future__ import annotations
@@ -29,20 +33,66 @@ depends_on = None
 
 REGISTERED_PHONE_PREDICATE = "lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'"
 
+#: Every column this revision creates. Used to verify — not assume — that an
+#: existing ``leads`` table really is what this revision would have produced.
+EXPECTED_COLUMNS = frozenset(
+    {
+        "lead_id",
+        "lead_type",
+        "registration_status",
+        "full_name",
+        "phone",
+        "phone_display",
+        "email",
+        "province",
+        "service_interest",
+        "source",
+        "medium",
+        "campaign",
+        "content",
+        "term",
+        "landing_page",
+        "referrer",
+        "external_customer_id",
+        "external_customer_code",
+        "idempotency_key",
+        "tracking_token",
+        "attempt_count",
+        "last_error_code",
+        "last_error_message",
+        "created_at",
+        "updated_at",
+    }
+)
 
-def _leads_table_exists() -> bool:
-    """Whether the schema is already materialised.
 
-    In ``--sql`` (offline) mode there is no connection to inspect, and the
-    rendered SQL must still be produced, so the guard is skipped there.
+def _existing_leads_columns() -> set[str] | None:
+    """Columns of an existing ``leads`` table, or ``None`` if there is no table.
+
+    In ``--sql`` (offline) mode there is no connection to inspect and the
+    rendered SQL must still be produced, so ``None`` is returned there.
     """
     if op.get_context().as_sql:
-        return False
-    return "leads" in sa.inspect(op.get_bind()).get_table_names()
+        return None
+    inspector = sa.inspect(op.get_bind())
+    if "leads" not in inspector.get_table_names():
+        return None
+    return {column["name"] for column in inspector.get_columns("leads")}
 
 
 def upgrade() -> None:
-    if _leads_table_exists():
+    existing = _existing_leads_columns()
+    if existing is not None:
+        missing = EXPECTED_COLUMNS - existing
+        if missing:
+            raise RuntimeError(
+                "A 'leads' table already exists but is not the table this "
+                "revision creates. Refusing to stamp it as revision "
+                f"{revision}: missing column(s) {sorted(missing)}. This is a "
+                "different or older schema — reconcile it by hand (or point "
+                "DATABASE_URL at an empty database) before migrating."
+            )
+        # Already materialised by SQLAlchemy metadata: correct, so nothing to do.
         return
 
     op.create_table(

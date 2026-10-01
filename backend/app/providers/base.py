@@ -53,6 +53,11 @@ class RegistrationResult:
     message: str = ""
     http_status: int | None = None
     retryable: bool = False
+    #: Additive extension to the agreed contract: a stable, machine-readable
+    #: reason for an UNAVAILABLE result. Without it a connection refusal and a
+    #: read timeout are indistinguishable in the stored lead (both arrive with
+    #: ``http_status`` None), and a real outage becomes undiagnosable.
+    error_code: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, ProviderStatus):

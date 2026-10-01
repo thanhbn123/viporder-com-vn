@@ -285,3 +285,68 @@ def test_strip_accents() -> None:
 )
 def test_looks_like_duplicate(text: str, expected: bool) -> None:
     assert looks_like_duplicate(text) is expected
+
+
+# --- an outage is not a timeout --------------------------------------------
+
+
+def test_connect_error_is_labelled_unreachable_not_timeout() -> None:
+    """Both arrive with http_status None, so the code has to carry the meaning.
+
+    Calling a refused connection a TIMEOUT makes a real outage undiagnosable
+    from the stored lead.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    result = build(handler).register(REQUEST)
+
+    assert result.status is ProviderStatus.UNAVAILABLE
+    assert result.error_code == "PROVIDER_UNREACHABLE"
+    assert result.http_status is None
+
+
+def test_timeout_is_labelled_timeout() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    result = build(handler).register(REQUEST)
+    assert result.error_code == "PROVIDER_TIMEOUT"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected"),
+    [
+        (500, "PROVIDER_UNAVAILABLE"),
+        (502, "PROVIDER_UNAVAILABLE"),
+        (503, "PROVIDER_UNAVAILABLE"),
+        (504, "PROVIDER_UNAVAILABLE"),
+        (429, "PROVIDER_RATE_LIMITED"),
+    ],
+)
+def test_http_level_unavailability_carries_a_specific_code(status_code: int, expected: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code, text="down")
+
+    assert build(handler).register(REQUEST).error_code == expected
+
+
+def test_unavailable_codes_are_all_distinct() -> None:
+    """The three failure classes must not collapse into one another."""
+
+    def connect(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    def timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    def server_error(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="down")
+
+    codes = {
+        build(connect).register(REQUEST).error_code,
+        build(timeout).register(REQUEST).error_code,
+        build(server_error).register(REQUEST).error_code,
+    }
+    assert codes == {"PROVIDER_UNREACHABLE", "PROVIDER_TIMEOUT", "PROVIDER_UNAVAILABLE"}

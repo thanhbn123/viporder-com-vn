@@ -111,6 +111,29 @@ class Lead(Base):
     # --- Deduplication / tracking ------------------------------------------
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tracking_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: SHA-256 over the canonical request body. An Idempotency-Key alone is not
+    #: a safe replay key: the front end keeps one key for the whole form session
+    #: and only clears it after a completed registration, so "same key, edited
+    #: phone number" is a reachable path. Without this, the replay would hand the
+    #: second customer the first customer's lead and customer code.
+    #:
+    #: The password is deliberately NOT part of the fingerprint. A hash of a
+    #: password is still password-derived material, and storing it would create
+    #: an offline-cracking target.
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # --- Legal / consent ----------------------------------------------------
+    #: When the customer agreed to have an account created, and which wording
+    #: they agreed to. "Consent is required by the schema" is *enforcement*;
+    #: these columns are the *evidence*, which is a different thing.
+    #:
+    #: Nullable so the column can be added to an existing SQLite database
+    #: without inventing a server default; every lead this service creates sets
+    #: both, and a test asserts that.
+    consent_given_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    consent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # --- Retry bookkeeping --------------------------------------------------
     attempt_count: Mapped[int] = mapped_column(

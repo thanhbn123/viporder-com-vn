@@ -126,3 +126,11 @@ def test_redact_request_never_includes_the_password() -> None:
     redacted = redact_request(REQUEST)
     assert "secret-at-least-8" not in str(redacted)
     assert redacted["password"] == "<redacted>"
+
+
+def test_unavailable_behaviours_carry_a_distinct_error_code() -> None:
+    assert MockRegistrationProvider("timeout").register(REQUEST).error_code == "PROVIDER_TIMEOUT"
+    assert (
+        MockRegistrationProvider("unavailable").register(REQUEST).error_code
+        == "PROVIDER_UNAVAILABLE"
+    )

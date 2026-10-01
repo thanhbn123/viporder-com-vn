@@ -203,6 +203,7 @@ class ViporderFrontendProvider:
                 message="The registration service did not respond in time.",
                 http_status=None,
                 retryable=True,
+                error_code="PROVIDER_TIMEOUT",
             )
         except httpx.HTTPError as exc:
             # Includes connection failures, DNS, TLS, protocol errors.
@@ -216,6 +217,8 @@ class ViporderFrontendProvider:
                 message="The registration service could not be reached.",
                 http_status=None,
                 retryable=True,
+                # A refused connection is an outage, not a slow provider.
+                error_code="PROVIDER_UNREACHABLE",
             )
 
         http_status = response.status_code
@@ -249,6 +252,9 @@ class ViporderFrontendProvider:
                 message="The registration service is temporarily unavailable.",
                 http_status=http_status,
                 retryable=True,
+                error_code=(
+                    "PROVIDER_RATE_LIMITED" if http_status == 429 else "PROVIDER_UNAVAILABLE"
+                ),
             )
 
         logger.info("khaibao9610 rejected the registration (HTTP %s)", http_status)

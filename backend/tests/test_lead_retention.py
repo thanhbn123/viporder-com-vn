@@ -173,3 +173,71 @@ def test_provider_protocol_is_satisfied_by_the_adapters() -> None:
 
     assert isinstance(MockRegistrationProvider("success"), RegistrationProvider)
     assert isinstance(UnavailableProvider(), RegistrationProvider)
+
+
+# --- a broken adapter must not become a 5xx --------------------------------
+
+
+class GarbageProvider:
+    """Returns something that is not a RegistrationResult at all."""
+
+    name = "garbage"
+
+    def __init__(self, return_value: object) -> None:
+        self.return_value = return_value
+        self.calls = 0
+
+    def register(self, request):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        return self.return_value
+
+
+@pytest.mark.parametrize(
+    "garbage",
+    [object(), None, {"status": "SUCCESS"}, "SUCCESS", 42, []],
+)
+def test_a_provider_returning_a_non_result_does_not_500(make_harness, garbage: object) -> None:
+    """An adapter bug is our bug, not the customer's. Keep the lead, answer 202."""
+    provider = GarbageProvider(garbage)
+    harness = make_harness(provider=provider)
+    response = harness.post_registration()
+
+    assert response.status_code == 202, response.text
+    assert provider.calls == 1
+    body = response.json()
+    assert body["registration_status"] == "PENDING"
+    assert body["tracking_token"]
+
+    rows = harness.lead_rows()
+    assert len(rows) == 1, "the lead must be retained"
+    assert rows[0].last_error_code == "PROVIDER_CONTRACT_ERROR"
+    assert rows[0].registration_status.value == "PENDING"
+
+
+def test_a_provider_returning_a_result_with_a_bad_status_is_also_contained(
+    make_harness,
+) -> None:
+    """A duck-typed result carrying a bare "SUCCESS" string must not be trusted.
+
+    ``RegistrationResult`` validates its own status, so an honest instance can
+    never hold this — the test forges one to prove that even a result with a
+    look-alike status does not slip past the identity checks in `_apply_result`.
+    The safe outcome is the UNAVAILABLE branch: retained PENDING, 202.
+    """
+    from app.providers.base import RegistrationResult
+
+    class ConfusedProvider:
+        name = "confused"
+
+        def register(self, request):  # type: ignore[no-untyped-def]
+            result = RegistrationResult(status=ProviderStatus.SUCCESS)
+            object.__setattr__(result, "status", "SUCCESS")
+            return result
+
+    harness = make_harness(provider=ConfusedProvider())
+    response = harness.post_registration()
+
+    assert response.status_code == 202, response.text
+    lead = harness.lead_rows()[0]
+    assert lead.registration_status.value == "PENDING"
+    assert lead.external_customer_code is None

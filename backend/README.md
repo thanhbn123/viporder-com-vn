@@ -125,6 +125,7 @@ Responses:
 | `201` | provider confirmed the account | `lead_id`, `registration_status=REGISTERED`, `external_customer_id`, `external_customer_code`, `message`, `login_url` |
 | `202` | provider unavailable, lead kept | as above but `registration_status=PENDING`, null external fields, plus `tracking_token` |
 | `409` | a REGISTERED lead already exists for that phone | `{"error":{"code":"DUPLICATE_PHONE", ...}}` — **never the existing customer code** |
+| `409` | the `Idempotency-Key` was already used for a *different* body | `{"error":{"code":"IDEMPOTENCY_KEY_REUSED", ...}}` — **never the earlier customer's data** |
 | `422` | validation failure | `{"error":{"code":"VALIDATION_ERROR","message":...,"fields":{...}}}` |
 | `400` | malformed JSON, bad `Idempotency-Key` | `{"error":{"code":"INVALID_REQUEST", ...}}` |
 | `413` | body over `MAX_REQUEST_BYTES` | `{"error":{"code":"PAYLOAD_TOO_LARGE", ...}}` |
@@ -138,8 +139,23 @@ Duplicate rule: a phone that already has a `REGISTERED` lead is a duplicate.
 A phone whose earlier lead is `PENDING`/`FAILED` may try again and gets a **new
 row** — two different customers' data is never merged.
 
-Idempotency: the same `Idempotency-Key` returns the original response and does
-not create or re-contact anything.
+Idempotency: an `Idempotency-Key` names one *request*, and a request is the key
+**plus its body**. On replay the stored SHA-256 fingerprint of the canonical body
+is compared:
+
+* same key, same body → the identical stored response, nothing re-sent;
+* same key, **different** body → `409 IDEMPOTENCY_KEY_REUSED`, and nothing about
+  the earlier registration is returned.
+
+That second case is not hypothetical. The front end keeps one key per form
+session and clears it only after a completed registration, so *submit → error →
+correct the phone number → submit again* arrives as the same key with a different
+body. Replaying blindly there would answer customer B with customer A's lead id
+and customer code.
+
+The password is deliberately **not** part of the fingerprint: a hash of a
+password is still password-derived material, and storing one would create an
+offline-cracking target for no benefit.
 
 ### Front-end integration contract
 
@@ -161,8 +177,12 @@ each covered by `tests/test_frontend_contract.py`:
    unconfirmed lead must never be counted as a conversion, so `202` is
    deliberately not softened to `201`.
 4. **`Idempotency-Key` is a UUID, reused across retries of the same form
-   session.** A repeat returns the identical stored response body (including
-   the same `tracking_token` on the `202` path) and creates no second lead.
+   session.** A repeat of the *same body* returns the identical stored response
+   body (including the same `tracking_token` on the `202` path) and creates no
+   second lead. A repeat with a *changed body* — which is what happens when a
+   customer corrects a mistyped phone number and resubmits — is refused with
+   `409 IDEMPOTENCY_KEY_REUSED` instead of handing the second customer the first
+   customer's data.
 
 ### `GET /api/v1/registrations/{lead_id}`
 
@@ -213,6 +233,7 @@ An empty environment variable means "unset" and the default applies.
 | `KHAIBAO9610_USER_AGENT` | browser UA | Cloudflare rejects non-browser clients (Error 1010) |
 | `MOCK_PROVIDER_BEHAVIOUR` | `success` | `success`/`duplicate`/`invalid`/`unavailable`/`timeout`/`error` |
 | `ADMIN_API_TOKEN` | *(empty)* | empty disables the admin route (404) |
+| `ENABLE_API_DOCS` | *(empty)* | empty = on outside production, off in production |
 | `MAX_REQUEST_BYTES` | `65536` | request size limit → 413 |
 | `RATE_LIMIT_ENABLED` | `yes` | |
 | `RATE_LIMIT_ATTEMPTS` | `10` | per IP, per window |
@@ -249,12 +270,19 @@ and setting only the mode raises a configuration error at startup.
 * **Passwords are never persisted, logged, or traced.** There is no password
   column, no shadow copy, no request-body log line. `RegistrationCreate.password`
   is a pydantic `SecretStr`, so even `repr()` and `model_dump()` cannot print it.
-  A logging filter plus a log-record factory scrub literal passwords and any
-  `password` key from every record, in every handler, regardless of handler
-  order. `tests/test_password_leakage.py` submits a registration and then
-  searches the raw SQLite **file bytes**, all captured **log records**, and the
-  **response body** for the password; it also asserts the search is meaningful
-  by finding the phone number in the same file.
+  Redaction happens in the **log-record factory**, at record creation, before any
+  handler runs — so it holds for handlers this application does not own (a test
+  capture handler, an APM agent, a `logging.basicConfig()` stream a library
+  installed first) and no formatter can be bypassed. Message, `%`-arguments,
+  `exc_info`/`exc_text` tracebacks and `stack_info` are all scrubbed; tracebacks
+  are rendered and scrubbed into `exc_text` with `exc_info` cleared, because an
+  exception raised inside the provider carries the password in its message.
+  `tests/test_password_leakage.py` submits a registration and searches the raw
+  SQLite **file bytes**, all captured **log records**, a **foreign handler
+  registered before the app**, and the **response body**; each search has a
+  positive control proving it is not passing on an empty haystack.
+* API docs (`/docs`, `/openapi.json`) are **off when `APP_ENV=production`** and on
+  elsewhere; `ENABLE_API_DOCS` overrides either way. `/redoc` is never served.
 * Request size limit (64 KiB default) → `413`.
 * Rate limit (10 attempts / 10 minutes / IP) → `429` with `Retry-After`.
   In-memory and per-process; **the path to Redis** is to swap the sliding-window
@@ -268,6 +296,22 @@ and setting only the mode raises a configuration error at startup.
 * No stack traces to clients; the traceback is logged server-side with the
   request's correlation id (`X-Request-Id`).
 * CORS is off by default; when enabled, a `*` origin never gets credentials.
+
+## Data protection
+
+`consent: true` is required by the schema — that is *enforcement*. The **evidence**
+is stored on every lead:
+
+| Column | Meaning |
+|---|---|
+| `consent_given_at` | timezone-aware UTC instant the customer agreed |
+| `consent_version` | which wording they agreed to (`CONSENT_VERSION` in `config.py`) |
+
+Bump `CONSENT_VERSION` whenever the on-page wording changes: the version is what
+answers a legal question about one specific customer. Both columns are nullable
+in the database (so they can be added to an existing file without inventing a
+server default for rows that predate them) and both are always written by the
+service — `tests/test_consent.py` asserts that for every row, not just one.
 
 ---
 
@@ -290,7 +334,8 @@ backend/
     providers/            base, mock, khaibao9610, factory
     routers/              health, registrations, admin
     services/             registration orchestration
-  alembic/                migration environment and 0001_create_leads
+  alembic/                migration environment; 0001_create_leads,
+                          0002_consent_and_fingerprint
   tests/                  offline pytest suite
 ```
 
@@ -303,3 +348,11 @@ unique index enforcing at most one `REGISTER_LEAD` + `REGISTERED` row per phone
 
 That rule is a database constraint, not just application logic: two concurrent
 registrations for the same phone cannot both win.
+
+`request_fingerprint`, `consent_given_at` and `consent_version` were added by
+`0002_consent_and_fingerprint`. Both migrations are guarded rather than
+unconditional, so `alembic upgrade head` is safe whether or not
+`AUTO_CREATE_SCHEMA` already produced the tables — and `0001` now **verifies**
+the shape of an existing `leads` table instead of assuming any table with that
+name is its own. A differently-shaped or older `leads` fails loudly with an
+explanatory message rather than being silently stamped at head.

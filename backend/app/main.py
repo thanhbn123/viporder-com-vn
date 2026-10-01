@@ -53,11 +53,17 @@ def create_app(
     database = database or Database.from_settings(settings)
     provider = provider or build_provider(settings)
 
+    # /docs and /openapi.json enumerate every route, parameter and error code.
+    # That is useful in development and a map for an attacker in production, so
+    # they are gated: off when APP_ENV=production unless an operator explicitly
+    # overrides ENABLE_API_DOCS. ReDoc is never served.
+    docs_enabled = settings.api_docs_enabled
+
     app = FastAPI(
         title="VIPORDER.COM.VN registration API",
         version=settings.app_version,
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        docs_url="/api/docs" if docs_enabled else None,
+        openapi_url="/api/openapi.json" if docs_enabled else None,
         redoc_url=None,
     )
 

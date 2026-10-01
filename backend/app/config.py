@@ -38,6 +38,12 @@ DEFAULT_BROWSER_USER_AGENT = (
 # Candidate upstream contract (UNVERIFIED — see providers/khaibao9610.py).
 DEFAULT_KHAIBAO9610_BASE_URL = "https://apiviporder.com/frontend/v1"
 
+# Which consent wording the customer agreed to, stored on every lead.
+# Bump this whenever the on-page wording changes: the version is the evidence,
+# and a legal question about a specific customer is answered by knowing which
+# sentence they actually saw. Keep it short — the column is 32 characters.
+CONSENT_VERSION = "2026-02-v1"
+
 
 class Settings(BaseSettings):
     """Environment-backed settings.
@@ -88,6 +94,12 @@ class Settings(BaseSettings):
     # Empty means the admin route does not exist at all (404), not "open".
     admin_api_token: str = ""
 
+    # --- API docs -----------------------------------------------------------
+    # None = decide from APP_ENV: docs are on outside production and off inside
+    # it. /docs and /openapi.json enumerate every route, parameter and error
+    # code — a map for an attacker, and nothing the public site needs.
+    enable_api_docs: bool | None = None
+
     # --- Security -----------------------------------------------------------
     max_request_bytes: int = Field(default=64 * 1024, ge=1024)
     rate_limit_enabled: bool = True
@@ -114,6 +126,21 @@ class Settings(BaseSettings):
     @property
     def admin_enabled(self) -> bool:
         return bool(self.admin_api_token)
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.strip().lower() == "production"
+
+    @property
+    def api_docs_enabled(self) -> bool:
+        """Whether /docs and /openapi.json are served.
+
+        Off in production by default; an explicit ENABLE_API_DOCS wins either
+        way, so an operator who really needs the docs in production can say so.
+        """
+        if self.enable_api_docs is not None:
+            return self.enable_api_docs
+        return not self.is_production
 
     @property
     def login_url(self) -> str:

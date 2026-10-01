@@ -16,6 +16,8 @@ route and the tracking token exist for.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import secrets
 import uuid
@@ -23,16 +25,17 @@ from datetime import datetime
 
 from pydantic import SecretStr
 
-from ..config import Settings
+from ..config import CONSENT_VERSION, Settings
 from ..errors import (
     DUPLICATE_PHONE,
+    IDEMPOTENCY_KEY_REUSED,
     INVALID_REQUEST,
     NOT_FOUND,
     PROVIDER_INVALID,
     ApiError,
 )
 from ..logging_filters import register_secret
-from ..models import Lead, LeadType, RegistrationStatus, as_utc
+from ..models import Lead, LeadType, RegistrationStatus, as_utc, utcnow
 from ..phone import phone_display
 from ..providers.base import (
     ProviderStatus,
@@ -62,6 +65,10 @@ MESSAGE_RETRY_NEEDS_PASSWORD = (  # nosec B105
 )
 
 
+class ProviderContractViolation(TypeError):
+    """The provider returned something that is not a ``RegistrationResult``."""
+
+
 class RegistrationService:
     def __init__(
         self,
@@ -86,12 +93,12 @@ class RegistrationService:
     ) -> tuple[int, dict]:
         """Create a lead and attempt registration. Returns ``(status, body)``."""
         key = _normalise_idempotency_key(idempotency_key)
+        fingerprint = fingerprint_payload(payload)
 
         if key:
             existing = self.repository.get_by_idempotency_key(key)
             if existing is not None:
-                logger.info("idempotent replay for lead_id=%s", existing.lead_id)
-                return _response_for(existing, self.login_url)
+                return self._replay(existing, fingerprint)
 
         # Duplicate rule: a phone that already has a REGISTERED lead is a
         # duplicate. A phone whose earlier lead is PENDING/FAILED may try again —
@@ -106,13 +113,15 @@ class RegistrationService:
                 "This phone number is already registered. Please sign in to the customer portal.",
             )
 
-        lead = self._build_lead(payload, key=key)
+        lead = self._build_lead(payload, key=key, fingerprint=fingerprint)
         try:
             self.repository.create(lead)
         except DuplicateIdempotencyKeyError:
+            # Another writer won the race for this key. Replay only if the body
+            # matches; otherwise it is the same misuse, not a retry.
             existing = self.repository.get_by_idempotency_key(key) if key else None
             if existing is not None:
-                return _response_for(existing, self.login_url)
+                return self._replay(existing, fingerprint)
             raise
 
         logger.info(
@@ -167,7 +176,35 @@ class RegistrationService:
 
     # -- internals -----------------------------------------------------------
 
-    def _build_lead(self, payload: RegistrationCreate, *, key: str | None) -> Lead:
+    def _replay(self, existing: Lead, fingerprint: str) -> tuple[int, dict]:
+        """Answer a repeated Idempotency-Key.
+
+        A key is only a *request* identity if the body matches. The front end
+        keeps one key for the whole form session and only clears it after a
+        completed registration, so "same key, corrected phone number" is a real
+        path — and replaying blindly there would show customer B customer A's
+        lead id and customer code.
+
+        Fails closed: a lead with no stored fingerprint cannot be proven to
+        match, so it is refused rather than replayed.
+        """
+        if existing.request_fingerprint != fingerprint:
+            logger.warning(
+                "idempotency key reused with a different body lead_id=%s",
+                existing.lead_id,
+            )
+            raise ApiError(
+                409,
+                IDEMPOTENCY_KEY_REUSED,
+                "This Idempotency-Key was already used for a different "
+                "registration. Start a new registration.",
+            )
+        logger.info("idempotent replay for lead_id=%s", existing.lead_id)
+        return _response_for(existing, self.login_url)
+
+    def _build_lead(
+        self, payload: RegistrationCreate, *, key: str | None, fingerprint: str
+    ) -> Lead:
         attribution = payload.attribution
         return Lead(
             lead_id=str(uuid.uuid4()),
@@ -187,6 +224,9 @@ class RegistrationService:
             landing_page=attribution.landing_page if attribution else None,
             referrer=attribution.referrer if attribution else None,
             idempotency_key=key,
+            request_fingerprint=fingerprint,
+            consent_given_at=utcnow(),
+            consent_version=CONSENT_VERSION,
             tracking_token=secrets.token_urlsafe(32),
             attempt_count=1,
         )
@@ -209,6 +249,14 @@ class RegistrationService:
         )
         try:
             result = self.provider.register(request)
+            # Validate the *shape* inside the guard, not outside it. A provider
+            # that returns something unexpected is an adapter bug, and an
+            # adapter bug must surface as a retained lead with a 202 — not as a
+            # 500 the customer cannot act on.
+            if not isinstance(result, RegistrationResult):
+                raise ProviderContractViolation(
+                    f"provider returned {type(result).__name__}, expected RegistrationResult"
+                )
         except Exception as exc:  # noqa: BLE001 - provider bugs must not 5xx
             logger.exception(
                 "provider raised lead_id=%s provider=%s type=%s",
@@ -219,7 +267,11 @@ class RegistrationService:
             updated = self.repository.update_status(
                 lead.lead_id,
                 status=RegistrationStatus.PENDING,
-                last_error_code="PROVIDER_ERROR",
+                last_error_code=(
+                    "PROVIDER_CONTRACT_ERROR"
+                    if isinstance(exc, ProviderContractViolation)
+                    else "PROVIDER_ERROR"
+                ),
                 last_error_message=("The registration service reported an internal error."),
                 increment_attempt=is_retry,
             )
@@ -282,17 +334,14 @@ class RegistrationService:
         updated = self.repository.update_status(
             lead.lead_id,
             status=RegistrationStatus.PENDING,
-            last_error_code=(
-                "PROVIDER_TIMEOUT"
-                if result.retryable and result.http_status is None
-                else "PROVIDER_UNAVAILABLE"
-            ),
+            last_error_code=_unavailable_code(result),
             last_error_message=(result.message or "The registration service is unavailable."),
             increment_attempt=is_retry,
         )
         logger.warning(
-            "provider unavailable lead_id=%s http_status=%s retryable=%s",
+            "provider unavailable lead_id=%s code=%s http_status=%s retryable=%s",
             lead.lead_id,
+            _unavailable_code(result),
             result.http_status,
             result.retryable,
         )
@@ -375,6 +424,55 @@ def _token_matches(provided: str | None, stored: str) -> bool:
     if not provided or not stored:
         return False
     return secrets.compare_digest(provided, stored)
+
+
+def fingerprint_payload(payload: RegistrationCreate) -> str:
+    """SHA-256 over the parts of a registration that define *whose* it is.
+
+    Used to bind an ``Idempotency-Key`` to one request body. The password is
+    excluded on purpose: a hash of a password is password-derived material, and
+    storing it would hand an attacker a cheap offline-cracking target for no
+    benefit — the key is already scoped to a single browser session.
+
+    Everything that ends up on the lead (identity, contact, service interest,
+    consent and the whole attribution block) is included, because changing any
+    of it means the caller is describing a different registration.
+    """
+    attribution = payload.attribution
+    canonical = {
+        "full_name": payload.full_name,
+        "phone": payload.phone,
+        "email": payload.email,
+        "province": payload.province,
+        "service_interest": payload.service_interest,
+        "consent": payload.consent,
+        "attribution": {
+            "utm_source": attribution.utm_source if attribution else None,
+            "utm_medium": attribution.utm_medium if attribution else None,
+            "utm_campaign": attribution.utm_campaign if attribution else None,
+            "utm_content": attribution.utm_content if attribution else None,
+            "utm_term": attribution.utm_term if attribution else None,
+            "landing_page": attribution.landing_page if attribution else None,
+            "referrer": attribution.referrer if attribution else None,
+        },
+    }
+    blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _unavailable_code(result: RegistrationResult) -> str:
+    """Distinguish a real outage from a slow provider.
+
+    A connection refusal and a read timeout both arrive with ``http_status``
+    None, and calling both ``PROVIDER_TIMEOUT`` makes a genuine outage
+    undiagnosable from the stored data. The adapter names the condition; the
+    fallback only covers an adapter that does not.
+    """
+    if result.error_code:
+        return result.error_code
+    if result.retryable and result.http_status is None:
+        return "PROVIDER_TIMEOUT"
+    return "PROVIDER_UNAVAILABLE"
 
 
 def _iso(value: datetime | None) -> str | None:

@@ -90,6 +90,7 @@ class MockRegistrationProvider:
                 message="Provider timed out.",
                 http_status=None,
                 retryable=True,
+                error_code="PROVIDER_TIMEOUT",
             )
 
         if behaviour == "unavailable":
@@ -98,6 +99,7 @@ class MockRegistrationProvider:
                 message="Provider is unavailable.",
                 http_status=503,
                 retryable=True,
+                error_code="PROVIDER_UNAVAILABLE",
             )
 
         if behaviour == "error":

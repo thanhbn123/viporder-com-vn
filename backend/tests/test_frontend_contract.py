@@ -1,11 +1,34 @@
-"""The exact payloads the public front end sends.
+"""The payload shapes the public front end sends.
 
-These are integration contract tests, not decoration. The front-end workstream
-has already shipped, so the backend must accept what it actually posts. Each
-test here corresponds to a real shape observed on the wire — including the
-browser `FormData`-style payloads written in `static/js/app.js` — and each one
-would have produced a "the form is broken" bug on day one if the backend were
-stricter than the brief requires.
+Provenance — read this before trusting the file
+-----------------------------------------------
+An earlier version of this docstring claimed these shapes were "observed on the
+wire" from ``static/js/app.js``. That was false: at this branch's base commit
+``static/js/app.js`` performs no ``fetch`` at all (it is 15 lines of mobile-nav
+and smooth-scroll code). The claim is corrected here rather than quietly
+deleted, because a test that overstates where its expectations come from is
+worse than no test.
+
+Where the shapes actually come from, as of this writing:
+
+* the API contract issued to the front-end workstream (the controller's written
+  clarification: ``email`` arrives as ``""``, ``service_interest`` is omitted
+  when unset, ``202`` is not a conversion, the ``Idempotency-Key`` is a UUID
+  reused across retries of one form session);
+* **read from the real client source**, not assumed — ``static/js/register.js``
+  on branch ``feature/g05-g06-g07-frontend-analytics-seo`` (PR #10), which:
+    - ``buildPayload()`` sends ``email: ""`` with the comment "The form does not
+      collect an email yet — sent empty so the payload keeps the documented
+      shape";
+    - omits ``service_interest`` entirely unless the customer chose one;
+    - sets ``consent: true``;
+    - generates one ``Idempotency-Key`` per attempt, stores it in
+      ``sessionStorage``, and clears it only after a completed registration.
+
+NOT verified here: an actual browser POST against a running server. No
+end-to-end browser test was run, so "this is what Chrome sends" remains a claim
+about that source file, not a measurement. The tests below prove the *backend*
+accepts these shapes; they do not prove the browser produces them.
 
 The four points this file pins down:
 
@@ -266,3 +289,34 @@ def test_frontend_payload_with_a_relative_landing_page_is_rejected(
         _frontend(attribution={**FRONTEND_PAYLOAD["attribution"], "landing_page": "/"})
     )
     assert response.status_code == 422
+
+
+def test_the_409_then_edit_phone_path_does_not_leak_the_first_customer(
+    harness: Harness,
+) -> None:
+    """The reachable cross-customer leak, driven the way the browser drives it.
+
+    ``register.js`` keeps one ``Idempotency-Key`` in ``sessionStorage`` and
+    clears it only after a *completed* registration. So the sequence below is
+    what a real customer does after mistyping their number:
+
+        key K, phone A  -> 201 (an account now exists for A)
+        key K, phone B  -> must NOT answer with A's lead or customer code
+
+    The front end has separately been asked to reset the key on 409. This test
+    exists so the backend does not depend on that.
+    """
+    key = str(uuid.uuid4())
+    headers = {"Idempotency-Key": key}
+
+    first = harness.post_registration(_frontend(phone="0912000011"), headers=headers)
+    assert first.status_code == 201
+    stolen = first.json()
+
+    second = harness.post_registration(_frontend(phone="0912000012"), headers=headers)
+    assert second.status_code == 409, second.text
+    assert second.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+    for secret in (stolen["lead_id"], stolen["external_customer_code"]):
+        assert secret not in second.text
+    assert len(harness.lead_rows()) == 1

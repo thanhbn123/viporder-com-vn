@@ -1,18 +1,34 @@
 """Logging with password redaction.
 
 Hard constraint: a registration password must never be logged or traced. Relying
-on "we remember not to log it" is not a control. This module installs two
-independent scrubbing layers:
+on "we remember not to log it" is not a control.
 
-* :class:`PasswordRedactionFilter` rewrites the *record* (message and args), so
-  it works for any handler — including ``caplog`` and third-party handlers that
-  never see our formatter.
-* :class:`RedactingFormatter` scrubs the *rendered output*, catching anything
-  that only appears after formatting (e.g. an exception traceback).
+Redaction happens at the **record**, in the log-record factory installed by
+:func:`install_record_factory`, so it is applied once, before any handler runs.
+That ordering is the whole design: a handler the application does not own — a
+test capture handler, an APM agent, a log shipper, a plain
+``logging.basicConfig()`` stream installed by a library before this app was even
+constructed — can format the record however it likes and still cannot see a
+password.
+
+What :func:`scrub_record` rewrites:
+
+* ``record.msg`` and ``record.args`` (rendered once and frozen when the message
+  carries ``%``-arguments, so rewriting a template cannot break formatting);
+* ``record.exc_info`` — the traceback is rendered and scrubbed into
+  ``record.exc_text`` and ``exc_info`` is cleared, because a traceback is a
+  *first-class* leak channel: an exception raised inside the provider carries the
+  request in its message. A handler-level formatter would never get the chance
+  to fix this, since any handler may format the record itself;
+* ``record.exc_text`` and ``record.stack_info``, if they were set directly.
+
+:class:`RedactingFormatter` is a second, independent layer over the final
+rendered line. It is belt-and-braces, not the primary control: it only protects
+records that pass through a handler we configured.
 
 Literal secrets can also be registered at runtime with :func:`register_secret`,
-which is what the registration path does with the incoming password so that
-even an unrelated log line containing it is scrubbed.
+which is what the registration path does with the incoming password so that even
+an unrelated log line containing it is scrubbed.
 """
 
 from __future__ import annotations
@@ -142,8 +158,40 @@ class PasswordRedactionFilter(logging.Filter):
         return True
 
 
+#: Used only to render a traceback so it can be scrubbed. A shared instance is
+#: fine: ``formatException`` is stateless.
+_TRACEBACK_FORMATTER = logging.Formatter()
+
+
+def _render_exception(exc_info: object) -> str:
+    try:
+        return _TRACEBACK_FORMATTER.formatException(exc_info)  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001 - never break logging over a bad exc_info
+        try:
+            return repr(exc_info)
+        except Exception:  # noqa: BLE001
+            return "<unrenderable exception>"
+
+
 def scrub_record(record: logging.LogRecord) -> None:
-    """Redact a record in place. Idempotent."""
+    """Redact a record in place. Idempotent.
+
+    Tracebacks are scrubbed here rather than in a formatter, because a traceback
+    is a leak channel in its own right: an exception raised while handling a
+    registration carries the request (including the plaintext password) in its
+    message. Only handlers that use *our* formatter would be protected by
+    formatter-level scrubbing, and any handler may format the record itself.
+    """
+    if record.exc_info:
+        record.exc_text = scrub_text(_render_exception(record.exc_info))
+        record.exc_info = None
+        record.exc_info_scrubbed = True  # type: ignore[attr-defined]
+    elif record.exc_text:
+        record.exc_text = scrub_text(record.exc_text)
+
+    if record.stack_info:
+        record.stack_info = scrub_text(record.stack_info)
+
     if isinstance(record.msg, dict):
         record.msg = scrub_value(record.msg, key=None)
 
