@@ -131,12 +131,18 @@ class SqlAlchemyLeadRepository:
             # is never ambiguous.
             if lead.idempotency_key and _is_idempotency_conflict(exc):
                 raise DuplicateIdempotencyKeyError(lead.idempotency_key) from exc
-            # Then phone. At INSERT the row is always PENDING, so the
-            # one-REGISTERED-per-phone index cannot be the cause — any
-            # phone-uniqueness failure here IS the in-flight claim. That matters
-            # because SQLite reports "UNIQUE constraint failed: leads.phone"
-            # without naming which index, so matching on the name alone would let
-            # this through as a 500 on SQLite while passing on PostgreSQL.
+            # Then phone. Since 0005 there is ONE phone rule —
+            # `uq_leads_live_phone` — covering both mid-attempt and registered
+            # rows, so a phone-uniqueness failure here can be either case. The
+            # service disambiguates by asking whether a REGISTERED lead exists
+            # (`find_registered_by_phone`), because "your number is taken" and
+            # "someone is registering it right now" are different answers.
+            #
+            # It is raised as PhoneBusyError either way rather than matched by
+            # name, because SQLite reports "UNIQUE constraint failed:
+            # leads.phone" without naming the index — matching on the name alone
+            # would let this through as a 500 on SQLite while passing on
+            # PostgreSQL.
             if lead.in_flight_at is not None and _is_phone_uniqueness(exc):
                 raise PhoneBusyError(lead.phone) from exc
             raise

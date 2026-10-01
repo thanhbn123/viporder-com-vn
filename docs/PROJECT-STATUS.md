@@ -101,10 +101,20 @@ deliberately **not** covered:
   had already called the provider** — so two customers could exist upstream with
   one recorded here. PR #24 makes "one attempt in flight per phone" a database
   invariant, so the second attempt is refused **before** the provider is reached.
-  Measured: **1 call instead of 6** for one phone under six concurrent
-  registrations. That bullet said the residual "is not fixed here"; it now is,
-  and the sentence is kept so the history of the claim is visible rather than
-  quietly edited away.
+  That bullet said the residual "is not fixed here"; it now is, and the sentence
+  is kept so the history of the claim is visible rather than quietly edited away.
+
+  **A number in this paragraph has been RETRACTED.** It read "Measured: **1 call
+  instead of 6** for one phone under six concurrent registrations." CI later
+  failed with `the provider was called 2 time(s) for one phone` while twelve
+  local runs passed, so the figure was true of a fast machine and false in
+  general. The first implementation guarded a **window** rather than a **rule**
+  (two indexes, one per state, with a gap between them); `0005_live_phone_rule`
+  replaced them with one. The guarantee is now proven **deterministically** by
+  `backend/tests/test_repository.py::test_a_registered_phone_cannot_be_claimed_by_a_new_attempt`
+  — no threads, no PostgreSQL — rather than by a timing-dependent count. A
+  measured number that only holds on one machine is not evidence, which is why
+  the replacement test does not measure timing at all.
 
 ---
 

@@ -287,7 +287,10 @@ class RegistrationService:
             # The row IS the reservation for this phone: a partial unique
             # index admits at most one row with this set, so a second
             # concurrent attempt is refused at INSERT — before the provider
-            # is reached. Cleared when the attempt reaches a terminal outcome.
+            # is reached. Cleared by EVERY `update_status`, because the claim
+            # belongs to the ATTEMPT rather than to the status: an attempt that
+            # ends PENDING because the provider was unavailable is over, and
+            # holding the claim would block the customer's own retry.
             in_flight_at=utcnow(),
         )
 
