@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # CI must verify the ACTUAL pull-request HEAD, not GitHub's synthetic merge
+  # commit. We check out the head SHA explicitly and print it so the verified
+  # revision is never ambiguous in the logs.
+  # ---------------------------------------------------------------------------
+  head:
+    name: Resolve verified revision
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - id: sha
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          SHA="${PR_HEAD:-$PUSH_SHA}"
+          echo "Verified revision: $SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  repo-hygiene:
+    name: Repo hygiene (secrets, data, size)
+    runs-on: ubuntu-latest
+    needs: head
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.head.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Assert checked-out revision matches the verified revision
+        run: |
+          ACTUAL="$(git rev-parse HEAD)"
+          echo "checked out: $ACTUAL"
+          test "$ACTUAL" = "${{ needs.head.outputs.sha }}"
+      - name: Repo hygiene checks
+        run: python tools/check_repo_hygiene.py
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    needs: head
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.head.outputs.sha }}
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  site-checks:
+    name: Site checks (HTML, links, a11y, SEO baseline)
+    runs-on: ubuntu-latest
+    needs: head
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.head.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Site checks
+        run: python tools/check_site.py
+
+# Backend jobs (pytest, ruff, bandit, pip-audit) are added by G02 once the
+# backend exists. CI only ever asserts what is actually present in the tree.
