@@ -62,23 +62,38 @@ class ServiceInterest(StrEnum):
 # Partial indexes are supported by both SQLite and PostgreSQL, so the same rule
 # holds in dev and in production. PENDING/FAILED rows are deliberately outside
 # the index: a customer whose first attempt failed must be able to try again.
-_REGISTERED_PHONE_PREDICATE = "lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'"
+# A "live" lead for a phone is one that is mid-attempt OR already registered.
+# At most one may exist, and that single rule is what both guarantees below need.
+#
+# WHY ONE INDEX AND NOT TWO. The first version had two: one for REGISTERED rows
+# and one for in-flight rows. That left a window CI found and a local run did not
+# — request A completes and RELEASES its claim, then request B (whose duplicate
+# pre-check ran before A committed) inserts into the now-free claim, calls the
+# provider a second time, and only then collides with A's REGISTERED row. Two
+# attempts, two provider calls, one registration. Covering both states in one
+# predicate refuses B at INSERT no matter how the two orderings interleave.
+#
+# Predicate is immutable (`IS NOT NULL` / a column comparison), so it is legal on
+# both PostgreSQL and SQLite. A time-based predicate would not be.
+_LIVE_PHONE_PREDICATE = (
+    "lead_type = 'REGISTER_LEAD' "
+    "AND (in_flight_at IS NOT NULL OR registration_status = 'REGISTERED')"
+)
 
 # One attempt in flight per phone. This is what stops two concurrent
 # registrations for the same number from BOTH calling the customer-code
 # provider — which could create a duplicate customer upstream that nothing on
 # our side points at.
 #
-# The lead row IS the reservation: it is inserted with `in_flight_at` set, and
-# this partial unique index arbitrates. That makes the guarantee a DATABASE
-# invariant rather than a check in application code, which is the only kind that
-# holds under concurrency.
+# The lead row IS the reservation: it is inserted with `in_flight_at` set, and a
+# partial unique index arbitrates. That makes the guarantee a DATABASE invariant
+# rather than a check in application code, which is the only kind that holds
+# under concurrency. The index is `uq_leads_live_phone`, defined below together
+# with the reason it covers registered rows too.
 #
-# `IS NOT NULL` is immutable, so it is a legal partial-index predicate on both
-# PostgreSQL and SQLite. A time-based predicate would not be — `now()` is not
-# immutable — which is why stale claims are reclaimed in Python instead; see
-# `release_stale_claims`.
-_IN_FLIGHT_PREDICATE = "in_flight_at IS NOT NULL"
+# Stale claims (a process killed mid-attempt) are reclaimed in Python rather than
+# by the index, because a time-based predicate is not immutable and therefore not
+# a legal partial index — see `release_stale_claims`.
 
 
 class Lead(Base):
@@ -209,20 +224,14 @@ class Lead(Base):
         Index("ix_leads_created_at", "created_at"),
         Index("uq_leads_idempotency_key", "idempotency_key", unique=True),
         Index("uq_leads_tracking_token", "tracking_token", unique=True),
+        # The single phone rule: one live lead per phone. See
+        # _LIVE_PHONE_PREDICATE for why this is one index and not two.
         Index(
-            "uq_leads_registered_phone",
+            "uq_leads_live_phone",
             "phone",
             unique=True,
-            sqlite_where=text(_REGISTERED_PHONE_PREDICATE),
-            postgresql_where=text(_REGISTERED_PHONE_PREDICATE),
-        ),
-        # At most one attempt in flight per phone. See _IN_FLIGHT_PREDICATE.
-        Index(
-            "uq_leads_in_flight_phone",
-            "phone",
-            unique=True,
-            sqlite_where=text(_IN_FLIGHT_PREDICATE),
-            postgresql_where=text(_IN_FLIGHT_PREDICATE),
+            sqlite_where=text(_LIVE_PHONE_PREDICATE),
+            postgresql_where=text(_LIVE_PHONE_PREDICATE),
         ),
     )
 

@@ -142,10 +142,19 @@ class RegistrationService:
         try:
             self.repository.create(lead)
         except PhoneBusyError:
-            # Another attempt for this phone is in flight RIGHT NOW, and it has
-            # not yet reached the provider. Refusing here is the point: the
-            # alternative was to let both call the provider and reconcile later,
-            # which risks two customers upstream.
+            # Refused at INSERT, before the provider is reached. Since 0005 one
+            # index covers both reasons a phone is unavailable, so ask which one
+            # it is — "this number is already registered" and "someone is
+            # registering it right now" are different things to tell a customer,
+            # and only one of them is worth retrying.
+            if self.repository.find_registered_by_phone(payload.phone) is not None:
+                logger.info("duplicate phone refused at INSERT, not by the pre-check")
+                raise ApiError(
+                    409,
+                    DUPLICATE_PHONE,
+                    "This phone number is already registered. "
+                    "Please sign in to the customer portal.",
+                ) from None
             logger.info("phone already has an attempt in flight; refusing early")
             raise ApiError(
                 409,

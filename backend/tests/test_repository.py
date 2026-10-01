@@ -169,15 +169,38 @@ def test_list_pending_respects_the_limit(repo) -> None:  # type: ignore[no-untyp
 
 
 def test_indexes_exist_on_the_table() -> None:
-    indexes = {index.name for index in Lead.__table__.indexes}
-    assert {
+    """Every index the model declares must actually be declared.
+
+    This used to list six names and compare with `<=`, so it was neither
+    exhaustive nor self-maintaining — it silently stopped describing the table
+    the moment an index was added or replaced. It now asserts the *properties*
+    that matter: the phone rule is a single partial unique index, and the
+    lookup indexes exist.
+    """
+    by_name = {index.name: index for index in Lead.__table__.indexes}
+
+    # The phone rule is ONE index, because one rule is what it states. Two
+    # overlapping partial indexes left the window CI found (0005's docstring).
+    phone_rules = [i for i in by_name.values() if i.unique and "phone" in i.columns]
+    assert [i.name for i in phone_rules] == ["uq_leads_live_phone"], (
+        f"expected exactly one unique phone rule, found {[i.name for i in phone_rules]}"
+    )
+    live = phone_rules[0]
+    predicate = str(live.dialect_options["postgresql"]["where"])
+    assert "in_flight_at IS NOT NULL" in predicate
+    assert "REGISTERED" in predicate, (
+        "the rule must also cover already-registered rows, or an attempt that "
+        "starts after another completes can call the provider a second time"
+    )
+
+    for name in (
         "ix_leads_phone",
         "ix_leads_registration_status",
         "ix_leads_created_at",
         "uq_leads_idempotency_key",
         "uq_leads_tracking_token",
-        "uq_leads_registered_phone",
-    } <= indexes
+    ):
+        assert name in by_name, f"{name} is missing from the table"
 
 
 # --- the retry work queue has no consumer -----------------------------------
@@ -307,6 +330,32 @@ def test_reclaiming_frees_the_phone_for_a_new_attempt(repo) -> None:  # type: ig
         _lead("successor-2", "+84912340004", RegistrationStatus.PENDING, in_flight_at=utcnow())
     )
     assert successor.lead_id == "successor-2"
+
+
+def test_a_registered_phone_cannot_be_claimed_by_a_new_attempt(repo) -> None:  # type: ignore[no-untyped-def]
+    """The window CI found, made DETERMINISTIC — no threads, no timing.
+
+    CI caught a case a faster local machine did not, roughly once in twelve:
+    request A completes and releases its claim, then request B — whose duplicate
+    pre-check ran before A committed — inserts into the now-free claim, calls the
+    provider a second time, and only then collides with A's REGISTERED row.
+
+    That was possible while the claim index covered only `in_flight_at`. It now
+    covers registered rows too, so B's insert is refused by the database alone.
+    This test reproduces the essential condition with no concurrency at all: a
+    REGISTERED row exists, and a new attempt tries to take the phone.
+    """
+    from app.repositories.sqlalchemy_repo import PhoneBusyError
+
+    phone = "+84912340006"
+    repo.create(_lead("done-1", phone, RegistrationStatus.REGISTERED, in_flight_at=None))
+
+    # A fresh attempt, claim taken, no pre-check consulted: exactly B's position.
+    with pytest.raises(PhoneBusyError):
+        repo.create(_lead("late-1", phone, RegistrationStatus.PENDING, in_flight_at=utcnow()))
+
+    # And nothing was half-written.
+    assert repo.get("late-1") is None
 
 
 def test_claiming_an_existing_lead_refuses_when_the_phone_is_busy(repo) -> None:  # type: ignore[no-untyped-def]

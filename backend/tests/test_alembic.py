@@ -156,7 +156,7 @@ def test_migration_revision_is_named_as_documented() -> None:
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_current_head() == "0004_phone_claim"
+    assert script.get_current_head() == "0005_live_phone_rule"
 
 
 def test_alembic_upgrades_from_0001_to_head(tmp_path: Path) -> None:
@@ -378,9 +378,11 @@ def test_every_revision_applies_one_step_at_a_time(tmp_path: Path) -> None:
 
     # The last migration's artefacts must be present after the walk.
     assert "in_flight_at" in columns, f"0004 did not apply; columns: {sorted(columns)}"
-    assert "uq_leads_in_flight_phone" in indexes, (
-        f"0004's partial index is missing; indexes: {sorted(indexes)}"
+    assert "uq_leads_live_phone" in indexes, (
+        f"0005's phone rule is missing; indexes: {sorted(indexes)}"
     )
-    # And the earlier ones too — a later migration must not remove them.
+    # 0005 REPLACES these two, so their absence is the point, not an oversight.
+    assert "uq_leads_in_flight_phone" not in indexes, "0005 did not drop the old index"
+    assert "uq_leads_registered_phone" not in indexes, "0005 did not drop the old index"
+    # And the earlier columns too — a later migration must not remove them.
     assert {"consent_version", "request_fingerprint", "response_body"} <= columns
-    assert "uq_leads_registered_phone" in indexes

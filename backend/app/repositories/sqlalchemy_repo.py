@@ -287,8 +287,13 @@ def _is_phone_uniqueness(exc: IntegrityError) -> bool:
     message = str(getattr(exc, "orig", exc)).lower()
     if "idempotency" in message:
         return False
-    if "uq_leads_in_flight_phone" in message or "uq_leads_registered_phone" in message:
-        return True
+    for name in (
+        "uq_leads_live_phone",  # the rule since 0005
+        "uq_leads_in_flight_phone",  # 0004, before 0005 replaced it
+        "uq_leads_registered_phone",  # 0001..0004
+    ):
+        if name in message:
+            return True
     return "unique" in message and "phone" in message
 
 
