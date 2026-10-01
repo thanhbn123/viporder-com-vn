@@ -55,8 +55,11 @@ services:
       KHAIBAO9610_MODE: ${KHAIBAO9610_MODE:-mock}
       KHAIBAO9610_ENABLE_REAL_CALLS: ${KHAIBAO9610_ENABLE_REAL_CALLS:-no}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
-    ports:
-      - "127.0.0.1:8000:8000"
+    # NOT published to the host. Only the nginx service reaches this, over the
+    # private compose network. Publishing it would expose an application that
+    # trusts X-Forwarded-For from any peer (see deploy/Dockerfile).
+    expose:
+      - "8000"
 
   # Static site + TLS + rate limiting in front of the app.
   nginx:
@@ -71,6 +74,11 @@ services:
       - ../:/srv/viporder/site:ro
       - ./nginx/viporder.com.vn.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/proxy_params_viporder:/etc/nginx/proxy_params_viporder:ro
+      # The site config includes its upstream from this path. Under compose the
+      # application is a sibling container (`app:8000`), NOT 127.0.0.1 — which
+      # inside this container is Nginx itself. Mounting the compose upstream is
+      # what makes the containerised stack able to reach the application at all.
+      - ./nginx/upstream-compose.conf:/etc/nginx/upstreams/viporder-upstream.conf:ro
       - ./certs:/etc/letsencrypt:ro
       - certbot-webroot:/var/www/certbot
 
