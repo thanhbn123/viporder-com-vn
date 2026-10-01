@@ -24,6 +24,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 VALIDATION_ERROR = "VALIDATION_ERROR"
 INVALID_REQUEST = "INVALID_REQUEST"
 DUPLICATE_PHONE = "DUPLICATE_PHONE"
+# Another attempt for this same phone is still running. Transient, and the
+# customer needs to be told to retry rather than that their number is taken.
+REGISTRATION_IN_PROGRESS = "REGISTRATION_IN_PROGRESS"
 #: The Idempotency-Key was seen before, but with a *different* request body.
 IDEMPOTENCY_KEY_REUSED = "IDEMPOTENCY_KEY_REUSED"
 #: A terminal reply could not be reproduced from the stored row. Fails closed.

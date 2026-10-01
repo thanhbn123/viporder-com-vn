@@ -10,6 +10,7 @@ no generic "update anything" escape hatch. The only mutation is
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from ..models import Lead, RegistrationStatus
@@ -25,7 +26,22 @@ class LeadRepository(Protocol):
     """Storage contract for :class:`~app.models.Lead`."""
 
     def create(self, lead: Lead) -> Lead:
-        """Persist a new lead and return it with generated defaults applied."""
+        """Persist a new lead and return it with generated defaults applied.
+
+        Raises the implementation's conflict exception when the lead cannot be
+        inserted: an in-flight claim for the same phone, or a reused idempotency
+        key. Callers must distinguish those two — they mean different things to
+        the customer.
+        """
+        ...
+
+    def release_stale_claims(self, older_than: datetime) -> int:
+        """Clear phone claims abandoned by a process that died mid-attempt.
+
+        Returns the number reclaimed. A claim is normally released when an
+        attempt reaches a terminal outcome; this is the crash-recovery path, and
+        without it a killed process would block that phone permanently.
+        """
         ...
 
     def get(self, lead_id: str) -> Lead | None:

@@ -17,33 +17,24 @@ from app.config import LOGIN_URL, Settings, get_settings
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 
-KNOWN_KEYS = {
-    "APP_ENV",
-    "SERVICE_NAME",
-    "APP_VERSION",
-    "DATABASE_URL",
-    "AUTO_CREATE_SCHEMA",
-    "KHAIBAO9610_MODE",
-    "KHAIBAO9610_BASE_URL",
-    "KHAIBAO9610_TIMEOUT_SECONDS",
-    "KHAIBAO9610_ENABLE_REAL_CALLS",
-    "KHAIBAO9610_USER_AGENT",
-    "MOCK_PROVIDER_BEHAVIOUR",
-    "ADMIN_API_TOKEN",
-    "ENABLE_API_DOCS",
-    "MAX_REQUEST_BYTES",
-    "RATE_LIMIT_ENABLED",
-    "RATE_LIMIT_ATTEMPTS",
-    "RATE_LIMIT_WINDOW_SECONDS",
-    "TRUST_PROXY_HEADERS",
-    "CORS_ALLOW_ORIGINS",
-}
+
+def known_keys() -> set[str]:
+    """Every setting, derived — never hand-listed.
+
+    This used to be a hand-maintained set of 19 names, which is one fact written
+    down in two places. It drifted the moment a setting was added, and the
+    failure looked like a template problem rather than what it was. Deriving it
+    means the two can no longer disagree.
+    """
+    return {name.upper() for name in Settings.model_fields}
 
 
-def test_env_example_exists_and_covers_every_key() -> None:
-    text = ENV_EXAMPLE.read_text(encoding="utf-8")
-    documented = set(re.findall(r"^([A-Z][A-Z0-9_]*)=.*$", text, flags=re.MULTILINE))
-    assert documented == KNOWN_KEYS
+KNOWN_KEYS = known_keys()
+
+# The template's key set is NOT asserted here. `tests/test_env_templates.py` owns
+# that contract for all three templates (repo root, production, docker-compose)
+# and checks it against Settings dynamically. Asserting it here as well would be
+# the same duplicate-in-two-places mistake in a different costume.
 
 
 def test_env_example_values_are_all_empty() -> None:

@@ -21,7 +21,7 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import SecretStr
 
@@ -33,6 +33,7 @@ from ..errors import (
     NOT_FOUND,
     PROVIDER_INVALID,
     REGISTRATION_FAILED,
+    REGISTRATION_IN_PROGRESS,
     ApiError,
 )
 from ..logging_filters import register_secret
@@ -48,6 +49,7 @@ from ..repositories.base import LeadRepository
 from ..repositories.sqlalchemy_repo import (
     DuplicateIdempotencyKeyError,
     DuplicatePhoneError,
+    PhoneBusyError,
 )
 from ..schemas import RegistrationCreate
 
@@ -124,9 +126,30 @@ class RegistrationService:
                 "This phone number is already registered. Please sign in to the customer portal.",
             )
 
+        # Reclaim claims abandoned by a process that died mid-attempt, so a crash
+        # can never block a phone permanently. Safe to run concurrently: the
+        # partial unique index still arbitrates the INSERT below.
+        reclaimed = self.repository.release_stale_claims(
+            utcnow() - timedelta(seconds=self.settings.phone_claim_ttl_seconds)
+        )
+        if reclaimed:
+            logger.warning("reclaimed %d abandoned phone claim(s)", reclaimed)
+
         lead = self._build_lead(payload, key=key, fingerprint=fingerprint)
         try:
             self.repository.create(lead)
+        except PhoneBusyError:
+            # Another attempt for this phone is in flight RIGHT NOW, and it has
+            # not yet reached the provider. Refusing here is the point: the
+            # alternative was to let both call the provider and reconcile later,
+            # which risks two customers upstream.
+            logger.info("phone already has an attempt in flight; refusing early")
+            raise ApiError(
+                409,
+                REGISTRATION_IN_PROGRESS,
+                "A registration for this phone number is already in progress. "
+                "Please wait a moment and try again.",
+            ) from None
         except DuplicateIdempotencyKeyError:
             # Another writer won the race for this key. Replay only if the body
             # matches; otherwise it is the same misuse, not a retry.
@@ -240,6 +263,11 @@ class RegistrationService:
             consent_version=CONSENT_VERSION,
             tracking_token=secrets.token_urlsafe(32),
             attempt_count=1,
+            # The row IS the reservation for this phone: a partial unique
+            # index admits at most one row with this set, so a second
+            # concurrent attempt is refused at INSERT — before the provider
+            # is reached. Cleared when the attempt reaches a terminal outcome.
+            in_flight_at=utcnow(),
         )
 
     def _attempt(
