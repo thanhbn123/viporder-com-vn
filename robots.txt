@@ -1,0 +1,13 @@
+# robots.txt — https://viporder.com.vn/  (gate G06)
+#
+# This is the public marketing site. Everything published here is meant to be
+# crawled and indexed, so no path is disallowed.
+#
+# Serving requirements, already satisfied elsewhere in this repository:
+#   * tools/dev_server.py serves the repository root, so /robots.txt resolves.
+#   * deploy/nginx/viporder.com.vn.conf has a `location = /robots.txt` block.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://viporder.com.vn/sitemap.xml

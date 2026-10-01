@@ -9,23 +9,107 @@
   <meta name="robots" content="index,follow">
 
   <link rel="canonical" href="https://viporder.com.vn/">
+
+  <!-- Open Graph (G06). og:image must be an absolute URL: relative values are
+       not resolved by most social crawlers. -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="VIPORDER">
+  <meta property="og:locale" content="vi_VN">
+  <meta property="og:title" content="VIPORDER - Vận chuyển & nhập hàng Trung Quốc">
+  <meta property="og:description" content="VIPORDER cung cấp dịch vụ vận chuyển Trung Quốc - Việt Nam, nhập khẩu chính ngạch, khai báo hải quan và hỗ trợ đặt hàng 1688, Taobao, Pinduoduo.">
+  <meta property="og:url" content="https://viporder.com.vn/">
+  <meta property="og:image" content="https://viporder.com.vn/static/img/og-viporder.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="VIPORDER - Vận chuyển, nhập khẩu và logistics Trung Quốc - Việt Nam">
+
+  <!-- Twitter / X card (G06) -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="VIPORDER - Vận chuyển & nhập hàng Trung Quốc">
+  <meta name="twitter:description" content="VIPORDER cung cấp dịch vụ vận chuyển Trung Quốc - Việt Nam, nhập khẩu chính ngạch, khai báo hải quan và hỗ trợ đặt hàng 1688, Taobao, Pinduoduo.">
+  <meta name="twitter:image" content="https://viporder.com.vn/static/img/og-viporder.png">
+  <meta name="twitter:image:alt" content="VIPORDER - Vận chuyển, nhập khẩu và logistics Trung Quốc - Việt Nam">
+
+  <!-- Icons. favicon.svg is the crisp scalable mark; the PNGs are the fallback
+       for browsers without SVG icon support. All raster brand assets come from
+       tools/make_brand_images.py, which is their single source. -->
+  <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/img/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/static/img/favicon-16.png" sizes="16x16" type="image/png">
+  <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+
+  <!--
+    Structured data (G06). type="application/ld+json" is a DATA block, not
+    executable JavaScript — the browser never evaluates it.
+
+    Every property below is a fact already stated on this page. The following
+    are deliberately ABSENT because VIPORDER does not publish them, and a search
+    result must not be built on an invented fact:
+
+      TODO(g06-content): MISSING FACTS — supply from the business, never guess:
+        - telephone       no support hotline is published anywhere on the site
+        - address         no registered office / PostalAddress is published
+        - sameAs          no official Facebook / Zalo / YouTube profile links
+        - foundingDate    unknown
+        - legalName/taxID no registered entity name or tax code is published
+        - contactPoint    depends on telephone, so blocked by the same gap
+        - potentialAction there is no on-site search page, so no SearchAction
+  -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://viporder.com.vn/#organization",
+        "name": "VIPORDER",
+        "url": "https://viporder.com.vn/",
+        "description": "VIPORDER cung cấp dịch vụ vận chuyển Trung Quốc - Việt Nam, nhập khẩu chính ngạch, khai báo hải quan và hỗ trợ đặt hàng 1688, Taobao, Pinduoduo.",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://viporder.com.vn/static/img/apple-touch-icon.png",
+          "width": 180,
+          "height": 180
+        }
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://viporder.com.vn/#website",
+        "name": "VIPORDER",
+        "url": "https://viporder.com.vn/",
+        "inLanguage": "vi-VN",
+        "publisher": { "@id": "https://viporder.com.vn/#organization" }
+      }
+    ]
+  }
+  </script>
+
   <link rel="stylesheet" href="/static/css/style.css">
+
+  <!-- External scripts only: tools/check_site.py fails the build on any inline
+       executable <script> body or inline event handler, so every handler is
+       bound from these files. `defer` keeps them off the critical path. -->
+  <script src="/static/js/analytics.js" defer></script>
+  <script src="/static/js/register.js" defer></script>
+  <script src="/static/js/app.js" defer></script>
 </head>
 
 <body>
 
+<a class="skip-link" href="#main">Bỏ qua tới nội dung chính</a>
+
 <header class="site-header">
   <div class="container header-inner">
 
-    <a href="/" class="brand" aria-label="VIPORDER">
-      <div class="brand-mark">VIP</div>
+    <a href="/" class="brand" aria-label="VIPORDER - về trang chủ">
+      <div class="brand-mark" aria-hidden="true">VIP</div>
       <div class="brand-text">
         <strong>VIPORDER</strong>
         <span>China - Vietnam Logistics</span>
       </div>
     </a>
 
-    <nav class="desktop-nav" aria-label="Điều hướng chính">
+    <nav class="desktop-nav" id="primaryNav" aria-label="Điều hướng chính">
       <a href="#services">Dịch vụ</a>
       <a href="#process">Quy trình</a>
       <a href="#why">Vì sao chọn VIPORDER</a>
@@ -39,11 +123,26 @@
       Đăng nhập
     </a>
 
+    <!-- Mobile menu control (G07). Hidden above the 980px breakpoint; the nav
+         it controls is the same landmark used on desktop. -->
+    <button
+      class="nav-toggle"
+      id="navToggle"
+      type="button"
+      aria-expanded="false"
+      aria-controls="primaryNav"
+      aria-label="Mở menu"
+    >
+      <span class="nav-toggle-box" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </span>
+    </button>
+
   </div>
 </header>
 
 
-<main>
+<main id="main">
 
   <section class="hero">
     <div class="container hero-grid">
@@ -130,7 +229,7 @@
     <div class="container action-grid">
 
       <article class="action-card primary-card">
-        <div class="action-icon">+</div>
+        <div class="action-icon" aria-hidden="true">+</div>
 
         <div>
           <span class="action-label">KHÁCH HÀNG MỚI</span>
@@ -150,7 +249,7 @@
 
       <article class="action-card">
 
-        <div class="action-icon">→</div>
+        <div class="action-icon" aria-hidden="true">→</div>
 
         <div>
           <span class="action-label">KHÁCH HÀNG HIỆN TẠI</span>
@@ -189,9 +288,12 @@
       </div>
 
 
+      <!-- data-service values match the service_interest enum documented for
+           POST /api/v1/registrations, so service_view and the lead record line
+           up. Changing one means changing both. -->
       <div class="services-grid">
 
-        <article class="service-card">
+        <article class="service-card" data-service="transport">
           <div class="service-number">01</div>
 
           <h3>Vận chuyển Trung - Việt</h3>
@@ -203,7 +305,7 @@
         </article>
 
 
-        <article class="service-card">
+        <article class="service-card" data-service="official_import">
           <div class="service-number">02</div>
 
           <h3>Nhập khẩu chính ngạch</h3>
@@ -215,7 +317,7 @@
         </article>
 
 
-        <article class="service-card">
+        <article class="service-card" data-service="customs">
           <div class="service-number">03</div>
 
           <h3>Khai báo hải quan</h3>
@@ -226,7 +328,7 @@
         </article>
 
 
-        <article class="service-card">
+        <article class="service-card" data-service="order">
           <div class="service-number">04</div>
 
           <h3>1688 / Taobao / Pinduoduo</h3>
@@ -341,9 +443,9 @@
         <h2>Đăng ký mã khách hàng VIPORDER</h2>
 
         <p>
-          Điền thông tin để đăng ký tài khoản. Sau khi API đăng ký
-          được kết nối, thông tin sẽ đồng thời tạo mã khách hàng
-          trên hệ thống hiện tại và ghi nhận lead tại VIPORDER.
+          Điền thông tin để đăng ký tài khoản VIPORDER. Sau khi gửi,
+          hệ thống ghi nhận thông tin đăng ký và trả về mã khách hàng,
+          hoặc trạng thái chờ xử lý nếu hệ thống tạo mã đang bận.
         </p>
 
         <ul>
@@ -356,11 +458,11 @@
       </div>
 
 
-      <form class="register-form" id="registerForm">
+      <form class="register-form" id="registerForm" method="post" action="/api/v1/registrations">
 
         <div class="form-title">
           <strong>Đăng ký khách hàng mới</strong>
-          <span>G01 hiện chỉ dựng giao diện, chưa gửi API thật.</span>
+          <span>Thông tin của bạn được dùng để tạo tài khoản và hỗ trợ dịch vụ VIPORDER.</span>
         </div>
 
 
@@ -370,6 +472,7 @@
             type="text"
             name="full_name"
             placeholder="Nguyễn Văn A"
+            autocomplete="name"
             required
           >
         </label>
@@ -381,6 +484,8 @@
             type="tel"
             name="phone"
             placeholder="09xxxxxxxx"
+            inputmode="tel"
+            autocomplete="tel"
             required
           >
         </label>
@@ -405,6 +510,7 @@
             type="text"
             name="province"
             placeholder="Ví dụ: Bắc Ninh"
+            autocomplete="address-level1"
           >
         </label>
 
@@ -430,7 +536,7 @@
 
 
         <label class="checkbox-row">
-          <input type="checkbox" required>
+          <input type="checkbox" name="consent" value="true" required>
 
           <span>
             Tôi đồng ý cung cấp thông tin để VIPORDER tạo tài khoản
@@ -444,7 +550,24 @@
         </button>
 
 
-        <div class="form-message" id="formMessage" aria-live="polite"></div>
+        <div
+          class="form-message"
+          id="formMessage"
+          role="status"
+          aria-live="polite"
+          tabindex="-1"
+        ></div>
+
+
+        <div class="form-success" id="formSuccess" hidden>
+          <a
+            class="btn btn-secondary btn-large full-width"
+            id="formPortalLink"
+            href="https://khachhang.viporder.com.vn"
+          >
+            Đăng nhập / Kiểm tra đơn
+          </a>
+        </div>
 
 
         <div class="existing-customer">
@@ -474,6 +597,22 @@
           Đội ngũ VIPORDER hỗ trợ tư vấn vận chuyển,
           nhập khẩu và khai báo hải quan.
         </p>
+
+        <!--
+          DIRECT CONTACT CHANNELS — NOT PUBLISHED YET
+
+          TODO(g07-content): VIPORDER has not published a support hotline or a
+          Zalo account anywhere on this site, and one must not be invented. Add
+          the real values here and the tracking already wired in app.js starts
+          reporting phone_click / zalo_click with no further code change:
+
+            <a href="tel:+84XXXXXXXXX" class="contact-link"
+               data-viporder-contact="phone">Hotline: 0xxx xxx xxx</a>
+
+            <a href="https://zalo.me/XXXXXXXXX" class="contact-link"
+               data-viporder-contact="zalo"
+               target="_blank" rel="noopener">Chat Zalo</a>
+        -->
       </div>
 
       <a href="#register" class="btn btn-light btn-large">
@@ -525,9 +664,6 @@
   </div>
 
 </footer>
-
-
-<script src="/static/js/app.js"></script>
 
 </body>
 </html>

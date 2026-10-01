@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  sitemap.xml — https://viporder.com.vn/  (gate G06)
+
+  Only pages that ACTUALLY EXIST are listed. There is one page in this
+  repository today (index.html), so there is exactly one <url> entry.
+  Announcements and any future 404 page must not appear here.
+
+  Deliberately omitted:
+    * <lastmod> — it would have to be a real modification date. Nothing in the
+      build records one, and a wrong date is worse than none.
+    * Anchor-only URLs (/index.html#register). A fragment is not a separate
+      page and search engines ignore it as a sitemap entry.
+
+  TODO(g06-content): add <url> entries here in the same commit that adds a new
+  public page, and keep robots.txt pointing at this file.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://viporder.com.vn/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
