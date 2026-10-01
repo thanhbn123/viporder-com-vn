@@ -80,8 +80,11 @@ command output that proves it is quoted in the gate's PR.
 ### What `PASS` does not mean here
 
 `PASS` means *the stated mechanism was measured to work in the environment named
-in the Evidence column*. It is not a claim about production. Three things are
-deliberately **not** covered:
+in the Evidence column*. It is not a claim about production. **Four** things are
+deliberately **not** covered — and this sentence said "three" while the table
+below it listed four, which is the same class of error as the numbers this audit
+was written to find. A limit list that undercounts itself is a limit list that
+gets skimmed.
 
 | Not verified | Why it matters |
 |---|---|
