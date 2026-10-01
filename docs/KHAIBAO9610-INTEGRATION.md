@@ -66,7 +66,6 @@ having to register again.
 | `KHAIBAO9610_BASE_URL` | *(empty in template)* | Base URL of the registration API |
 | `KHAIBAO9610_TIMEOUT_SECONDS` | `10` | Hard per-call timeout |
 | `KHAIBAO9610_USER_AGENT` | browser-like | Required by the candidate upstream (see §5) |
-| `KHAIBAO9610_API_KEY` | *(empty)* | Only if the provider issues one |
 | `MOCK_PROVIDER_BEHAVIOUR` | `success` | `success`/`duplicate`/`invalid`/`unavailable`/`timeout`/`error` |
 
 Why two switches: a single `MODE=http` can be set by a typo, a copied config or
