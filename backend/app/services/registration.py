@@ -71,6 +71,9 @@ MESSAGE_PROVIDER_INVALID = (
 )
 MESSAGE_REGISTRATION_FAILED = "This registration did not complete. Please start a new registration."
 MESSAGE_RETRY_ATTEMPTED = "Retry attempt recorded. Check registration_status for the result."
+MESSAGE_RETRY_IN_PROGRESS = (
+    "Another attempt for this phone is already in flight. Try again once it finishes."
+)
 # Operator-facing wording, not a credential.
 MESSAGE_RETRY_NEEDS_PASSWORD = (  # nosec B105
     "A password is required to retry: this service never stores registration "
@@ -139,10 +142,19 @@ class RegistrationService:
         try:
             self.repository.create(lead)
         except PhoneBusyError:
-            # Another attempt for this phone is in flight RIGHT NOW, and it has
-            # not yet reached the provider. Refusing here is the point: the
-            # alternative was to let both call the provider and reconcile later,
-            # which risks two customers upstream.
+            # Refused at INSERT, before the provider is reached. Since 0005 one
+            # index covers both reasons a phone is unavailable, so ask which one
+            # it is — "this number is already registered" and "someone is
+            # registering it right now" are different things to tell a customer,
+            # and only one of them is worth retrying.
+            if self.repository.find_registered_by_phone(payload.phone) is not None:
+                logger.info("duplicate phone refused at INSERT, not by the pre-check")
+                raise ApiError(
+                    409,
+                    DUPLICATE_PHONE,
+                    "This phone number is already registered. "
+                    "Please sign in to the customer portal.",
+                ) from None
             logger.info("phone already has an attempt in flight; refusing early")
             raise ApiError(
                 409,
@@ -204,6 +216,15 @@ class RegistrationService:
             consent=True,
             attribution=None,
         )
+        # Take the same claim the customer path takes. Without this the operator
+        # route was the one door the claim did not cover, and it is the door a
+        # human drives by hand.
+        try:
+            self.repository.claim_phone(lead.lead_id)
+        except PhoneBusyError:
+            logger.info("admin retry refused: a phone claim is already held")
+            return _retry_body(lead, retried=False, message=MESSAGE_RETRY_IN_PROGRESS)
+
         _status, _body = self._attempt(lead, payload, is_retry=True)
         updated = self.repository.get(lead_id) or lead
         return _retry_body(updated, retried=True, message=MESSAGE_RETRY_ATTEMPTED)

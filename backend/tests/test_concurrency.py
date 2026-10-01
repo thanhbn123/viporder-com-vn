@@ -206,9 +206,14 @@ def test_same_phone_different_keys_concurrently_is_refused_truthfully(
     """The loser of this race must be told 409, not handed a 500.
 
     The partial unique index guarantees only one REGISTERED lead per phone, so
-    exactly one request can win. The interesting part is what the others get: the
-    repository only converts an *idempotency-key* conflict into its own error
-    type, so a phone conflict may reach the API as a raw IntegrityError.
+    exactly one request can win. The interesting part is what the others get.
+
+    This docstring used to say a phone conflict "may reach the API as a raw
+    IntegrityError" — true when written, and it is what the 500 was. The
+    repository now converts both conflicts (PR #23 for the registered-phone rule,
+    PR #24 for the in-flight claim), so that sentence had become stale and is
+    replaced rather than left as a description of behaviour that no longer
+    exists.
     """
     phone = f"+8490{uuid.uuid4().int % 10**7:07d}"
 

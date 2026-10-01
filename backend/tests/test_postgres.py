@@ -148,18 +148,22 @@ def test_partial_unique_index_exists_and_has_the_right_predicate(migrated: str) 
             row = conn.execute(
                 sa.text(
                     "SELECT indexdef FROM pg_indexes "
-                    "WHERE tablename = 'leads' AND indexname = 'uq_leads_registered_phone'"
+                    "WHERE tablename = 'leads' AND indexname = 'uq_leads_live_phone'"
                 )
             ).fetchone()
     finally:
         engine.dispose()
 
-    assert row is not None, "partial unique index uq_leads_registered_phone was not created"
+    assert row is not None, "partial unique index uq_leads_live_phone was not created"
     ddl = row[0]
     assert "UNIQUE" in ddl, ddl
     assert "WHERE" in ddl, f"index is not partial on PostgreSQL: {ddl}"
     assert "REGISTER_LEAD" in ddl, ddl
+    # The rule covers BOTH live states. Covering only REGISTERED was the first
+    # version, and it left the window CI found: an attempt starting just after
+    # another completes could still call the provider a second time.
     assert "REGISTERED" in ddl, ddl
+    assert "in_flight_at IS NOT NULL" in ddl, ddl
 
 
 def test_index_refuses_a_second_registered_lead_for_the_same_phone(migrated: str) -> None:
@@ -188,7 +192,7 @@ def test_index_refuses_a_second_registered_lead_for_the_same_phone(migrated: str
                     insert,
                     {"id": str(uuid.uuid4()), "st": "REGISTERED", "ph": "+84900001234", "tok": "c"},
                 )
-        assert "uq_leads_registered_phone" in str(excinfo.value)
+        assert "uq_leads_live_phone" in str(excinfo.value)
     finally:
         with engine.begin() as conn:
             conn.execute(sa.text("DELETE FROM leads WHERE phone = '+84900001234'"))

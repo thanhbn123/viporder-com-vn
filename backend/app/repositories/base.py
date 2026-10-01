@@ -35,6 +35,15 @@ class LeadRepository(Protocol):
         """
         ...
 
+    def claim_phone(self, lead_id: str) -> None:
+        """Take the in-flight claim for an existing lead's phone.
+
+        Needed because the operator retry path re-attempts an existing row and so
+        never goes through ``create``, which is where the claim is normally taken.
+        Raises the implementation's conflict exception when another attempt holds it.
+        """
+        ...
+
     def release_stale_claims(self, older_than: datetime) -> int:
         """Clear phone claims abandoned by a process that died mid-attempt.
 
