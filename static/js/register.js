@@ -176,11 +176,17 @@
 
   /* Cleared only once the details being submitted are finished with:
    *   * after a completed registration (201), and
-   *   * after a 409 — the phone is taken, so the corrected details are a NEW
-   *     attempt, and a fresh key cannot create a duplicate customer.
+   *   * after a 409 that means the phone is TAKEN — the corrected details are a
+   *     NEW attempt, and a fresh key cannot create a duplicate customer.
    *
    * Deliberately NOT cleared on a network error, 429, 5xx or 202: those are
-   * retries of the same registration attempt and MUST reuse the key. */
+   * retries of the same registration attempt and MUST reuse the key.
+   *
+   * ALSO not cleared on a 409 that means REGISTRATION_IN_PROGRESS. That 409 says
+   * another attempt is in flight and the number is NOT taken, so it belongs with
+   * the retry group above, not this one. Clearing it there would make the retry
+   * the server just asked for open a second registration for one customer. The
+   * caller therefore gates on the error CODE, not on the status. */
   function resetIdempotencyKey() {
     idemKey = null;
     idemPhone = null;
@@ -406,12 +412,36 @@
 
   /* --------------------------------------------------------------- outcomes */
 
+  /* The ONLY 409 that means the number is taken for good.
+   *
+   * When the server sends no code we fall back to the old behaviour (treat it as
+   * permanent), because that was the only 409 that existed when this was written
+   * and it is the safer assumption: keeping a stale key after a real duplicate
+   * would lock the customer out permanently, while resetting it early merely
+   * costs one redundant attempt. */
+  function isPermanentDuplicate(status, code) {
+    if (status !== 409) {
+      return false;
+    }
+    return !code || code === "DUPLICATE_PHONE";
+  }
+
   function defaultMessageFor(status) {
     if (status === 422) {
       return "Thông tin đăng ký chưa hợp lệ. Vui lòng kiểm tra lại các ô được đánh dấu.";
     }
     if (status === 409) {
-      return "Số điện thoại này đã được đăng ký. Vui lòng đăng nhập hoặc dùng số điện thoại khác.";
+      /* Two different events share this status and they are opposites:
+       *   DUPLICATE_PHONE          — the number is taken, permanently.
+       *   REGISTRATION_IN_PROGRESS — another attempt is running right now; the
+       *                              number is NOT taken and a retry will work.
+       * Without a code we cannot tell which, so the wording must not promise
+       * the first one. Saying "already registered" to a customer whose
+       * registration is merely in flight sends them to sign in to an account
+       * that does not exist yet. */
+      return "Số điện thoại này đã được đăng ký, hoặc một lượt đăng ký cho số này đang " +
+        "được xử lý. Vui lòng thử lại sau vài giây; nếu vẫn không được, hãy đăng nhập " +
+        "hoặc dùng số điện thoại khác.";
     }
     if (status === 429) {
       return "Bạn đã gửi quá nhiều lần trong thời gian ngắn. Vui lòng thử lại sau ít phút.";
@@ -496,15 +526,21 @@
     var fields = error.fields && typeof error.fields === "object" ? error.fields : {};
     var name;
 
-    if (status === 409) {
-      /* The phone is taken, so the details the customer submits next are a NEW
+    if (isPermanentDuplicate(status, code)) {
+      /* The phone is TAKEN, so the details the customer submits next are a NEW
        * attempt. A fresh key is safe here (a duplicate cannot be created for a
        * phone that already exists) and it is necessary: replaying a cached 409
        * against corrected details would lock the customer out permanently.
        *
        * Done before any rendering on purpose — this is the correctness-critical
        * side effect of the whole function, so it must not be skippable by a
-       * failure further down. */
+       * failure further down.
+       *
+       * NOT every 409 means this. `REGISTRATION_IN_PROGRESS` says another attempt
+       * is still in flight and the number is NOT taken; there, resetting the key
+       * would guarantee the retry the server just asked for creates a SECOND lead
+       * for one customer — the exact thing the key exists to prevent. The
+       * condition below is the whole difference between the two. */
       resetIdempotencyKey();
     }
 
@@ -513,8 +549,11 @@
         showFieldError(name, fields[name]);
       }
     }
-    /* A duplicate phone is the one 409 we can point at a specific control. */
-    if (status === 409 && field("phone")) {
+    /* Only a PERMANENT duplicate is a problem with the phone field. Attaching
+     * "another attempt is in progress" to the input would tell the customer to
+     * change a number that is perfectly fine. The general message below still
+     * shows the server's wording either way. */
+    if (isPermanentDuplicate(status, code) && field("phone")) {
       showFieldError("phone", error.message || defaultMessageFor(409));
     }
 
