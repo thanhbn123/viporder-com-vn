@@ -1,0 +1,193 @@
+"""SQLAlchemy 2.x models for the lead store.
+
+The lead table is the business record of record: a registration that reaches us
+is written down *before* the upstream provider is contacted, so a provider
+outage can never make a lead disappear (hard constraint: never lose a lead).
+
+Nothing sensitive is stored. The registration password is forwarded to the
+provider and then dropped — there is deliberately no column for it, no shadow
+column, and no "recent payload" blob.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from enum import StrEnum
+
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    text,
+)
+from sqlalchemy import (
+    Enum as SAEnum,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def utcnow() -> datetime:
+    """Timezone-aware UTC now. Audit timestamps must never be naive."""
+    return datetime.now(UTC)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class LeadType(StrEnum):
+    REGISTER_LEAD = "REGISTER_LEAD"
+    QUOTE_LEAD = "QUOTE_LEAD"
+
+
+class RegistrationStatus(StrEnum):
+    PENDING = "PENDING"
+    REGISTERED = "REGISTERED"
+    FAILED = "FAILED"
+
+
+class ServiceInterest(StrEnum):
+    TRANSPORT = "transport"
+    OFFICIAL_IMPORT = "official_import"
+    CUSTOMS = "customs"
+    ORDER = "order"
+
+
+# Business rule, enforced by the database rather than by application code:
+# at most one REGISTERED registration lead per phone number.
+#
+# Partial indexes are supported by both SQLite and PostgreSQL, so the same rule
+# holds in dev and in production. PENDING/FAILED rows are deliberately outside
+# the index: a customer whose first attempt failed must be able to try again.
+_REGISTERED_PHONE_PREDICATE = "lead_type = 'REGISTER_LEAD' AND registration_status = 'REGISTERED'"
+
+
+class Lead(Base):
+    __tablename__ = "leads"
+
+    lead_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    lead_type: Mapped[LeadType] = mapped_column(
+        SAEnum(LeadType, name="lead_type", native_enum=False, length=32),
+        nullable=False,
+        default=LeadType.REGISTER_LEAD,
+        server_default=LeadType.REGISTER_LEAD.value,
+    )
+    registration_status: Mapped[RegistrationStatus] = mapped_column(
+        SAEnum(
+            RegistrationStatus,
+            name="registration_status",
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=RegistrationStatus.PENDING,
+        server_default=RegistrationStatus.PENDING.value,
+    )
+
+    # --- Identity -----------------------------------------------------------
+    full_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False)  # canonical +84...
+    phone_display: Mapped[str] = mapped_column(String(32), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    province: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    service_interest: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # --- Attribution (UTM) --------------------------------------------------
+    source: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    medium: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    campaign: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    content: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    term: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    landing_page: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    referrer: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    # --- Provider outcome ---------------------------------------------------
+    external_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    external_customer_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # --- Deduplication / tracking ------------------------------------------
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tracking_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: SHA-256 over the canonical request body. An Idempotency-Key alone is not
+    #: a safe replay key: the front end keeps one key for the whole form session
+    #: and only clears it after a completed registration, so "same key, edited
+    #: phone number" is a reachable path. Without this, the replay would hand the
+    #: second customer the first customer's lead and customer code.
+    #:
+    #: The password is deliberately NOT part of the fingerprint. A hash of a
+    #: password is still password-derived material, and storing it would create
+    #: an offline-cracking target.
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # --- Legal / consent ----------------------------------------------------
+    #: When the customer agreed to have an account created, and which wording
+    #: they agreed to. "Consent is required by the schema" is *enforcement*;
+    #: these columns are the *evidence*, which is a different thing.
+    #:
+    #: Nullable so the column can be added to an existing SQLite database
+    #: without inventing a server default; every lead this service creates sets
+    #: both, and a test asserts that.
+    consent_given_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    consent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # --- Retry bookkeeping --------------------------------------------------
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # --- Audit --------------------------------------------------------------
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "lead_type IN ('REGISTER_LEAD', 'QUOTE_LEAD')",
+            name="ck_leads_lead_type",
+        ),
+        CheckConstraint(
+            "registration_status IN ('PENDING', 'REGISTERED', 'FAILED')",
+            name="ck_leads_registration_status",
+        ),
+        CheckConstraint("attempt_count >= 0", name="ck_leads_attempt_count"),
+        Index("ix_leads_phone", "phone"),
+        Index("ix_leads_registration_status", "registration_status"),
+        Index("ix_leads_created_at", "created_at"),
+        Index("uq_leads_idempotency_key", "idempotency_key", unique=True),
+        Index("uq_leads_tracking_token", "tracking_token", unique=True),
+        Index(
+            "uq_leads_registered_phone",
+            "phone",
+            unique=True,
+            sqlite_where=text(_REGISTERED_PHONE_PREDICATE),
+            postgresql_where=text(_REGISTERED_PHONE_PREDICATE),
+        ),
+    )
+
+    def __repr__(self) -> str:  # noqa: D105 - keeps password/PII out of logs
+        return (
+            f"<Lead lead_id={self.lead_id!r} status={self.registration_status} "
+            f"phone_display={self.phone_display!r}>"
+        )
+
+
+def as_utc(value: datetime) -> datetime:
+    """Return a timezone-aware UTC datetime.
+
+    SQLite does not persist timezone offsets, so a value read back from a
+    SQLite database is naive. Every timestamp that leaves this service is
+    labelled UTC rather than silently interpreted as local time.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
