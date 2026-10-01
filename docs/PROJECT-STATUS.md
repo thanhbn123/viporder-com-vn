@@ -67,8 +67,8 @@ redundancy (SHA retained above for recovery).
 | **G06** | SEO / public website | **PASS** | OG/Twitter, static JSON-LD, `sitemap.xml`, `robots.txt`, favicon + OG image (1200×630), branded **404** served with a real 404 status and 6/6 headers (PR #21). JSON-LD is parsed by CI |
 | **G07** | UX / conversion | **PASS** | two primary actions, accessible mobile nav, success/pending/error states. **Mobile not visually verified** (no browser) |
 | **G08** | Security | **PASS, with named residuals** | `docs/SECURITY.md`. Four real defects were found by adversarial review and fixed: password in exception tracebacks; a cross-customer data leak via a reused idempotency key; nginx dropping **all** security headers from the homepage (0/6 → 6/6); and `--workers 2` doubling the in-process rate limit while the app-level proxy setting implied a control it did not provide |
-| **G09** | Testing | **PASS** | **382** backend tests (370 run without a database, 12 skip). Includes 7 PostgreSQL schema tests and 5 concurrency tests, plus 3 CI-enforced repo tools. Negative controls run for the site checker, the nginx guard, the deploy check, and by mutation for the backend's own tests |
-| **G10** | CI | **PASS** | `.github/workflows/ci.yml` — **9 jobs producing 10 required checks** (the Python matrix is two), all pinned to the PR **head SHA** and all required before merge. Includes a PostgreSQL service and a negative control for the destructive-test guard |
+| **G09** | Testing | **PASS** | **390** backend tests (378 run without a database, 12 skip) plus **41 browser tests**. The backend suite includes 7 PostgreSQL schema tests and 5 concurrency tests; the browser suite covers the three pieces of page logic that decide what is SENT, what is CLASSIFIED and what the customer is TOLD. Plus 3 CI-enforced repo tools. Negative controls run for the site checker, the nginx guard, the deploy check, and by mutation for the backend's own tests |
+| **G10** | CI | **PASS** | `.github/workflows/ci.yml` — **10 jobs producing 11 required checks** (the Python matrix is two), all pinned to the PR **head SHA** and all required before merge. Includes a PostgreSQL service and a negative control for the destructive-test guard |
 | **G11** | Documentation | **PASS** | `docs/` — architecture, flow, integration, deployment, security, go-live |
 | **G12** | Staging | **PASS (config only)** | PR #6, plus CR PR #15 (`--workers 1`, pinned `--forwarded-allow-ips`, upstream made deployment-specific). **Nothing deployed** — no VPS or DNS access. **Docker was never executed** |
 | **G13** | Release | **BLOCKED_EXTERNAL** | release PR (`develop` → `main`) opened as a **candidate only**, awaiting owner authorization. Staging acceptance cannot be performed without infrastructure, and KHAIBAO9610 is MOCK |
@@ -149,8 +149,9 @@ produced it.
 
 | Measurement | Result |
 |---|---|
-| `pytest -q` (backend, SQLite) | `370 passed, 12 skipped` |
-| `pytest -q` (backend, PostgreSQL wired in) | `382 passed` |
+| `pytest -q` (backend, SQLite) | `378 passed, 12 skipped` |
+| `pytest -q` (backend, PostgreSQL wired in) | `390 passed` |
+| `node --test "tools/js/*.test.js"` | `41 passed` |
 | `check_site.py` / `check_nginx_config.py` / `check_repo_hygiene.py` | 0 errors each |
 | CI checks on merged PR heads | **10 / 10** green (9 jobs), all required before merge |
 | Live POST, exact browser payload | `201`, lead row written, no password in DB bytes or logs |
