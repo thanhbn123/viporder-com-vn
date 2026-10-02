@@ -191,12 +191,17 @@ comments.
 
 | Earlier defect | Measured now | Required (WCAG AA) | Verdict |
 |---|---|---|---|
-| **"QUY TRÌNH"** eyebrow on the dark section | **5.05:1** (`rgb(240,80,85)` on `rgb(17,24,39)`) — was 3.42:1 | 4.5 | **Fixed** |
-| **Footer muted grey** (`.footer-bottom`) | **5.37:1** (`rgb(125,135,152)` on `rgb(9,13,20)`) — was 3.91:1 | 4.5 | **Fixed** |
+| **"QUY TRÌNH"** eyebrow on the dark section | **5.64:1** (`rgb(240,80,85)` on `rgb(10,10,10)`) — was 3.42:1 on the old navy | 4.5 | **Fixed** |
+| **Footer muted grey** (`.footer-bottom`) | **5.46:1** (`rgb(125,135,152)` on `rgb(10,10,10)`) — was 3.91:1 on the old navy | 4.5 | **Fixed** |
 | **Header tagline** ("China - Vietnam Logistics") | **12 px**, contrast 4.97:1 — was 11 px | ≥ 12 px | **Fixed** (see caveat below) |
 
-The footer figure, 5.37:1, is the same number the CSS comment claims
-(`static/css/style.css`: "3.91:1 -> 5.37:1"). That agreement is worth noting: the
+**RE-MEASURED 2026-10-02 after the BNI palette change** (red `#cc0000`, navy
+replaced with near-black `#0a0a0a`). Every figure above is the post-change value,
+read from the rendered colours. Also measured: white on the BNI-red primary button
+**5.89:1**; header tagline **4.97:1** on white.
+
+The footer figure, 5.46:1, is the same number the CSS comment claims. That agreement
+is worth noting: the
 comment was not taken on trust — it was reproduced independently from a real browser.
 
 **Caveat on the 12 px items — this needs a human judgement, not a machine one.**
@@ -227,6 +232,21 @@ it clears AA by about 10%.
 
 ## 5. Items requiring human visual approval
 
+> ## ⚠ RE-APPROVAL REQUIRED — 2026-10-02
+>
+> The palette was changed **after** the owner approved these screenshots. The brand
+> red moved from `#d71920` to **`#cc0000`** (BNI red), and the three **navy**
+> sections were replaced with near-black **`#0a0a0a`**, because BNI's identity is
+> red / white / black and has no navy.
+>
+> **All eleven screenshots were regenerated** at the new colours, and every contrast
+> measurement was re-taken. But the approval below was given for the **previous**
+> palette, so **it no longer covers what is in these files.**
+>
+> The older approval is kept rather than deleted, because it is the record of what
+> was actually reviewed — and a pending flag left standing after the thing changes is
+> its own kind of false claim.
+>
 > **APPROVED — owner, 2026-10-02.** The owner reviewed the eleven screenshots in
 > `docs/visual-acceptance/` and approved them. Recorded here because this section
 > said REQUIRED until it was given, and a pending flag left standing after the
@@ -254,8 +274,8 @@ one needs a person to open the PNGs and judge. None of them has been judged.
    and consistent at both sizes, and whether any look like placeholders.
 5. **Brand feel** — whether the red, the near-black and the type choices read as
    VIPORDER and not as a generic template.
-6. **Whether the three colour changes actually look good** — "QUY TRÌNH" at 5.05:1 and
-   the footer grey at 5.37:1 are **measurably accessible**; that says nothing about
+6. **Whether the palette change looks good** — red `#cc0000` with near-black is
+   **measurably accessible** (5.64:1 and 5.46:1); that says nothing about
    whether they are attractive. The lighter footer grey in particular was chosen to
    clear a contrast threshold — check that it does not now look washed out against the
    near-black, and that the lighter red on the dark section still reads as the same
