@@ -429,7 +429,7 @@ level (`:94`) so locations that override nothing still inherit all six headers.
 
 | Header | nginx value |
 |---|---|
-| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` |
+| `Strict-Transport-Security` | `max-age=31536000` — **`includeSubDomains` is deliberately NOT sent yet**; see §5.2 |
 | `X-Content-Type-Options` | `nosniff` |
 | `X-Frame-Options` | `DENY` |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` |
@@ -586,6 +586,29 @@ backend (`deploy/nginx/README.md:92-94`). `deploy/post-deploy-check.sh` exists f
 those live checks and was not run.
 
 ---
+
+## 5.2 Strict-Transport-Security — `includeSubDomains` is withheld, on purpose
+
+The header ships as `max-age=31536000` **without** `includeSubDomains`. That is a
+staged decision, not an oversight.
+
+**Measured 2026-10-02:** `viporder.com.vn`, `www.viporder.com.vn` and
+`khachhang.viporder.com.vn` all resolve to **103.159.50.70**, and the apex
+certificate's SANs do not cover `khachhang`. The cutover therefore replaces the
+server software on the host that also serves the **live customer portal**.
+
+**Why the stakes are asymmetric.** `includeSubDomains` binds every subdomain to
+HTTPS for a year, and the browser caches it. If the portal's certificate does not
+line up at cutover, returning customers get a TLS error they **cannot click
+through** — and rolling the server back does not release them, because the header
+that causes the failure is already on their machine.
+
+**The staged plan:**
+1. serve `max-age=31536000` alone; complete the cutover; confirm every subdomain is
+   on valid HTTPS and intends to remain there;
+2. then add `includeSubDomains` in a **separate, deliberate** change.
+
+The header is worth having. It is not worth having **before** the evidence.
 
 ## 6. CSRF — the architecture, and the actual reasoning
 

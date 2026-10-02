@@ -199,9 +199,9 @@ source (`docs/DEPLOYMENT.md:106-109`):
 
 ```bash
 sudo rsync -a --delete "$SRC/backend/" "$APP/"
-sudo rsync -a --delete \
-  --exclude '.git' --exclude 'backend' --exclude 'deploy' \
-  --exclude 'tools' --exclude 'docs' --exclude 'var' \
+# Publish ONLY what the site is, by name. `-r` is required: --files-from cancels
+# the -r implied by -a, so without it you would deploy a site with no CSS or JS.
+sudo rsync -a -r --delete --files-from="$SRC/deploy/published-files.txt" \
   "$SRC/" "$SITE/"
 sudo chown -R viporder:viporder "$APP" "$SITE"
 ```
@@ -352,22 +352,26 @@ one or the other, not both" (`deploy/docker-compose.yml:4-5`).
 
 > ### Use the systemd path (6A). It is the recommended one.
 >
-> 1. **The compose path cannot start nginx as checked in.** The site config
->    `include`s `deploy/nginx/viporder-security-headers.conf` in five places
->    (`deploy/nginx/viporder.com.vn.conf:94,146,155,162,169`) but
->    `deploy/docker-compose.yml:81-91` never mounts that file into the nginx
->    container. A missing `include` is a fatal error, not a warning — measured
->    in step 7.5.
-> 2. **The compose path publishes the whole repository as the web root.**
->    `../:/srv/viporder/site:ro` (`deploy/docker-compose.yml:82`) mounts the repository
->    root, while nginx serves it with `location / { try_files $uri $uri/ =404; }`
->    (`deploy/nginx/viporder.com.vn.conf:174-176`). `README.md`, `docs/*` and `backend/*`
->    then become fetchable paths, where the systemd path rsyncs a static-only
->    `site/` (`docs/DEPLOYMENT.md:106-109`).
+> 1. ~~**The compose path cannot start nginx as checked in.**~~ **FIXED** in
+>    `deploy/docker-compose.yml` (commit `4445d60`): the security-headers snippet
+>    the site config `include`s in five places is now mounted. The original defect
+>    was real and measured — a missing `include` is a fatal `[emerg]`, not a
+>    warning, and the containerised stack exited at startup. Kept visible so the
+>    history is clear.
+> 2. ~~**The compose path publishes the whole repository as the web root.**~~
+>    **FIXED** in the same commit: the nginx service now mounts an explicit
+>    five-path allow list instead of `../:/srv/viporder/site:ro`, so `README.md`,
+>    `docs/*` and `backend/*` are no longer reachable.
 > 3. **Docker was never executed for this project** — recorded as such in
->    `docs/PROJECT-STATUS.md:73`.
+>    `docs/PROJECT-STATUS.md`. This one is still true: the fixes above are
+>    configuration-verified, not run. `python3 tools/check_compose.py` reports
+>    14 mounts, 4 configs, 0 errors, and that is a check of the SEAM, not a
+>    running stack.
 >
-> If compose is required anyway, apply the corrections in 6B.1 first.
+> **The recommendation is unchanged — use systemd (6A)** — but the reason is now
+> "systemd is the path this project has actually exercised", not "compose is
+> broken". Section 6B.1 is retained because it documents which corrections were
+> applied and why.
 
 ### 6A. systemd (recommended)
 
@@ -851,6 +855,102 @@ separate PR. Nothing in this repository is a browser test today.
 
 ---
 
+## 11.1 Tracking lookups (warehouse import and package sealing)
+
+The two public search functions fan out to the legacy provider. They are separate
+from the registration path and are worth checking on their own, because a working
+registration says nothing about whether `KHAIBAO9610_BASE_URL` is correct for the
+READ endpoints.
+
+Both routes are behind the same double opt-in as registration
+(`KHAIBAO9610_MODE=http` **and** `KHAIBAO9610_ENABLE_REAL_CALLS=yes`). **With the
+default mock configuration they answer `503 PROVIDER_UNAVAILABLE`** — and that is
+the correct, honest response, not a fault. Check which one you are looking at:
+
+```bash
+# Is live mode even on? Read it from the running service, not from the file.
+sudo systemctl show viporder-web -p Environment | tr ' ' '\n' | grep -E 'KHAIBAO9610_(MODE|ENABLE_REAL_CALLS)'
+```
+
+```bash
+# Warehouse import. NOTE: the keyword must be the FULL tracking code.
+# Measured 2026-10-02: KY4001103376087 -> 404, but
+# KY4001103376087-2-4-|s -> 200. The pipe MUST be percent-encoded.
+curl -sS -o /tmp/wh.json -w 'warehouse HTTP %{http_code}\n' \
+  "https://$STAGING_HOST/api/tracking/warehouse-imports/KY4001103376087-2-4-%7Cs"
+python3 -m json.tool /tmp/wh.json | head -20
+```
+
+```bash
+# Package sealing.
+curl -sS -o /tmp/seal.json -w 'sealing  HTTP %{http_code}\n' \
+  "https://$STAGING_HOST/api/tracking/package-sealings/A1918106"
+python3 -m json.tool /tmp/seal.json | head -20
+```
+
+```bash
+# A keyword that must NOT be accepted: rejected locally, no provider call.
+curl -sS -o /dev/null -w 'hostile  HTTP %{http_code} (must be 400)\n' \
+  "https://$STAGING_HOST/api/tracking/warehouse-imports/%3Cscript%3E"
+```
+
+**Expected:** `200` with `{"result":"found",...}` when live; `400` for the hostile
+keyword **always**, because that check runs before any network call; `503` with a
+Vietnamese message when live mode is off.
+
+**What to record:** the status AND the body's key names. The two upstream envelopes
+**differ** — `warehouse-imports` is a bare object, `package-sealings` is wrapped in
+`{"data": {...}}` — and a staging check that only looks at status will not notice if
+that has changed.
+
+---
+
+## 11.2 Source exposure checks (run this one out loud)
+
+The deploy publishes an **allow list** (`deploy/published-files.txt`). A previous
+revision published the whole repository minus a few names, and everything added
+later became public: measured against real nginx, `/package.json`,
+`/playwright.config.js`, `/tests/e2e/*.spec.js` and the entire `node_modules/` tree
+were all fetchable.
+
+Run these against staging. **Every one must be 403 or 404. A 200 is a release
+blocker.**
+
+```bash
+for p in /backend/app/config.py /docs/SECURITY.md /.git/config /.env \
+         /docker-compose.yml /requirements.txt /README.md /package.json \
+         /package-lock.json /playwright.config.js /tests/e2e/helpers.js /node_modules; do
+  printf '%-38s %s\n' "$p" "$(curl -sS -o /dev/null -w '%{http_code}' "https://$STAGING_HOST$p")"
+done
+```
+
+And confirm the files that SHOULD be public still are:
+
+```bash
+for p in / /robots.txt /sitemap.xml /static/js/register.js /static/css/style.css; do
+  printf '%-30s %s\n' "$p" "$(curl -sS -o /dev/null -w '%{http_code}' "https://$STAGING_HOST$p")"
+done
+```
+
+Guard the same thing statically before you even deploy:
+
+```bash
+python3 tools/check_deploy_exposure.py
+```
+
+**One more, because it is easy to get wrong:** confirm the deployed site actually
+has its CSS and JavaScript. `rsync --files-from` **cancels** the `-r` implied by
+`-a`; without an explicit `-r` the directories are created and their contents are
+not copied, producing a site that returns `200` for `/` and `404` for every asset
+it needs.
+
+```bash
+curl -sS -o /dev/null -w 'style.css HTTP %{http_code}\n' "https://$STAGING_HOST/static/css/style.css"
+curl -sS -o /dev/null -w 'register.js HTTP %{http_code}\n' "https://$STAGING_HOST/static/js/register.js"
+```
+
+---
+
 ## 12. Rollback
 
 ### 12.1 Read the rollback target first
@@ -872,9 +972,9 @@ git -C "$SRC" status --porcelain                # must print nothing
 
 sudo "$VENV/bin/pip" install -r "$SRC/backend/requirements.txt"
 sudo rsync -a --delete "$SRC/backend/" "$APP/"
-sudo rsync -a --delete \
-  --exclude '.git' --exclude 'backend' --exclude 'deploy' \
-  --exclude 'tools' --exclude 'docs' --exclude 'var' \
+# Publish ONLY what the site is, by name. `-r` is required: --files-from cancels
+# the -r implied by -a, so without it you would deploy a site with no CSS or JS.
+sudo rsync -a -r --delete --files-from="$SRC/deploy/published-files.txt" \
   "$SRC/" "$SITE/"
 sudo chown -R viporder:viporder "$APP" "$SITE"
 
@@ -1014,14 +1114,21 @@ them blocks it.
 Recorded so the next operator does not rediscover them, and so that "the
 runbook covered it" is never claimed for something that is not covered.
 
-1. **Compose nginx cannot start** — the security-headers snippet is included by
-   the site config but never mounted (`deploy/docker-compose.yml:81-91` vs
-   `deploy/nginx/viporder.com.vn.conf:94`). Correction in 6B.1(a). A missing
-   `include` is a fatal `[emerg]` — measured in 7.5.
-2. **Compose publishes the repository root as the web root**
-   (`deploy/docker-compose.yml:82` + `deploy/nginx/viporder.com.vn.conf:174-176`), exposing
-   `README.md`, `docs/*`, `backend/*` over HTTP. Correction and verification in
-   6B.1(b). Reading-based; verify at staging with the two `curl` calls given.
+1. ~~**Compose nginx cannot start**~~ — **CLOSED** (`4445d60`): the snippet is
+   mounted. This prose was written against an earlier revision and said "cannot
+   start" for several revisions after it could.
+2. ~~**Compose publishes the repository root as the web root**~~ — **CLOSED**
+   (`4445d60`): the mount is an explicit allow list. **Still worth probing at
+   staging**, and §11.2 now gives the commands, because the same class of defect
+   was found AGAIN on the systemd path: its rsync used a deny list and published
+   `README.md`, `package.json`, `playwright.config.js`, `tests/` and
+   `node_modules/` — measured against real nginx. That path now uses
+   `--files-from=deploy/published-files.txt`, checked by
+   `tools/check_deploy_exposure.py`.
+3. **The deployed site must be proved to have its CSS and JavaScript.**
+   `rsync --files-from` CANCELS the `-r` implied by `-a`, so without an explicit
+   `-r` the directories are created and their contents are not copied. Two curls
+   in §11.2.
 3. **`--workers 1` is pinned for correctness, not performance.** Raising it
    multiplies the effective rate limit, and the concurrency guarantees are only
    verified at one worker. `backend/tests/test_concurrency.py` must be re-run

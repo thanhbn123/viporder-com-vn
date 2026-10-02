@@ -330,3 +330,51 @@ def test_the_409_then_edit_phone_path_does_not_leak_the_first_customer(
     for secret in (stolen["lead_id"], stolen["external_customer_code"]):
         assert secret not in second.text
     assert len(harness.lead_rows()) == 1
+
+
+# ---------------------------------------------------------------------------
+# G04B — the field-name mismatch that would have broken every live registration
+# ---------------------------------------------------------------------------
+
+
+def test_the_provider_spelling_of_the_new_fields_is_REJECTED_by_name(harness) -> None:
+    """The regression this project actually had, pinned so it cannot come back.
+
+    Our API is snake_case. The PROVIDER's contract is camelCase. The registration
+    form's `name` attributes happen to match the PROVIDER, so the client sent
+    `confirmPassword`/`acceptTerms` to an API declaring
+    `confirm_password`/`accept_terms` — and `extra="ignore"` **silently dropped
+    both keys**, so the two required fields arrived missing.
+
+    Every other test in this file posts the CORRECT spelling, so they would have
+    passed with the bug present. This one posts the spelling that was actually
+    being sent and asserts the failure is now LOUD and NAMED.
+
+    A silent drop and a loud rejection are the difference between a 422 the client
+    can act on and a registration that looks fine until the provider rejects it.
+    """
+    from tests.conftest import payload
+
+    body = payload()
+    # Rename exactly the two fields the client used to get wrong.
+    body["confirmPassword"] = body.pop("confirm_password")
+    body["acceptTerms"] = body.pop("accept_terms")
+
+    response = harness.post_registration(body)
+
+    assert response.status_code == 422, (
+        f"a camelCase body was accepted; the mismatch is silent again: {response.text[:300]}"
+    )
+    fields = response.json()["error"]["fields"]
+    assert "confirm_password" in fields, fields
+    assert "accept_terms" in fields, fields
+
+
+def test_the_snake_case_body_is_the_one_that_works(harness) -> None:
+    """The positive half: our own spelling is the one the API wants."""
+    from tests.conftest import payload
+
+    body = payload()
+    assert "confirm_password" in body and "accept_terms" in body
+    response = harness.post_registration(body)
+    assert response.status_code in (201, 202), response.text

@@ -103,10 +103,11 @@ chown -R viporder:viporder /srv/viporder/app
 ### 4.4 Static site
 
 ```bash
-rsync -a --delete \
-  --exclude '.git' --exclude 'backend' --exclude 'deploy' \
-  --exclude 'tools' --exclude 'docs' --exclude 'var' \
-  ./ /srv/viporder/site/
+# Publish ONLY what the site is, by name — see deploy/published-files.txt.
+# `-r` is required: --files-from cancels the -r implied by -a, and without it the
+# directories are created but their contents are not copied, so the deployed site
+# has no CSS and no JavaScript.
+rsync -a -r --delete --files-from=deploy/published-files.txt ./ /srv/viporder/site/
 chown -R viporder:viporder /srv/viporder/site
 ```
 
@@ -173,8 +174,10 @@ git fetch --all && git checkout "$RELEASE_SHA"
 /srv/viporder/venv/bin/pip install -r backend/requirements.txt
 rsync -a --delete backend/ /srv/viporder/app/
 sudo -u viporder /srv/viporder/venv/bin/alembic upgrade head
-rsync -a --delete --exclude '.git' --exclude 'backend' --exclude 'deploy' \
-  --exclude 'tools' --exclude 'docs' --exclude 'var' ./ /srv/viporder/site/
+# Publish ONLY what the site is, by name. `-r` is required: --files-from
+# cancels the -r implied by -a, and without it the directory entries are created
+# but their CONTENTS are not copied — a site with no CSS and no JavaScript.
+rsync -a -r --delete --files-from=deploy/published-files.txt ./ /srv/viporder/site/
 chown -R viporder:viporder /srv/viporder/app /srv/viporder/site
 systemctl restart viporder-web
 systemctl reload nginx
@@ -194,8 +197,10 @@ The previous SHA is always known (`/srv/viporder/RELEASE` before the deploy).
 ```bash
 git checkout <previous_sha>
 rsync -a --delete backend/ /srv/viporder/app/
-rsync -a --delete --exclude '.git' --exclude 'backend' --exclude 'deploy' \
-  --exclude 'tools' --exclude 'docs' --exclude 'var' ./ /srv/viporder/site/
+# Publish ONLY what the site is, by name. `-r` is required: --files-from
+# cancels the -r implied by -a, and without it the directory entries are created
+# but their CONTENTS are not copied — a site with no CSS and no JavaScript.
+rsync -a -r --delete --files-from=deploy/published-files.txt ./ /srv/viporder/site/
 systemctl restart viporder-web
 echo "<previous_sha>" > /srv/viporder/RELEASE
 ./deploy/post-deploy-check.sh https://viporder.com.vn

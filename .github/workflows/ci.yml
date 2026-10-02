@@ -82,6 +82,14 @@ jobs:
           python-version: "3.12"
       - name: Site checks
         run: python tools/check_site.py
+      - name: Deploy exposure guard (what the rsync publish list ships)
+        # The deploy copied the whole tree and subtracted a few names, so every new
+        # root-level file was published BY DEFAULT: measured against real nginx,
+        # /package.json, /playwright.config.js, /tests/e2e/*.spec.js and the whole
+        # node_modules tree were all fetchable. The deploy now publishes an explicit
+        # allow list; this checks it and that it still covers every asset the pages
+        # reference.
+        run: python tools/check_deploy_exposure.py
       - name: Compose mount guard (nginx includes vs container mounts)
         # Two real defects shipped here and neither was visible until somebody
         # tried to start the stack: the security-headers snippet was included five
