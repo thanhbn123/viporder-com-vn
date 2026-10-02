@@ -189,6 +189,27 @@ else
   ok "HSTS without includeSubDomains (as decided)"
 fi
 
+# HSTS on the API path. nginx `add_header` ADDS to a proxied response rather than
+# replacing it, so if the application also emits the header the client receives
+# TWO — and it only takes one carrying `includeSubDomains` to bind every subdomain
+# for a year. This is host-scoped, not path-scoped: an API response can pin the
+# marketing apex. Measured here because the static check only ever looked at "/".
+API_HSTS=$(curl -sk -D - -o /dev/null -m 10 -H "Host: viporder.com.vn" "$H/api/v1/health" \
+  | tr -d '\r' | grep -ci "strict-transport-security")
+if [ "$API_HSTS" = "1" ]; then
+  ok "API path sends exactly one HSTS header"
+elif [ "$API_HSTS" = "0" ]; then
+  bad "API path sends NO HSTS header"
+else
+  bad "API path sends $API_HSTS HSTS headers (must be exactly 1)"
+fi
+if curl -sk -D - -o /dev/null -m 10 -H "Host: viporder.com.vn" "$H/api/v1/health" \
+     | tr -d '\r' | grep -i "strict-transport-security" | grep -qi "includeSubDomains"; then
+  bad "API path HSTS carries includeSubDomains — it must NOT, by decision"
+else
+  ok "API path HSTS has no includeSubDomains"
+fi
+
 step "7. REGISTRATION — mock provider through the real stack"
 REG=$(curl -sk -H "Host: viporder.com.vn" -o "$R/logs/reg.json" -w '%{http_code}' -m 15 -X POST "$H/api/v1/registrations" \
   -H 'Content-Type: application/json' \
