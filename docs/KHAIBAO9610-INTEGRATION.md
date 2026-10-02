@@ -1482,6 +1482,47 @@ registration produces customer codes.
 
 ---
 
+## 10.5 Running ONE real registration, when the owner is ready
+
+The registration contract is still UNKNOWN, and the only way to learn it is to
+register once against the real API. That is a WRITE on somebody else's production
+system — it creates an account a person could try to sign in with — so it is not in
+`tests/` and pytest never collects it.
+
+`tools/test_live_registration.py` sends **exactly one POST per invocation**, has no
+retry and no batch mode, and refuses unless three things are all true:
+
+1. `ENABLE_LIVE_REGISTRATION_TEST=yes` — an unmistakable explicit flag;
+2. every field of a test identity is supplied through the environment;
+3. the base URL is not the marketing domain.
+
+It never prints the password: the response is scanned and every occurrence redacted
+before anything reaches the terminal. It prints the status, content type, elapsed
+time, the response's **key names**, and a sanitized body — enough to write a real
+contract from, not enough to leak a credential into scrollback.
+
+**The exact command for the owner to run** (substitute real test-identity values):
+
+```bash
+ENABLE_LIVE_REGISTRATION_TEST=yes \
+LIVE_REG_NAME='Khách Kiểm Thử' \
+LIVE_REG_PHONE='0900000000' \
+LIVE_REG_EMAIL='test@example.com' \
+LIVE_REG_PASSWORD='<a-real-test-password>' \
+python3 tools/test_live_registration.py
+```
+
+**Before running it, decide two things:** that the identity is one the owner is
+content to have created, and that a duplicate is acceptable if the call is repeated.
+The tool cannot know either.
+
+**If it fails, do not simply re-run it.** A transport failure means the request may
+or may not have arrived, and a second attempt can create a second account. Check
+with the provider first.
+
+Whatever it returns, the result belongs in §4.9 of this document as MEASURED — that
+is what moves registration from UNKNOWN, and nothing else will.
+
 ## 11. What is not verified
 
 Stated plainly, because a document that lists only what is known is the one that
