@@ -82,6 +82,14 @@ jobs:
           python-version: "3.12"
       - name: Site checks
         run: python tools/check_site.py
+      - name: Compose mount guard (nginx includes vs container mounts)
+        # Two real defects shipped here and neither was visible until somebody
+        # tried to start the stack: the security-headers snippet was included five
+        # times but never mounted (nginx exits at startup), and the nginx service
+        # mounted the whole repository as the web root (source, docs and tools
+        # fetchable over HTTPS). check_nginx_config.py reads the nginx config in
+        # isolation and could not see either; this checks the seam with compose.
+        run: python tools/check_compose.py
       - name: Nginx config guard (add_header inheritance)
         # Nginx drops ALL server-level add_header for any location that declares
         # its own, which once cost this project its entire security-header set
