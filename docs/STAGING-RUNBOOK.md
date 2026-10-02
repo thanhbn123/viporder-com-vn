@@ -756,7 +756,9 @@ missing, no matter what `nginx -t` said.
 
 ## 11. Browser E2E against staging
 
-**There is no committed browser E2E harness at this revision, and this runbook
+**CORRECTED 2026-10-02: there IS a committed browser E2E harness** — `tests/e2e/` holds 8 spec files, `playwright.config.js` exists, `package.json` pins `@playwright/test` 1.56.1, and CI runs them as gate **G12A**. The sentence below was false at the revision it described. The caveat that remains true is that `playwright.config.js` hardcodes `baseURL: http://127.0.0.1:8123` and starts its own `webServer`, so it **cannot** be pointed at a remote host without editing it.
+
+~~There is no committed browser E2E harness at this revision, and this runbook
 does not pretend otherwise.** Checked at `$SHA`:
 
 * no `playwright`, `puppeteer`, `cypress` or `selenium` dependency or config

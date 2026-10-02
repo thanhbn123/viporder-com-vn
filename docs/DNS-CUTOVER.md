@@ -344,7 +344,8 @@ it did not contain:
 3. **`apiviporder.com` is a different host in a different zone on different
    nameservers**, not a name in the `viporder.com.vn` zone (see §2.5).
 4. **The live host sends no HSTS**, while this repository's configuration sends
-   HSTS with `includeSubDomains` (see §2.6).
+   HSTS **without** `includeSubDomains` (see §2.6 — this line said the opposite
+   until 2026-10-02; the withholding landed in `87d5440`).
 
 Per `docs/PROJECT-STATUS.md:76` ("If a row and a PR disagree, the PR is wrong —
 re-measure"), the discrepancy here was resolved by re-measuring, not by
@@ -381,7 +382,12 @@ This repository's proposed configuration sends:
 
 ```
 deploy/nginx/viporder-security-headers.conf:29
-add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+# SUPERSEDED 2026-10-02. This document used to quote the header as carrying
+# `includeSubDomains`. It does not, and must not: the snippet ships
+# `max-age=31536000` alone, and the application no longer emits
+# `includeSubDomains` either (it did, on /api/*, where nginx `add_header` ADDED a
+# second header rather than replacing it — measured, then fixed).
+add_header Strict-Transport-Security "max-age=31536000" always;
 ```
 
 The same value is emitted by the application at
@@ -588,7 +594,9 @@ unreachable while its DNS record is perfectly correct.
 **(c) HSTS makes (b) unrecoverable for returning visitors.**
 `deploy/nginx/viporder-security-headers.conf:29` sets
 `Strict-Transport-Security ... includeSubDomains`, and
-`backend/app/middleware.py:253` does the same. `includeSubDomains` on
+`backend/app/middleware.py:253` does the same. **Both halves of this paragraph are
+now false** — measured 2026-10-02, the API path returned TWO HSTS headers, one
+carrying `includeSubDomains`, and both tiers were corrected. `includeSubDomains` on
 `viporder.com.vn` covers `khachhang.viporder.com.vn`. A visitor who has loaded
 the new site once will have a cached HSTS policy for the portal. If (b) happens,
 they do not get a bypassable warning; they get a hard failure. **This is the
@@ -610,8 +618,9 @@ portal from being served at all, independent of (a)–(c).
    certificate (`/etc/letsencrypt/live/khachhang.viporder.com.vn/…`), its own
    document root or upstream, and its own ACME location on port 80. Add it and
    prove it works *before* removing anything.
-3. **Consider dropping `includeSubDomains` from HSTS** until the portal is
-   proven stable on the new topology. `max-age` without `includeSubDomains`
+3. ~~**Consider dropping `includeSubDomains` from HSTS**~~ — **DONE.** It is
+   withheld in the snippet, and the application no longer emits it on `/api/*`
+   (which is where it was leaking). `max-age` without `includeSubDomains`
    protects the apex only. This weakens a security control, so it is a decision
    for the owner and should be recorded either way.
 4. **Prove the portal before and after, from outside**, with the commands in
