@@ -33,3 +33,10 @@ build/
 
 # --- Local smoke-test leftovers -------------------------------------------
 tmp/
+.tmp-e2e/
+
+# --- Browser tests (G12A) ---------------------------------------------------
+# Dev-only dependency tree and run artifacts. The page itself has no build
+# step and no runtime dependencies; these exist only to drive a real browser.
+playwright-report/
+test-results/

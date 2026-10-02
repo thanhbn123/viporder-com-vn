@@ -482,6 +482,17 @@
     setMessage(parts.join(" "), "success");
 
     form.setAttribute("data-completed", "true");
+    /* Clear the password from the input now the registration is done.
+     *
+     * The form is finished — it is `data-completed`, the button is disabled and
+     * the reply tells the customer to sign in with what they just chose — so
+     * there is no further use for it, and leaving a working credential visible in
+     * a text field on a shared or shoulder-surfed screen is pure downside. This
+     * is not a storage or logging concern (the password is in neither); it is the
+     * one place it lingers where a person can read it. */
+    if (field("password")) {
+      field("password").value = "";
+    }
     if (submitBtn) {
       submitBtn.disabled = true;
       submitBtn.removeAttribute("aria-busy");
