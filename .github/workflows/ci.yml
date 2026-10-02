@@ -96,6 +96,48 @@ jobs:
         # on the homepage. Checked as a program, not a comment.
         run: python tools/check_nginx_config.py
 
+  browser-e2e:
+    name: Browser E2E (desktop + mobile)
+    runs-on: ubuntu-latest
+    needs: head
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.head.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Install browser test dependencies
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Browser E2E
+        # Drives tools/dev_server.py, which serves the repository root and proxies
+        # /api to the backend, so the browser sees ONE origin exactly as it will
+        # behind nginx. The provider is the MOCK adapter; failure scenarios are
+        # chosen by phone suffix rather than by timing, so the run is
+        # deterministic. See playwright.config.js.
+        #
+        # This job exists because the browser layer was the only part of this
+        # project no test executed - and the first run of this suite found a
+        # customer-visible defect that no backend test could see: every
+        # customer-facing message was ENGLISH on a Vietnamese site.
+        run: npx playwright test
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
   js-tests:
     name: JS tests (registration failure handling)
     runs-on: ubuntu-latest

@@ -76,8 +76,12 @@ def test_duplicate_replay_does_not_claim_the_registration_is_pending(make_harnes
     assert replay.json()["error"]["code"] == DUPLICATE_PHONE
     assert "registration_status" not in replay.json()
     assert "tracking_token" not in replay.json()
-    assert "complete it shortly" not in replay.text
-    assert "could not confirm it yet" not in replay.text
+    # These assert the PENDING wording is absent. They must name the wording that
+    # actually exists: while the messages were English, translating them would
+    # have left both lines passing VACUOUSLY — the strings would no longer appear
+    # anywhere, so the assertions would check nothing while still going green.
+    assert "hoàn tất trong" not in replay.text
+    assert "chưa xác nhận được ngay" not in replay.text
 
 
 def test_invalid_replays_as_422_with_a_byte_identical_body(make_harness) -> None:

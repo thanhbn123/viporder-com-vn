@@ -57,19 +57,36 @@ logger = logging.getLogger(__name__)
 
 MAX_IDEMPOTENCY_KEY_LENGTH = 128
 
-MESSAGE_REGISTERED = "Registration complete. You can sign in to the customer portal."
+# --- Customer-facing wording. VIETNAMESE, because the customer is. -----------
+#
+# These five are returned to the BROWSER and rendered verbatim, so they are
+# customer-facing copy, not log lines. They were written in English while every
+# string in `static/js/` was Vietnamese, so a customer who registered
+# successfully saw an English sentence followed by Vietnamese ones:
+#
+#   "Registration complete. You can sign in to the customer portal.
+#    Mã khách hàng của bạn: TT00001. Bạn có thể đăng nhập hệ thống khách hàng..."
+#
+# Found by the browser gate (tests/e2e/registration.spec.js), which is the only
+# thing that ever rendered these to a person. A backend test cannot see it: the
+# string is present, correct, and in the wrong language.
+#
+# The four `MESSAGE_RETRY_*` below are deliberately LEFT in English — they go to
+# the operator endpoint, not to a customer.
+MESSAGE_REGISTERED = "Đăng ký thành công."
 MESSAGE_PENDING = (
-    "We received your registration but could not confirm it yet. "
-    "Keep the tracking token to check the result; we will complete it shortly."
+    "Chúng tôi đã ghi nhận đăng ký của bạn nhưng chưa xác nhận được ngay. "
+    "Vui lòng giữ mã theo dõi để kiểm tra kết quả; chúng tôi sẽ hoàn tất trong "
+    "thời gian sớm nhất."
 )
 MESSAGE_ALREADY_REGISTERED = "This registration is already confirmed."
 MESSAGE_DUPLICATE_PHONE = (
-    "This phone number is already registered. Please sign in to the customer portal."
+    "Số điện thoại này đã được đăng ký. Vui lòng đăng nhập hệ thống khách hàng."
 )
 MESSAGE_PROVIDER_INVALID = (
-    "The registration service rejected these details. Please check them and try again."
+    "Hệ thống đăng ký không chấp nhận thông tin này. Vui lòng kiểm tra lại và thử lại."
 )
-MESSAGE_REGISTRATION_FAILED = "This registration did not complete. Please start a new registration."
+MESSAGE_REGISTRATION_FAILED = "Đăng ký này chưa hoàn tất. Vui lòng bắt đầu một đăng ký mới."
 MESSAGE_RETRY_ATTEMPTED = "Retry attempt recorded. Check registration_status for the result."
 MESSAGE_RETRY_IN_PROGRESS = (
     "Another attempt for this phone is already in flight. Try again once it finishes."

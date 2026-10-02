@@ -98,6 +98,36 @@ class DevHandler(SimpleHTTPRequestHandler):
             return self._proxy("GET")
         return super().do_GET()
 
+    def send_error(self, code, message=None, explain=None):  # type: ignore[override]
+        """Serve our own 404 page, the way nginx does.
+
+        WHY THIS EXISTS. This server's whole purpose is to make the browser see
+        what production sees (see the module docstring). Production runs nginx
+        with `error_page 404 /404.html` (`deploy/nginx/viporder.com.vn.conf:138`),
+        so a mistyped URL gets OUR branded error page. This server delegated to
+        `SimpleHTTPRequestHandler`, which answers with Python's built-in error
+        page instead — so the 404 behaviour was the one page that could never be
+        reviewed locally, and a browser test asserting `noindex` on it failed
+        against a page no customer will ever be served.
+
+        `404.html` carries `noindex` and deliberately no canonical; serving it
+        with a real 404 status is what keeps those controls meaningful. The status
+        code is preserved — this is not a soft-404.
+        """
+        if code == 404:
+            page = ROOT / "404.html"
+            if page.is_file():
+                body = page.read_bytes()
+                self.send_response(404)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+                return
+        return super().send_error(code, message, explain)
+
     def do_HEAD(self):       # noqa: N802
         if self._is_api():
             return self._proxy("HEAD")
