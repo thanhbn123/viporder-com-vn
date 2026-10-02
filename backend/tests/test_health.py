@@ -15,7 +15,15 @@ def test_health_returns_the_documented_shape(harness: Harness) -> None:
     assert body["service"] == "viporder-web"
     assert isinstance(body["version"], str) and body["version"]
     assert body["checks"]["database"] == "ok"
-    assert body["checks"]["provider"] == {"mode": "mock", "status": "ok"}
+    # The capabilities are reported SEPARATELY so an operator can see whether
+    # customer creation is live without reading the env file. In mock mode both are
+    # "mock" — and the assertion is exact on purpose: a silently added or removed
+    # capability should fail this test.
+    assert body["checks"]["provider"] == {
+        "mode": "mock",
+        "status": "ok",
+        "capabilities": {"tracking_reads": "mock", "registration_writes": "mock"},
+    }
 
 
 def test_health_reports_the_configured_mode(make_harness) -> None:
@@ -29,7 +37,11 @@ def test_health_reports_the_configured_mode(make_harness) -> None:
         khaibao9610_enable_real_calls=False,
     )
     body = harness.client.get("/api/v1/health").json()
-    assert body["checks"]["provider"] == {"mode": "http", "status": "disabled"}
+    assert body["checks"]["provider"] == {
+        "mode": "http",
+        "status": "disabled",
+        "capabilities": {"tracking_reads": "disabled", "registration_writes": "disabled"},
+    }
 
 
 def test_health_reports_db_failure_as_503(make_harness, monkeypatch) -> None:
@@ -47,6 +59,35 @@ def test_provider_health_helper() -> None:
     assert provider_health("mock", False) == "ok"
     assert provider_health("http", True) == "ok"
     assert provider_health("http", False) == "disabled"
+
+
+def test_capability_status_helper() -> None:
+    from app.routers.health import capability_status
+
+    assert capability_status("mock", False) == "mock"
+    assert capability_status("http", True) == "live"
+    assert capability_status("http", False) == "disabled"
+
+
+def test_health_shows_writes_disabled_when_only_reads_are_enabled(make_harness) -> None:
+    """The staging configuration that caused the incident, asserted at the API.
+
+    Reads on, writes off must be visible in /health — an operator should not have to
+    read an env file to learn whether customer creation is live.
+    """
+    from app.providers.mock import MockRegistrationProvider
+
+    harness = make_harness(
+        provider=MockRegistrationProvider(),
+        khaibao9610_mode="http",
+        khaibao9610_enable_real_calls=True,
+        khaibao9610_enable_real_registration=False,
+    )
+    provider = harness.client.get("/api/v1/health").json()["checks"]["provider"]
+    assert provider["capabilities"] == {
+        "tracking_reads": "live",
+        "registration_writes": "disabled",
+    }
 
 
 def test_health_is_not_rate_limited(make_harness) -> None:

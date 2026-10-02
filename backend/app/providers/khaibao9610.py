@@ -93,6 +93,7 @@ class ViporderFrontendProvider:
         *,
         mode: str = "mock",
         enable_real_calls: bool = False,
+        enable_real_registration: bool = False,
         base_url: str,
         timeout_seconds: float = 10.0,
         user_agent: str,
@@ -108,11 +109,12 @@ class ViporderFrontendProvider:
                 f"(got {mode!r}). The default mode is 'mock' on purpose: the "
                 "real upstream contract has not been supplied."
             )
-        if not enable_real_calls:
+        if not (enable_real_calls or enable_real_registration):
             raise ProviderConfigurationError(
-                "Refusing to construct the live provider: real calls are "
-                "disabled. Set KHAIBAO9610_ENABLE_REAL_CALLS=yes together with "
-                "KHAIBAO9610_MODE=http to make real registrations."
+                "Refusing to construct the live provider: BOTH capabilities are "
+                "disabled. Set KHAIBAO9610_MODE=http plus at least one of "
+                "KHAIBAO9610_ENABLE_REAL_CALLS=yes (tracking lookups) or "
+                "KHAIBAO9610_ENABLE_REAL_REGISTRATION=yes (customer registration)."
             )
         if not MIN_TIMEOUT_SECONDS <= float(timeout_seconds) <= MAX_TIMEOUT_SECONDS:
             raise ProviderConfigurationError(
@@ -152,6 +154,11 @@ class ViporderFrontendProvider:
             )
 
         self.mode = mode
+        # Stored, not merely validated. The constructor previously checked the flag
+        # and discarded it, so `register()` could not tell whether writes were
+        # allowed — which is how one switch came to gate both capabilities.
+        self.enable_real_calls = enable_real_calls
+        self.enable_real_registration = enable_real_registration
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = float(timeout_seconds)
         self.user_agent = user_agent
@@ -167,6 +174,7 @@ class ViporderFrontendProvider:
         return cls(
             mode=settings.khaibao9610_mode,
             enable_real_calls=settings.khaibao9610_enable_real_calls,
+            enable_real_registration=settings.khaibao9610_enable_real_registration,
             base_url=settings.khaibao9610_base_url,
             timeout_seconds=settings.khaibao9610_timeout_seconds,
             user_agent=settings.khaibao9610_user_agent,
@@ -337,6 +345,13 @@ class ViporderFrontendProvider:
     # get conflated. Normalisation owns that decision, in one place.
 
     def find_warehouse_import(self, keyword: str) -> dict | None:
+        # THE READ SWITCH. Separate from the write switch so that a tracking
+        # test can never create a customer (see the class docstring).
+        if not self.enable_real_calls:
+            raise ProviderUnavailableError(
+                "Real tracking lookups are disabled. Set "
+                "KHAIBAO9610_ENABLE_REAL_CALLS=yes to allow them."
+            )
         """Look up one warehouse import by tracking code.
 
         ``None`` means HTTP 404 — the measured "Mã vận đơn không tồn tại".
@@ -344,6 +359,13 @@ class ViporderFrontendProvider:
         return self._tracking_get(self.warehouse_import_path, keyword)
 
     def find_package_sealing(self, keyword: str) -> dict | None:
+        # THE READ SWITCH. Separate from the write switch so that a tracking
+        # test can never create a customer (see the class docstring).
+        if not self.enable_real_calls:
+            raise ProviderUnavailableError(
+                "Real tracking lookups are disabled. Set "
+                "KHAIBAO9610_ENABLE_REAL_CALLS=yes to allow them."
+            )
         """Look up one package sealing by sealing code.
 
         ``None`` means HTTP 404. On success the caller gets the FULL envelope,
@@ -354,6 +376,16 @@ class ViporderFrontendProvider:
     # -- provider contract ---------------------------------------------------
 
     def register(self, request: RegistrationRequest) -> RegistrationResult:
+        # THE WRITE SWITCH. Reads and writes are gated separately so that enabling
+        # live tracking lookups cannot, by itself, allow a customer to be created on
+        # the provider's production system. That is exactly what happened once.
+        if not self.enable_real_registration:
+            raise ProviderUnavailableError(
+                "Real registration is disabled. Set "
+                "KHAIBAO9610_ENABLE_REAL_REGISTRATION=yes to allow it — "
+                "KHAIBAO9610_ENABLE_REAL_CALLS only permits tracking lookups."
+            )
+
         # NOTE: never log `payload` — it contains the plaintext password and its
         # confirmation.
         #
