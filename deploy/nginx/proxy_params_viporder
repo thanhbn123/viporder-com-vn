@@ -13,6 +13,24 @@ proxy_connect_timeout 5s;
 proxy_send_timeout    30s;
 proxy_read_timeout    30s;
 
-# Never let an upstream error page leak internals to the browser.
-proxy_intercept_errors on;
+# NEVER intercept upstream errors here.
+#
+# The intent of `on` was right — do not let an upstream error page leak internals —
+# but the effect was that the SERVER-level `error_page 404 /404.html;` in
+# viporder.com.vn.conf replaced the application's own JSON with the marketing page.
+# MEASURED on staging at 36caed7:
+#
+#   app   -> 404  application/json  {"error":{"code":"NOT_FOUND","message":"Không tìm thấy mã vận đơn này…"}}
+#   nginx -> 404  text/html         the branded 404 page
+#
+# `static/js/tracking.js` parses that body as JSON, so a customer who mistyped a
+# tracking code got a generic failure instead of the one message that tells them
+# what to do.
+#
+# This file is included by the API locations ONLY, which is why the setting lives
+# here rather than in each of them — one place, not two.
+#
+# The "never leak internals" intent is preserved by the APPLICATION: it returns
+# controlled, sanitised JSON and never a stack trace (tests/ covers this).
+proxy_intercept_errors off;
 proxy_buffering on;
