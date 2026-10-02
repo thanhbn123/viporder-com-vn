@@ -232,21 +232,22 @@ it clears AA by about 10%.
 
 ## 5. Items requiring human visual approval
 
-> ## ⚠ RE-APPROVAL REQUIRED — 2026-10-02
+> ## PALETTE APPROVED — owner, 2026-10-02 (BNI red)
 >
-> The palette was changed **after** the owner approved these screenshots. The brand
-> red moved from `#d71920` to **`#cc0000`** (BNI red), and the three **navy**
-> sections were replaced with near-black **`#0a0a0a`**, because BNI's identity is
-> red / white / black and has no navy.
+> The banner that stood here said **RE-APPROVAL REQUIRED**, because the palette
+> changed *after* the owner had approved the previous one. **The owner has now
+> reviewed the regenerated screenshots and approved keeping the BNI palette**, so
+> the flag is removed rather than left standing.
 >
-> **All eleven screenshots were regenerated** at the new colours, and every contrast
-> measurement was re-taken. But the approval below was given for the **previous**
-> palette, so **it no longer covers what is in these files.**
+> Scope, stated precisely: the owner reviewed the regenerated captures and approved
+> the palette. The **original** approval record below is kept unchanged — it is the
+> truth about what was reviewed at the time, and deleting it would erase the fact
+> that the colours changed at all.
 >
-> The older approval is kept rather than deleted, because it is the record of what
-> was actually reviewed — and a pending flag left standing after the thing changes is
-> its own kind of false claim.
->
+> What the palette is now: brand red **`#cc0000`**, near-black **`#0a0a0a`** in place
+> of the three navy sections, white unchanged. Every contrast figure in this document
+> was re-measured on the rendered page after the change.
+
 > **APPROVED — owner, 2026-10-02.** The owner reviewed the eleven screenshots in
 > `docs/visual-acceptance/` and approved them. Recorded here because this section
 > said REQUIRED until it was given, and a pending flag left standing after the
