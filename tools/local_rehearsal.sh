@@ -268,11 +268,20 @@ C=$(curl -sk -H "Host: viporder.com.vn" -o /dev/null -w '%{http_code}' -m 10 "$H
 [ "$C" = "200" ] && ok "health after rollback+reapply -> 200" || bad "health after rollback -> $C"
 
 step "13. LOG INSPECTION — the run left a readable trail"
-for f in "$R/logs/uvicorn.log" "$R/nginx/logs/access.log" "$R/nginx/logs/error.log"; do
+# The site config overrides the default filenames (`viporder.access.log`), so
+# checking the generic names found empty files and reported a skip for logs that
+# were being written the whole time. Naming the real paths is the whole point of
+# an inspection step.
+for f in "$R/logs/uvicorn.log" "$R/nginx/logs/viporder.access.log" "$R/nginx/logs/viporder.error.log"; do
   [ -s "$f" ] && ok "$(basename "$f"): $(wc -l < "$f" | tr -d ' ') line(s)" || skip "$(basename "$f") empty"
 done
-PWLOG=$(grep -c "rehearsal-pw-123" "$R/logs/uvicorn.log" 2>/dev/null || true)
-[ "${PWLOG:-0}" = "0" ] && ok "password absent from application log" || bad "PASSWORD IN LOG ($PWLOG hit(s))"
+# Count across both logs with ONE grep -c per file, summed with awk. The earlier
+# `grep -ch ... | paste | bc` emitted "0\n0" and compared unequal to "0", so a
+# clean run reported a password leak. A false alarm about a leaked password is the
+# worst possible false alarm in this script.
+PWLOG=$(grep -c "rehearsal-pw-123" "$R/logs/uvicorn.log" "$R/nginx/logs/viporder.access.log" 2>/dev/null \
+  | awk -F: '{n+=$NF} END {print n+0}')
+[ "${PWLOG:-0}" -eq 0 ] && ok "password absent from every log" || bad "PASSWORD IN LOG ($PWLOG hit(s))"
 
 echo
 echo "############################################################"
