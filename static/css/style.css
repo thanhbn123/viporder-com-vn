@@ -129,7 +129,9 @@ select {
 
 .brand-text span {
   color: var(--muted);
-  font-size: 11px;
+  /* 11px was below the readable floor on a phone in daylight; 12px is the
+   * minimum this project accepts (tests/e2e/visual.spec.js). */
+  font-size: 12px;
   margin-top: 5px;
 }
 
@@ -454,6 +456,20 @@ select {
 .section-dark {
   background: var(--dark);
   color: white;
+}
+
+/* WCAG AA on the DARK section. `--primary` (#d71920) is the brand red and it is
+ * fine on light backgrounds, but the process section is near-black and the same
+ * colour measures 3.42:1 there — below the 4.5:1 normal text needs. Scoped
+ * rather than changed at the source, because the brand colour is correct
+ * everywhere it is used on light.
+ *
+ * Measured by tests/e2e/visual.spec.js, which computes contrast from the rendered
+ * colours: this exact element was 3.42:1 before, 5.05:1 after. */
+.section-heading.light-heading > span,
+.light-heading .eyebrow,
+.light-heading .section-kicker {
+  color: #f05055;
 }
 
 .light-heading p {
@@ -970,7 +986,11 @@ select {
   border-top: 1px solid #1f2937;
   margin-top: 45px;
   padding-top: 25px;
-  color: #667085;
+  /* #667085 on #090d14 measures 3.91:1 — below AA for 13px text. The footer is
+   * the one place the muted grey sits on near-black; everywhere else it is on
+   * white, where it passes. Lightened here only. Measured before/after by
+   * tests/e2e/visual.spec.js: 3.91:1 -> 5.37:1. */
+  color: #7d8798;
   font-size: 13px;
 }
 
