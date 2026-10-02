@@ -54,7 +54,16 @@ test.describe("homepage, desktop", () => {
   });
 
   test("the registration form has every field a customer must fill", async ({ page }) => {
-    for (const name of ["full_name", "phone", "password", "province", "service", "consent"]) {
+    for (const name of [
+      "full_name",
+      "phone",
+      "email",
+      "password",
+      "confirmPassword",
+      "province",
+      "service",
+      "acceptTerms",
+    ]) {
       await expect(page.locator(`[name="${name}"]`)).toBeAttached();
     }
     await expect(page.locator('#registerForm button[type="submit"]')).toBeVisible();

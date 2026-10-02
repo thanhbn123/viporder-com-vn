@@ -37,12 +37,27 @@ function phoneFor(scenario) {
   return `+849${String(Math.floor(Math.random() * 10000)).padStart(4, "0")}${suffix}`;
 }
 
-/** Fill every field the form requires, and only those. */
-async function fillRegistration(page, { phone, password = "matkhau123", name = "Khách Kiểm Thử" }) {
+/** Fill every field the form requires, and only those.
+ *
+ * The email does NOT have to be unique: the API deduplicates customers on the
+ * PHONE (that is the identity the idempotency key is bound to), so one stable
+ * address keeps this helper free of a second source of randomness.
+ *
+ * The confirmation is filled with the same value as the password on purpose —
+ * they must match, and a caller that wants the mismatch case sets them apart
+ * explicitly. */
+const TEST_EMAIL = "khach.kiem.thu@viporder.com.vn";
+
+async function fillRegistration(
+  page,
+  { phone, password = "matkhau123", name = "Khách Kiểm Thử", email = TEST_EMAIL },
+) {
   await page.fill('[name="full_name"]', name);
   await page.fill('[name="phone"]', phone);
+  await page.fill('[name="email"]', email);
   await page.fill('[name="password"]', password);
-  await page.check('[name="consent"]');
+  await page.fill('[name="confirmPassword"]', password);
+  await page.check('[name="acceptTerms"]');
 }
 
 /** Submit and wait for the form to report back through its live region. */
@@ -59,4 +74,11 @@ async function hasHorizontalOverflow(page) {
   });
 }
 
-module.exports = { SUFFIX, phoneFor, fillRegistration, submitAndAwait, hasHorizontalOverflow };
+module.exports = {
+  SUFFIX,
+  TEST_EMAIL,
+  phoneFor,
+  fillRegistration,
+  submitAndAwait,
+  hasHorizontalOverflow,
+};

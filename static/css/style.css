@@ -693,6 +693,229 @@ select {
   font-weight: 800;
 }
 
+/* ---------------------------------------------------------------------------
+   G04B — public tracking lookup.
+
+   One card: mode buttons, one input row, one live status line, one result list.
+   Colour is never the only signal — every state also changes the WORDING, and the
+   status line is the live region (role="status"), so the answer is announced as
+   well as painted.
+
+   The two properties that matter at 412px are marked below: `min-width: 0` on the
+   input (a flex item refuses to shrink below its content width without it, which
+   is the usual cause of sideways scroll) and `overflow-wrap: anywhere` on the
+   values (a tracking code has no spaces, so it would otherwise push the card
+   wider than the screen).
+   ------------------------------------------------------------------------ */
+.tracking-section {
+  background: var(--surface);
+}
+
+.tracking-card {
+  max-width: 900px;
+  padding: 34px;
+  border-radius: 28px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.tracking-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+/* min-height 44px is the accepted minimum touch target: both modes must be
+   tappable with a thumb without zooming. */
+.tracking-mode {
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--text);
+  font-weight: 750;
+  cursor: pointer;
+  transition: .2s ease;
+}
+
+.tracking-mode.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.tracking-form {
+  margin: 0;
+}
+
+.tracking-label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.tracking-input-row {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.tracking-input {
+  /* See the block comment above: without min-width:0 this flex item will not
+     shrink below the width of its own placeholder and the row overflows. */
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 49px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0 14px;
+  background: #ffffff;
+  outline: none;
+}
+
+.tracking-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(215,25,32,.08);
+}
+
+/* The base rule above sets outline:none, which would also hide the keyboard focus
+   ring. Re-stated at higher specificity for keyboard users, as on the form. */
+.tracking-input:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Same invalid treatment as the registration form: colour is reinforced by
+   aria-invalid and by the message in the live region. */
+.tracking-input[aria-invalid="true"] {
+  border-color: #f04438;
+  background: #fffbfa;
+}
+
+.tracking-submit {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.tracking-status {
+  margin-top: 16px;
+  /* Reserve the line so the card does not jump when the first answer lands. */
+  min-height: 22px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.tracking-status.is-found,
+.tracking-status.is-notfound,
+.tracking-status.is-error {
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  line-height: 1.55;
+}
+
+.tracking-status.is-found {
+  color: #067647;
+  background: #ecfdf3;
+  border-color: #abefc6;
+}
+
+/* Not-found is amber, not red: nothing is broken, the customer just needs to
+   check the code. Provider errors are red because something IS broken. */
+.tracking-status.is-notfound {
+  color: #b54708;
+  background: #fffaeb;
+  border-color: #fedf89;
+}
+
+.tracking-status.is-error {
+  color: #b42318;
+  background: #fef3f2;
+  border-color: #fecdca;
+}
+
+.tracking-results {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.tracking-results[hidden] {
+  display: none;
+}
+
+.tracking-results h3 {
+  margin: 0 0 16px;
+  font-size: 20px;
+}
+
+.tracking-fields {
+  display: grid;
+  grid-template-columns: minmax(150px, 230px) 1fr;
+  gap: 10px 20px;
+  margin: 0;
+}
+
+/* dt/dd are DIRECT children of the grid, one pair per row: no wrapper element is
+   needed, and a wrapper would have to be `display: contents` to keep the grid
+   working — a trick worth avoiding inside a <dl>. */
+.tracking-fields dt {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.tracking-fields dd {
+  margin: 0;
+  /* A code has no spaces to break at; `anywhere` is what keeps a 40-character
+     one inside the card instead of widening the page. */
+  overflow-wrap: anywhere;
+}
+
+.tracking-block {
+  margin-top: 22px;
+}
+
+.tracking-block h4 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.tracking-logs {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.tracking-logs li {
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+.tracking-logs strong {
+  display: block;
+  font-weight: 750;
+}
+
+.tracking-log-note,
+.tracking-log-time {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tracking-children {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.tracking-children li {
+  margin-bottom: 14px;
+}
+
 .contact-section {
   background: var(--primary);
   color: white;
@@ -879,6 +1102,34 @@ select {
 
   .register-form {
     padding: 24px;
+  }
+
+  /* G04B at 412px. The input row stacks and the button takes the full width, so
+     the control can never be clipped by the card; the result rows go one per
+     line because a 150px label column leaves too little room for a code. */
+  .tracking-card {
+    padding: 20px;
+  }
+
+  .tracking-input-row {
+    flex-direction: column;
+  }
+
+  .tracking-submit {
+    width: 100%;
+  }
+
+  .tracking-mode {
+    flex: 1 1 auto;
+  }
+
+  .tracking-fields {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .tracking-fields dd {
+    margin: 0 0 12px;
   }
 
   .contact-inner {

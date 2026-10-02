@@ -59,21 +59,21 @@ test.describe("homepage, mobile", () => {
       expect(box.width, `${name} is too narrow to use`).toBeGreaterThan(100);
     }
 
-    /* The consent checkbox is a bare 13x13px input — but its LABEL wraps it
-     * (index.html:542-543), so the label is the real tap target and my first
-     * version measured the wrong element. What matters is that the target a thumb
-     * actually hits is big enough, and that tapping the words toggles the box. */
-    const consentLabel = page.locator('label:has([name="consent"])');
-    await expect(consentLabel).toBeVisible();
-    const labelBox = await consentLabel.boundingBox();
-    expect(labelBox.height, "the consent tap target is shorter than a thumb").toBeGreaterThanOrEqual(24);
-    expect(labelBox.width, "the consent tap target is too narrow").toBeGreaterThan(100);
+    /* The terms checkbox is a bare 13x13px input — but its LABEL wraps it, so the
+     * label is the real tap target and my first version measured the wrong element.
+     * What matters is that the target a thumb actually hits is big enough, and that
+     * tapping the words toggles the box. */
+    const termsLabel = page.locator('label:has([name="acceptTerms"])');
+    await expect(termsLabel).toBeVisible();
+    const labelBox = await termsLabel.boundingBox();
+    expect(labelBox.height, "the terms tap target is shorter than a thumb").toBeGreaterThanOrEqual(24);
+    expect(labelBox.width, "the terms tap target is too narrow").toBeGreaterThan(100);
     /* Prove the label toggles the box: a bare input inside a label that does NOT
      * wrap its text looks identical in a screenshot and is unusable on a phone. */
-    await page.locator('label:has([name="consent"]) span').first().click();
-    await expect(page.locator('[name="consent"]')).toBeChecked();
-    await page.locator('label:has([name="consent"]) span').first().click();
-    await expect(page.locator('[name="consent"]')).not.toBeChecked();
+    await page.locator('label:has([name="acceptTerms"]) span').first().click();
+    await expect(page.locator('[name="acceptTerms"]')).toBeChecked();
+    await page.locator('label:has([name="acceptTerms"]) span').first().click();
+    await expect(page.locator('[name="acceptTerms"]')).not.toBeChecked();
     await expect(page.locator('#registerForm button[type="submit"]')).toBeVisible();
   });
 
@@ -92,9 +92,11 @@ test.describe("homepage, mobile", () => {
     await page.locator("#register").scrollIntoViewIfNeeded();
     await page.fill('[name="full_name"]', "Khách Điện Thoại");
     await page.fill('[name="phone"]', "+84901234567");
+    await page.fill('[name="email"]', "khach.dien.thoai@viporder.com.vn");
     await page.fill('[name="password"]', "matkhau123");
-    await page.check('[name="consent"]');
+    await page.fill('[name="confirmPassword"]', "matkhau123");
+    await page.check('[name="acceptTerms"]');
     await expect(page.locator('[name="full_name"]')).toHaveValue("Khách Điện Thoại");
-    await expect(page.locator('[name="consent"]')).toBeChecked();
+    await expect(page.locator('[name="acceptTerms"]')).toBeChecked();
   });
 });
