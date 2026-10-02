@@ -14,9 +14,16 @@ router = APIRouter(tags=["health"])
 
 
 def provider_health(mode: str, real_calls_enabled: bool) -> str:
+    """Overall provider status. True when EITHER capability is live."""
     if mode == "mock":
         return "ok"
     return "ok" if real_calls_enabled else "disabled"
+
+
+def capability_status(mode: str, enabled: bool) -> str:
+    if mode == "mock":
+        return "mock"
+    return "live" if enabled else "disabled"
 
 
 @router.get("/api/v1/health")
@@ -36,6 +43,18 @@ def health(request: Request) -> JSONResponse:
             "provider": {
                 "mode": mode,
                 "status": provider_health(mode, settings.khaibao9610_enable_real_calls),
+                # Reported SEPARATELY. An operator must be able to see whether
+                # customer creation is live without reading the env file — the two
+                # capabilities used to share one switch, and that is what let a
+                # tracking test create an account on the provider's production API.
+                "capabilities": {
+                    "tracking_reads": capability_status(
+                        mode, settings.khaibao9610_enable_real_calls
+                    ),
+                    "registration_writes": capability_status(
+                        mode, settings.khaibao9610_enable_real_registration
+                    ),
+                },
             },
         },
     }

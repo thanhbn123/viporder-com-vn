@@ -40,9 +40,19 @@ REQUEST = RegistrationRequest(
     service_interest="transport",
 )
 
+# This file exercises the LIVE adapter against an httpx.MockTransport — it is not
+# reaching the network. It therefore has to opt in to BOTH capabilities explicitly:
+# `enable_real_calls` permits tracking lookups, and `enable_real_registration`
+# permits customer creation. They are separate switches on purpose, so that a test
+# that only wants to read cannot create anybody.
+#
+# These tests previously set only `enable_real_calls` and called `register()`,
+# which is precisely the coupling that let a staging tracking test POST a real
+# registration to the provider's production API.
 CONFIG = {
     "mode": "http",
     "enable_real_calls": True,
+    "enable_real_registration": True,
     "base_url": "https://apiviporder.com/frontend/v1",
     "timeout_seconds": 5.0,
     "user_agent": "Mozilla/5.0 (Test) AppleWebKit/537.36",

@@ -133,6 +133,29 @@ not agree on their envelope, and §4.7 is where that is spelled out.
 |---|---|---|
 | `KHAIBAO9610_MODE` | `mock` | `mock` or `http` (`backend/app/config.py:107`) |
 | `KHAIBAO9610_ENABLE_REAL_CALLS` | `no` | **Second switch.** Real calls need this *and* `MODE=http` (`backend/app/config.py:110`) |
+
+> ### The two switches are now THREE capabilities, and one of them is writes
+>
+> **Corrected 2026-10-02.** `KHAIBAO9610_ENABLE_REAL_CALLS=yes` used to permit
+> **both** tracking lookups **and** customer registration. That made the permitted
+> action (live read-only GETs) and the forbidden one (an uncontrolled registration
+> POST) *the same action* — and during staging acceptance it produced exactly that:
+> an unauthorised `POST /register` against the provider's production API, which
+> created a customer account.
+>
+> Registration writes now need their **own** switch:
+>
+> | Capability | Switch |
+> |---|---|
+> | tracking lookups (reads) | `KHAIBAO9610_ENABLE_REAL_CALLS=yes` |
+> | customer registration (writes) | **`KHAIBAO9610_ENABLE_REAL_REGISTRATION=yes`** |
+>
+> `KHAIBAO9610_MODE=http` is still required for either. The write switch defaults to
+> **off** and setting the read switch does **not** set it.
+>
+> `/api/v1/health` reports both as `checks.provider.capabilities`, so an operator can
+> see whether customer creation is live without reading the environment file.
+
 | `KHAIBAO9610_BASE_URL` | `https://apiviporder.com/frontend/v1` | Base URL of the frontend API. **Owner-supplied and authoritative** since 2026-10-02 (`backend/app/config.py:39,108`; §4.6) |
 | `KHAIBAO9610_REGISTER_PATH` | `/register` | Registration path template (`backend/app/config.py:51,114`) |
 | `KHAIBAO9610_WAREHOUSE_IMPORT_PATH` | `/warehouse-imports/{keyword}` | Warehouse-import lookup; **bare-object** envelope (`backend/app/config.py:52,115`) |

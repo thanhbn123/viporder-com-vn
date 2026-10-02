@@ -107,7 +107,19 @@ class Settings(BaseSettings):
     khaibao9610_mode: Literal["mock", "http"] = "mock"
     khaibao9610_base_url: str = DEFAULT_KHAIBAO9610_BASE_URL
     khaibao9610_timeout_seconds: float = Field(default=10.0, ge=1.0, le=30.0)
+    # READ switch: real tracking lookups.
     khaibao9610_enable_real_calls: bool = False
+
+    # WRITE switch: real registrations. SEPARATE ON PURPOSE.
+    #
+    # These used to be one switch, which made the safe action and the forbidden one
+    # the same action: enabling live tracking reads also enabled live registration
+    # writes. During staging acceptance that produced an UNAUTHORISED POST to the
+    # provider's production API — the task permitted the read-only GETs and forbade
+    # the write, and the code gave no way to express the difference.
+    #
+    # A warning in a runbook cannot fix that. Two switches can.
+    khaibao9610_enable_real_registration: bool = False
     khaibao9610_user_agent: str = DEFAULT_BROWSER_USER_AGENT
 
     # --- Upstream paths and response cap ------------------------------------
