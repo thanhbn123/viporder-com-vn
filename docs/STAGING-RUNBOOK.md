@@ -352,22 +352,26 @@ one or the other, not both" (`deploy/docker-compose.yml:4-5`).
 
 > ### Use the systemd path (6A). It is the recommended one.
 >
-> 1. **The compose path cannot start nginx as checked in.** The site config
->    `include`s `deploy/nginx/viporder-security-headers.conf` in five places
->    (`deploy/nginx/viporder.com.vn.conf:94,146,155,162,169`) but
->    `deploy/docker-compose.yml:81-91` never mounts that file into the nginx
->    container. A missing `include` is a fatal error, not a warning — measured
->    in step 7.5.
-> 2. **The compose path publishes the whole repository as the web root.**
->    `../:/srv/viporder/site:ro` (`deploy/docker-compose.yml:82`) mounts the repository
->    root, while nginx serves it with `location / { try_files $uri $uri/ =404; }`
->    (`deploy/nginx/viporder.com.vn.conf:174-176`). `README.md`, `docs/*` and `backend/*`
->    then become fetchable paths, where the systemd path rsyncs a static-only
->    `site/` (`docs/DEPLOYMENT.md:106-109`).
+> 1. ~~**The compose path cannot start nginx as checked in.**~~ **FIXED** in
+>    `deploy/docker-compose.yml` (commit `4445d60`): the security-headers snippet
+>    the site config `include`s in five places is now mounted. The original defect
+>    was real and measured — a missing `include` is a fatal `[emerg]`, not a
+>    warning, and the containerised stack exited at startup. Kept visible so the
+>    history is clear.
+> 2. ~~**The compose path publishes the whole repository as the web root.**~~
+>    **FIXED** in the same commit: the nginx service now mounts an explicit
+>    five-path allow list instead of `../:/srv/viporder/site:ro`, so `README.md`,
+>    `docs/*` and `backend/*` are no longer reachable.
 > 3. **Docker was never executed for this project** — recorded as such in
->    `docs/PROJECT-STATUS.md:73`.
+>    `docs/PROJECT-STATUS.md`. This one is still true: the fixes above are
+>    configuration-verified, not run. `python3 tools/check_compose.py` reports
+>    14 mounts, 4 configs, 0 errors, and that is a check of the SEAM, not a
+>    running stack.
 >
-> If compose is required anyway, apply the corrections in 6B.1 first.
+> **The recommendation is unchanged — use systemd (6A)** — but the reason is now
+> "systemd is the path this project has actually exercised", not "compose is
+> broken". Section 6B.1 is retained because it documents which corrections were
+> applied and why.
 
 ### 6A. systemd (recommended)
 
@@ -1110,14 +1114,21 @@ them blocks it.
 Recorded so the next operator does not rediscover them, and so that "the
 runbook covered it" is never claimed for something that is not covered.
 
-1. **Compose nginx cannot start** — the security-headers snippet is included by
-   the site config but never mounted (`deploy/docker-compose.yml:81-91` vs
-   `deploy/nginx/viporder.com.vn.conf:94`). Correction in 6B.1(a). A missing
-   `include` is a fatal `[emerg]` — measured in 7.5.
-2. **Compose publishes the repository root as the web root**
-   (`deploy/docker-compose.yml:82` + `deploy/nginx/viporder.com.vn.conf:174-176`), exposing
-   `README.md`, `docs/*`, `backend/*` over HTTP. Correction and verification in
-   6B.1(b). Reading-based; verify at staging with the two `curl` calls given.
+1. ~~**Compose nginx cannot start**~~ — **CLOSED** (`4445d60`): the snippet is
+   mounted. This prose was written against an earlier revision and said "cannot
+   start" for several revisions after it could.
+2. ~~**Compose publishes the repository root as the web root**~~ — **CLOSED**
+   (`4445d60`): the mount is an explicit allow list. **Still worth probing at
+   staging**, and §11.2 now gives the commands, because the same class of defect
+   was found AGAIN on the systemd path: its rsync used a deny list and published
+   `README.md`, `package.json`, `playwright.config.js`, `tests/` and
+   `node_modules/` — measured against real nginx. That path now uses
+   `--files-from=deploy/published-files.txt`, checked by
+   `tools/check_deploy_exposure.py`.
+3. **The deployed site must be proved to have its CSS and JavaScript.**
+   `rsync --files-from` CANCELS the `-r` implied by `-a`, so without an explicit
+   `-r` the directories are created and their contents are not copied. Two curls
+   in §11.2.
 3. **`--workers 1` is pinned for correctness, not performance.** Raising it
    multiplies the effective rate limit, and the concurrency guarantees are only
    verified at one worker. `backend/tests/test_concurrency.py` must be re-run
