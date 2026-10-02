@@ -4,9 +4,30 @@
 revision, by what method — and what is still not true.
 
 **MEASURED AT:** 2026-10-02 21:41 +0700
-**ACCEPTANCE CANDIDATE:** `d8689c7` (`develop`)
+**CODE ACCEPTANCE CANDIDATE:** `d8689c7`
 **EVERY NUMBER BELOW WAS MEASURED AT THAT SHA.** Nothing here is carried forward
 from an earlier revision.
+
+> ### Which SHA is the acceptance candidate?
+>
+> `d8689c7` is the **code** candidate: every test, rehearsal, guard and measurement
+> in this document was run against it.
+>
+> The document cannot name its own merge as the candidate — publishing it moves the
+> tip. So this was verified rather than asserted:
+>
+> ```
+> git diff --name-only d8689c7..origin/develop
+>   docs/FINAL-ACCEPTANCE.md          <- the only file
+>
+> git diff --name-only d8689c7..origin/develop | grep -cE '^(backend|static|deploy|tools|tests|index.html|404.html)'
+>   0                                <- code, tests and deploy config: UNCHANGED
+> ```
+>
+> The develop tip after this document is merged is therefore `d8689c7` **plus this
+> file and nothing else**. If the tip ever contains a code or test change beyond
+> that, this document is stale and must be re-measured — which is why the check is
+> written down instead of the claim.
 
 ---
 
