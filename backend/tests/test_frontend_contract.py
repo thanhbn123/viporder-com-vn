@@ -336,6 +336,7 @@ def test_the_409_then_edit_phone_path_does_not_leak_the_first_customer(
 # G04B — the field-name mismatch that would have broken every live registration
 # ---------------------------------------------------------------------------
 
+
 def test_the_provider_spelling_of_the_new_fields_is_REJECTED_by_name(harness) -> None:
     """The regression this project actually had, pinned so it cannot come back.
 
