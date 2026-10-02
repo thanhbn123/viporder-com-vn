@@ -162,13 +162,13 @@ test.describe("registration, mock provider", () => {
     await expect(page.locator('[name="password"]')).not.toHaveValue(password);
   });
 
-  test("consent is required and is not checked by default", async ({ page }) => {
-    await expect(page.locator('[name="consent"]')).not.toBeChecked();
+  test("accepting the terms is required and is not checked by default", async ({ page }) => {
+    await expect(page.locator('[name="acceptTerms"]')).not.toBeChecked();
     await page.fill('[name="full_name"]', "Khách Kiểm Thử");
     await page.fill('[name="phone"]', phoneFor("success"));
     await page.fill('[name="password"]', "matkhau123");
     await page.click('#registerForm button[type="submit"]');
-    await expect(page.locator("#err-consent")).toContainText(/đồng ý/i);
-    /* And nothing was sent: consent is not a field the server can infer. */
+    await expect(page.locator("#err-acceptTerms")).toContainText(/đồng ý/i);
+    /* And nothing was sent: acceptance is not a field the server can infer. */
   });
 });

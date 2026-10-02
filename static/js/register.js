@@ -19,6 +19,10 @@
  *    approved constant is used. Existing-customer routing is a business rule,
  *    not something a response body gets to change.
  * 4. NO innerHTML. Every server-provided string is written with textContent.
+ * 5. NO CREDENTIAL IS EVER LOGGED OR PERSISTED (G04B). `password` and
+ *    `confirmPassword` exist in the request body and in the two inputs, and
+ *    nowhere else — not in storage, not in an event, not in a debug line. Both
+ *    inputs are cleared once the registration completes.
  *
  * Client-side validation is UX only — the server always validates again.
  */
@@ -120,6 +124,17 @@
 
   function field(name) {
     return form.querySelector('[name="' + name + '"]');
+  }
+
+  /* Server field errors are keyed by the API's own field names, which are not
+   * always the form's names. `consent` is the one that differs: the request sends
+   * both `acceptTerms` and the legacy `consent`, so the API can still answer with
+   * a 422 on `consent` — and without this map that message would be attached to no
+   * field at all and the customer would see only the generic summary. */
+  var FIELD_ALIASES = { consent: "acceptTerms" };
+
+  function domFieldName(name) {
+    return own(FIELD_ALIASES, name) ? FIELD_ALIASES[name] : name;
   }
 
   function normalisePhone(value) {
@@ -231,10 +246,18 @@
     var out = {};
     el = field("full_name"); out.full_name = el ? String(el.value || "").trim() : "";
     el = field("phone"); out.phone = el ? String(el.value || "").trim() : "";
+    el = field("email"); out.email = el ? String(el.value || "").trim() : "";
     el = field("password"); out.password = el ? String(el.value || "") : "";
+    /* Never trimmed and never normalised: the confirmation is a byte-for-byte
+     * comparison against what was typed in the password field. Trimming one half
+     * and not the other would make two identical-looking passwords "not match". */
+    el = field("confirmPassword");
+    out.confirmPassword = el ? String(el.value || "") : "";
     el = field("province"); out.province = el ? String(el.value || "").trim() : "";
     el = field("service"); out.service_interest = el ? String(el.value || "") : "";
-    el = field("consent"); out.consent = !!(el && el.checked);
+    /* The terms checkbox. Named `acceptTerms` since G04B; it is the same control
+     * the API has always received as `consent` — see buildPayload. */
+    el = field("acceptTerms"); out.acceptTerms = !!(el && el.checked);
     return out;
   }
 
@@ -300,7 +323,9 @@
   }
 
   function focusFirstInvalid(errors) {
-    var order = ["full_name", "phone", "password", "consent"];
+    var order = [
+      "full_name", "phone", "email", "password", "confirmPassword", "acceptTerms"
+    ];
     for (var i = 0; i < order.length; i += 1) {
       if (errors[order[i]]) {
         var el = field(order[i]);
@@ -482,16 +507,23 @@
     setMessage(parts.join(" "), "success");
 
     form.setAttribute("data-completed", "true");
-    /* Clear the password from the input now the registration is done.
+    /* Clear BOTH password inputs from the DOM now the registration is done.
      *
      * The form is finished — it is `data-completed`, the button is disabled and
      * the reply tells the customer to sign in with what they just chose — so
-     * there is no further use for it, and leaving a working credential visible in
-     * a text field on a shared or shoulder-surfed screen is pure downside. This
-     * is not a storage or logging concern (the password is in neither); it is the
-     * one place it lingers where a person can read it. */
+     * there is no further use for either value, and leaving a working credential
+     * visible in a text field on a shared or shoulder-surfed screen is pure
+     * downside. This is not a storage or logging concern (neither value is in
+     * either); it is the one place they linger where a person can read them.
+     *
+     * The confirmation is cleared for the same reason and one more: it is the same
+     * secret, retyped, and a half-cleared form would leave the longer-lived of the
+     * two fields on screen. */
     if (field("password")) {
       field("password").value = "";
+    }
+    if (field("confirmPassword")) {
+      field("confirmPassword").value = "";
     }
     if (submitBtn) {
       submitBtn.disabled = true;
@@ -557,8 +589,8 @@
     }
 
     for (name in fields) {
-      if (own(fields, name) && field(name)) {
-        showFieldError(name, fields[name]);
+      if (own(fields, name) && field(domFieldName(name))) {
+        showFieldError(domFieldName(name), fields[name]);
       }
     }
     /* Only a PERMANENT duplicate is a problem with the phone field. Attaching
@@ -595,11 +627,25 @@
       full_name: values.full_name,
       phone: normalisePhone(values.phone),
       password: values.password,
-      /* The form does not collect an email yet — sent empty so the payload
-       * keeps the documented shape. TODO(g02): add an email field. */
-      email: "",
+      email: values.email,
+      /* G04B: the confirmation travels with the request because the API contract
+       * now names it, and `acceptTerms` because that is the field the form
+       * collects.
+       *
+       * `consent` is sent as well, and it is NOT redundant. The live API requires
+       * it (backend/app/schemas.py: `_consent_required`), and dropping it would
+       * make every registration answer 422 — a total outage of the one thing this
+       * page exists to do. Both keys carry the same boolean from the same
+       * checkbox, so they cannot disagree. When the API stops requiring `consent`,
+       * delete that one line; until then it is the difference between a lead and a
+       * validation error.
+       *
+       * The password and its confirmation are in the request body on purpose and
+       * nowhere else: not in storage, not in an event, not in a log. */
+      confirmPassword: values.confirmPassword,
+      acceptTerms: values.acceptTerms,
+      consent: values.acceptTerms,
       province: values.province,
-      consent: true,
       attribution: apiAttribution()
     };
     /* service_interest is a documented enum (transport|official_import|

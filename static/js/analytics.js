@@ -50,6 +50,7 @@
  *   registerFailed(params)          register_failed
  *   phoneClick(params)              phone_click
  *   zaloClick(params)               zalo_click
+ *   trackingSearch(type, result)    tracking_search (two fields; never the keyword)
  *   getAttribution()                flat + nested first-touch / last-touch
  *   toApiAttribution()              exactly the 7 keys the registration API wants
  *   getEventId(key)                 the stable event_id already used for a key
@@ -90,8 +91,18 @@
     LEAD_PENDING: "viporder_lead_pending",
     REGISTER_FAILED: "register_failed",
     PHONE_CLICK: "phone_click",
-    ZALO_CLICK: "zalo_click"
+    ZALO_CLICK: "zalo_click",
+    /* G04B — the public tracking lookup. Only two fields travel with it; see
+     * `trackingSearch` below for why the keyword is not one of them. */
+    TRACKING_SEARCH: "tracking_search"
   };
+
+  /* The closed vocabularies of tracking_search. An unknown value is reported as
+   * "unknown" rather than dropped or passed through: a typo has to be VISIBLE in
+   * the data, and letting it through would silently create a new dashboard
+   * dimension that looks like a real one. */
+  var TRACKING_SEARCH_TYPES = ["warehouse_import", "package_sealing"];
+  var TRACKING_RESULTS = ["found", "not_found", "error"];
 
   /* Only defensible Meta mappings — anything else is sent as a custom event. */
   var META_EVENT_MAP = {
@@ -523,6 +534,35 @@
     return track(EVENTS.ZALO_CLICK, params);
   }
 
+  /* G04B — the public tracking lookup.
+   *
+   * TWO FIELDS, AND THE KEYWORD IS NOT ONE OF THEM. What a customer types into the
+   * lookup is their tracking code, which identifies a shipment and through it a
+   * person; this layer carries no customer data at all, and the tripwire for that
+   * is tools/js/no-pii-in-analytics.test.js. The guarantee here is STRUCTURAL:
+   * there is no parameter on this function that could carry the code, so no caller
+   * can pass one by accident. Widening the signature is the thing to refuse.
+   *
+   * Fired with `track`, not `trackOnce`. Every other named event above means "this
+   * visitor has now done X" and is de-duplicated per session; a lookup is an
+   * ACTION. Somebody checking the same parcel five times searched five times, and
+   * collapsing that would erase the only signal that the section is being used. */
+  function oneOf(allowed, value) {
+    for (var i = 0; i < allowed.length; i += 1) {
+      if (allowed[i] === value) {
+        return allowed[i];
+      }
+    }
+    return "unknown";
+  }
+
+  function trackingSearch(searchType, result) {
+    return track(EVENTS.TRACKING_SEARCH, {
+      search_type: oneOf(TRACKING_SEARCH_TYPES, searchType),
+      result: oneOf(TRACKING_RESULTS, result)
+    });
+  }
+
   /* =====================================================================
    * Dormant third-party loaders. Injected only when explicitly enabled, only
    * after window load, only on idle, and each one isolated in try/catch.
@@ -673,6 +713,7 @@
     registerFailed: registerFailed,
     phoneClick: phoneClick,
     zaloClick: zaloClick,
+    trackingSearch: trackingSearch,
     getEventId: getEventId,
     getAttribution: getAttribution,
     toApiAttribution: toApiAttribution,

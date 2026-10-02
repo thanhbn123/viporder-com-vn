@@ -53,7 +53,10 @@
         - foundingDate    unknown
         - legalName/taxID no registered entity name or tax code is published
         - contactPoint    depends on telephone, so blocked by the same gap
-        - potentialAction there is no on-site search page, so no SearchAction
+        - potentialAction G04B added a public tracking lookup (#tracking), but it
+                          is a client-side form answered from a JSON API: it has no
+                          crawlable result URL, so there is still no SearchAction
+                          to declare and a search result must not imply one.
   -->
   <script type="application/ld+json">
   {
@@ -94,6 +97,11 @@
   <script src="/static/js/register-validation.js" defer></script>
   <script src="/static/js/register-errors.js" defer></script>
   <script src="/static/js/register.js" defer></script>
+  <!-- G04B. tracking-search.js holds the pure rules (keyword boundary, URL
+       building, status-to-state mapping) and MUST be evaluated before tracking.js,
+       which is the DOM controller; `defer` preserves document order. -->
+  <script src="/static/js/tracking-search.js" defer></script>
+  <script src="/static/js/tracking.js" defer></script>
   <script src="/static/js/contact-links.js" defer></script>
   <script src="/static/js/app.js" defer></script>
 </head>
@@ -114,6 +122,7 @@
     </a>
 
     <nav class="desktop-nav" id="primaryNav" aria-label="Điều hướng chính">
+      <a href="#tracking">Tra cứu vận đơn</a>
       <a href="#services">Dịch vụ</a>
       <a href="#process">Quy trình</a>
       <a href="#why">Vì sao chọn VIPORDER</a>
@@ -273,6 +282,125 @@
         </div>
 
       </article>
+
+    </div>
+  </section>
+
+
+  <!-- ==========================================================================
+       TRA CỨU VẬN ĐƠN (G04B) — public, no account, no login.
+
+       Placed BEFORE the service sections on purpose: a customer holding a
+       tracking code is mid-shipment and came to the page for exactly one thing.
+
+       Six states are rendered here, all of them from static/js/tracking.js:
+         IDLE · LOADING · FOUND · NOT_FOUND · INVALID · PROVIDER_ERROR
+       Nothing is inline (no inline script, no on* handler): the section is bound
+       from the external files, so a strict Content-Security-Policy still holds.
+
+       The idle sentence below is duplicated in static/js/tracking-search.js as
+       MESSAGES.IDLE so the section reads correctly with scripts disabled;
+       tools/js/tracking-search.test.js asserts the two stay identical.
+       ======================================================================= -->
+  <section class="section tracking-section" id="tracking">
+
+    <div class="container">
+
+      <div class="section-heading">
+        <span>TRA CỨU VẬN ĐƠN</span>
+        <h2>Kiểm tra hành trình đơn hàng của bạn</h2>
+        <p>
+          Nhập mã vận đơn hoặc mã kiện để xem tình trạng hiện tại.
+          Không cần đăng nhập.
+        </p>
+      </div>
+
+
+      <div class="tracking-card">
+
+        <!-- Two modes. Real <button> elements with aria-pressed, not tabs: the
+             content does not live in panels, it is fetched, so the ARIA tab
+             pattern would promise a relationship that does not exist. -->
+        <div
+          class="tracking-modes"
+          id="trackingModes"
+          role="group"
+          aria-label="Chọn cách tra cứu"
+        >
+          <button
+            class="tracking-mode is-active"
+            type="button"
+            data-mode="warehouse_import"
+            aria-pressed="true"
+          >
+            Tra mã vận đơn
+          </button>
+
+          <button
+            class="tracking-mode"
+            type="button"
+            data-mode="package_sealing"
+            aria-pressed="false"
+          >
+            Tra mã bao
+          </button>
+        </div>
+
+
+        <!-- No method/action: there is no working fallback for a JSON API with
+             scripts disabled, and a GET to the documented path would answer 405.
+             The form element is here for semantics and for Enter-key submission. -->
+        <form class="tracking-form" id="trackingForm">
+
+          <label class="tracking-label" for="trackingKeyword">
+            Mã vận đơn hoặc mã kiện
+          </label>
+
+          <div class="tracking-input-row">
+
+            <input
+              class="tracking-input"
+              id="trackingKeyword"
+              name="keyword"
+              type="text"
+              placeholder="Nhập mã vận đơn / mã kiện"
+              maxlength="64"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+              aria-describedby="trackingStatus"
+              required
+            >
+
+            <button
+              class="btn btn-primary btn-large tracking-submit"
+              id="trackingSubmit"
+              type="submit"
+            >
+              Tra cứu
+            </button>
+
+          </div>
+
+        </form>
+
+
+        <!-- The live region. Every state is announced through this one node, so a
+             screen reader hears the answer wherever focus happens to be. -->
+        <div
+          class="tracking-status"
+          id="trackingStatus"
+          role="status"
+          aria-live="polite"
+          tabindex="-1"
+        >Nhập mã vận đơn hoặc mã kiện rồi bấm Tra cứu.</div>
+
+
+        <!-- Filled only in the FOUND state, always with createElement +
+             textContent: provider text is untrusted and never reaches innerHTML. -->
+        <div class="tracking-results" id="trackingResults" hidden></div>
+
+      </div>
 
     </div>
   </section>
@@ -496,11 +624,37 @@
 
 
         <label>
+          Email
+          <input
+            type="email"
+            name="email"
+            placeholder="ten@congty.com"
+            inputmode="email"
+            autocomplete="email"
+            required
+          >
+        </label>
+
+
+        <label>
           Mật khẩu
           <input
             type="password"
             name="password"
             placeholder="Tạo mật khẩu"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          >
+        </label>
+
+
+        <label>
+          Xác nhận mật khẩu
+          <input
+            type="password"
+            name="confirmPassword"
+            placeholder="Nhập lại mật khẩu"
             autocomplete="new-password"
             minlength="8"
             required
@@ -539,11 +693,16 @@
         </label>
 
 
+        <!-- The consent checkbox the API already knows is named `acceptTerms`
+             here (G04B) and sent as BOTH `acceptTerms` and the legacy `consent`
+             key — see buildPayload in static/js/register.js for why dropping
+             `consent` would make every registration answer 422. -->
         <label class="checkbox-row">
-          <input type="checkbox" name="consent" value="true" required>
+          <input type="checkbox" name="acceptTerms" value="true" required>
 
           <span>
-            Tôi đồng ý cung cấp thông tin để VIPORDER tạo tài khoản
+            <strong>Chấp nhận điều khoản.</strong>
+            Tôi đồng ý để VIPORDER dùng thông tin trên nhằm tạo tài khoản
             và hỗ trợ dịch vụ.
           </span>
         </label>
