@@ -132,8 +132,10 @@ test("the fallback is always the module's own portal, never the candidate", () =
 const GOOD = {
   full_name: "Nguyễn Văn A",
   phone: "0912345678",
+  email: "khach@viporder.com.vn",
   password: "matkhau123",
-  consent: true,
+  confirmPassword: "matkhau123",
+  acceptTerms: true,
 };
 
 test("a complete set of values produces no errors", () => {
@@ -144,8 +146,10 @@ test("each missing field is reported, and only that field", () => {
   const cases = [
     ["full_name", { full_name: "" }],
     ["phone", { phone: "" }],
+    ["email", { email: "" }],
     ["password", { password: "" }],
-    ["consent", { consent: false }],
+    ["confirmPassword", { confirmPassword: "" }],
+    ["acceptTerms", { acceptTerms: false }],
   ];
   for (const [field, patch] of cases) {
     const errors = v.validate({ ...GOOD, ...patch });
@@ -159,8 +163,85 @@ test("a one-character name is too short", () => {
 });
 
 test("a password under eight characters is refused, eight is not", () => {
-  assert.ok(v.validate({ ...GOOD, password: "1234567" }).password);
-  assert.equal(v.validate({ ...GOOD, password: "12345678" }).password, undefined);
+  assert.ok(v.validate({ ...GOOD, password: "1234567", confirmPassword: "1234567" }).password);
+  assert.equal(
+    v.validate({ ...GOOD, password: "12345678", confirmPassword: "12345678" }).password,
+    undefined,
+  );
+});
+
+/* ==========================================================================
+ * G04B — the fields the form started requiring: email, the confirmation, terms
+ * ======================================================================== */
+
+test("email is required now that the form collects it", () => {
+  /* The rule that used to live here was the OPPOSITE — "email is deliberately not
+   * validated, the server owns it". It was right while the field was optional and
+   * empty by design. It is wrong now: the field is required, so an empty one is a
+   * mistake the customer can fix without a round trip. */
+  assert.ok(v.validate({ ...GOOD, email: "" }).email);
+  assert.ok(v.validate({ ...GOOD, email: "   " }).email, "whitespace is not an address");
+});
+
+test("an address with no @ or no dot in the domain is refused", () => {
+  for (const email of ["khach", "khach@", "@viporder.com.vn", "khach@viporder", "a b@c.vn"]) {
+    assert.ok(v.validate({ ...GOOD, email }).email, `${email} must be refused`);
+  }
+});
+
+test("the email check stays LOOSE, so it cannot block an address the server accepts", () => {
+  /* This is the property that matters more than any rejection above. A stricter
+   * copy of the server's rule would turn a valid customer away at the keyboard
+   * with no way to argue. Everything here is a shape the API's EmailStr accepts. */
+  for (const email of [
+    "a@b.co",
+    "first.last@sub.domain.vn",
+    "khach+donhang@viporder.com.vn",
+    "KHACH@VIPORDER.COM.VN",
+    "khach_hang-1@cong-ty.com.vn",
+  ]) {
+    assert.equal(v.validate({ ...GOOD, email }).email, undefined, `${email} must be accepted`);
+  }
+});
+
+test("the two passwords must match, and the error lands on the confirmation", () => {
+  const errors = v.validate({ ...GOOD, confirmPassword: "matkhau124" });
+  assert.deepEqual(Object.keys(errors), ["confirmPassword"]);
+  assert.match(errors.confirmPassword, /không khớp/i);
+  assert.equal(v.validate({ ...GOOD, confirmPassword: "matkhau123" }).confirmPassword, undefined);
+});
+
+test("a missing confirmation is not also reported as a mismatch", () => {
+  /* Otherwise the customer gets "nhập lại mật khẩu" AND "không khớp" for one
+   * empty box, and the second is not true. */
+  const errors = v.validate({ ...GOOD, confirmPassword: "" });
+  assert.deepEqual(Object.keys(errors), ["confirmPassword"]);
+  assert.doesNotMatch(errors.confirmPassword, /không khớp/i);
+});
+
+test("no mismatch is claimed when the password itself is missing", () => {
+  /* Two red messages for one mistake, and the wrong one gets fixed first. */
+  const errors = v.validate({ ...GOOD, password: "", confirmPassword: "matkhau123" });
+  assert.deepEqual(Object.keys(errors), ["password"]);
+});
+
+test("the comparison is exact — case and whitespace count", () => {
+  for (const confirmPassword of ["Matkhau123", "matkhau123 ", " matkhau123"]) {
+    assert.ok(
+      v.validate({ ...GOOD, confirmPassword }).confirmPassword,
+      `${JSON.stringify(confirmPassword)} must not match`,
+    );
+  }
+});
+
+test("accepting the terms is required", () => {
+  assert.ok(v.validate({ ...GOOD, acceptTerms: false }).acceptTerms);
+  assert.equal(v.validate({ ...GOOD, acceptTerms: true }).acceptTerms, undefined);
+  /* Anything other than a real `true` is not consent. `"true"` from a scripted
+   * caller, `undefined` from a form that lost the checkbox — all refused. */
+  for (const acceptTerms of [undefined, null, 0, "", "true", "on"]) {
+    assert.ok(v.validate({ ...GOOD, acceptTerms }).acceptTerms, String(acceptTerms));
+  }
 });
 
 test("separators in a phone number do not make it invalid", () => {
@@ -204,14 +285,10 @@ test("validate never throws and always answers with an object", () => {
 
 test("an empty form reports every required field", () => {
   const errors = v.validate({});
-  assert.deepEqual(Object.keys(errors).sort(), ["consent", "full_name", "password", "phone"]);
-});
-
-test("email is deliberately NOT validated here", () => {
-  /* The server owns that rule. A second, different copy on the client would
-   * block customers the server would have accepted. */
-  const errors = v.validate({ ...GOOD, email: "not-an-email" });
-  assert.deepEqual(errors, {});
+  assert.deepEqual(
+    Object.keys(errors).sort(),
+    ["acceptTerms", "confirmPassword", "email", "full_name", "password", "phone"],
+  );
 });
 
 /* ==========================================================================

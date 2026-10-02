@@ -38,6 +38,31 @@ DEFAULT_BROWSER_USER_AGENT = (
 # Candidate upstream contract (UNVERIFIED — see providers/khaibao9610.py).
 DEFAULT_KHAIBAO9610_BASE_URL = "https://apiviporder.com/frontend/v1"
 
+# Upstream paths. These are settings rather than literals because the two halves
+# of this integration were measured at different times and the paths are the part
+# most likely to move: a path change then costs one environment variable instead
+# of a release. ``{keyword}`` is substituted with a URL-encoded path segment —
+# exactly one placeholder per template, enforced by the validator below.
+#
+# The two tracking paths are NOT interchangeable. Measured against the live
+# service: ``/warehouse-imports/{keyword}`` answers with a BARE object and
+# ``/package-sealings/{keyword}`` answers with ``{"data": {...}}``. See
+# app/tracking.py.
+DEFAULT_KHAIBAO9610_REGISTER_PATH = "/register"
+DEFAULT_KHAIBAO9610_WAREHOUSE_IMPORT_PATH = "/warehouse-imports/{keyword}"
+DEFAULT_KHAIBAO9610_PACKAGE_SEALING_PATH = "/package-sealings/{keyword}"
+
+#: Cap on a tracking response body. The upstream is a third party we do not
+#: control; without a cap, one oversized reply is enough to exhaust the worker's
+#: memory. 2 MiB is far above the largest measured response and far below
+#: anything that would matter.
+DEFAULT_KHAIBAO9610_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+#: Ceiling on the *connect* half of the timeout. A connect that has not
+#: completed in a few seconds is a network problem, not a slow query, and making
+#: the customer wait the full read timeout for it helps nobody.
+CONNECT_TIMEOUT_CEILING_SECONDS = 5.0
+
 # Which consent wording the customer agreed to, stored on every lead.
 # Bump this whenever the on-page wording changes: the version is the evidence,
 # and a legal question about a specific customer is answered by knowing which
@@ -85,6 +110,14 @@ class Settings(BaseSettings):
     khaibao9610_enable_real_calls: bool = False
     khaibao9610_user_agent: str = DEFAULT_BROWSER_USER_AGENT
 
+    # --- Upstream paths and response cap ------------------------------------
+    khaibao9610_register_path: str = DEFAULT_KHAIBAO9610_REGISTER_PATH
+    khaibao9610_warehouse_import_path: str = DEFAULT_KHAIBAO9610_WAREHOUSE_IMPORT_PATH
+    khaibao9610_package_sealing_path: str = DEFAULT_KHAIBAO9610_PACKAGE_SEALING_PATH
+    khaibao9610_max_response_bytes: int = Field(
+        default=DEFAULT_KHAIBAO9610_MAX_RESPONSE_BYTES, ge=1024
+    )
+
     # --- Mock provider ------------------------------------------------------
     mock_provider_behaviour: Literal[
         "success", "duplicate", "invalid", "unavailable", "timeout", "error"
@@ -124,6 +157,53 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @field_validator(
+        "khaibao9610_register_path",
+        "khaibao9610_warehouse_import_path",
+        "khaibao9610_package_sealing_path",
+        mode="before",
+    )
+    @classmethod
+    def _strip_path(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator(
+        "khaibao9610_register_path",
+        "khaibao9610_warehouse_import_path",
+        "khaibao9610_package_sealing_path",
+    )
+    @classmethod
+    def _absolute_path(cls, value: str) -> str:
+        """A path template must be absolute.
+
+        Without this, ``KHAIBAO9610_WAREHOUSE_IMPORT_PATH=warehouse-imports/x``
+        concatenates onto the base URL and silently produces
+        ``.../v1warehouse-imports/x`` — a 404 the operator would read as
+        "the tracking code does not exist". A wrong path and a wrong code are
+        very different things to tell a customer, so the mistake is refused at
+        startup instead.
+        """
+        if not value.startswith("/"):
+            raise ValueError(f"must start with '/', got {value!r}")
+        return value
+
+    @field_validator(
+        "khaibao9610_warehouse_import_path",
+        "khaibao9610_package_sealing_path",
+    )
+    @classmethod
+    def _one_keyword_placeholder(cls, value: str) -> str:
+        """Exactly one ``{keyword}``: no more (ambiguous), no fewer (dead path).
+
+        A template with no placeholder would query a fixed URL and return
+        whichever record that URL happens to describe — a lookup that answers
+        with the wrong parcel would be worse than one that fails.
+        """
+        count = value.count("{keyword}")
+        if count != 1:
+            raise ValueError(f"must contain exactly one '{{keyword}}', found {count} in {value!r}")
+        return value
 
     @property
     def cors_origins(self) -> list[str]:

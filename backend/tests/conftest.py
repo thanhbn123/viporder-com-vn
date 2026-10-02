@@ -38,10 +38,14 @@ VALID_PAYLOAD: dict[str, Any] = {
     "full_name": "Nguyễn Văn A",
     "phone": "0912345678",
     "password": DEFAULT_PASSWORD,
+    # Required since the fabricated values were removed from the provider
+    # adapter: the confirmation is the customer's, and a mismatch is a 422.
+    "confirm_password": DEFAULT_PASSWORD,
     "email": "a@example.com",
     "province": "Bắc Ninh",
     "service_interest": "transport",
     "consent": True,
+    "accept_terms": True,
     "attribution": {
         "utm_source": "facebook",
         "utm_medium": "cpc",
@@ -62,6 +66,14 @@ def payload(**overrides: Any) -> dict[str, Any]:
             body.pop(key, None)
         else:
             body[key] = value
+    # A real client echoes what the customer typed into the confirmation field, so
+    # overriding `password` carries the confirmation with it. This is a helper
+    # convenience, NOT a relaxation: the schema still requires the field and still
+    # rejects a mismatch. Tests that are *about* the mismatch pass
+    # `confirm_password=` explicitly and win, because the loop above ran first.
+    if "password" in overrides and overrides["password"] is not Ellipsis:
+        if "confirm_password" not in overrides:
+            body["confirm_password"] = overrides["password"]
     return body
 
 

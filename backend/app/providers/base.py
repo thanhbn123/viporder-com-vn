@@ -29,13 +29,30 @@ class ProviderStatus(StrEnum):
 class RegistrationRequest:
     """What a provider needs to create a customer account.
 
-    ``password`` is excluded from ``repr`` on purpose. It exists in memory for
-    the duration of one provider call and is never persisted.
+    ``password`` and ``confirm_password`` are excluded from ``repr`` on purpose.
+    They exist in memory for the duration of one provider call and are never
+    persisted.
+
+    ``confirm_password`` and ``accept_terms`` are carried through rather than
+    manufactured by the adapter. The adapter previously sent
+    ``confirmPassword = password`` and a hard-coded ``acceptTerms = True``, which
+    made a real "the two passwords differ" check impossible anywhere in the stack
+    and asserted the customer's agreement on their behalf. Both now reflect what
+    the customer actually submitted; the schema is what guarantees they are sane.
     """
 
     full_name: str
     phone: str
     password: str = field(repr=False)
+    #: What the customer typed in the confirmation field. Equal to ``password``
+    #: by the time it gets here — ``RegistrationCreate`` is what enforces that —
+    #: but it is passed through so the upstream receives the customer's own
+    #: submission rather than a value this server invented.
+    confirm_password: str = field(repr=False)
+    #: The customer's acceptance of the terms, as submitted. Not defaulted: a
+    #: default of ``False`` would silently send a refusal, and a default of
+    #: ``True`` would re-create the fabrication this field exists to remove.
+    accept_terms: bool
     email: str | None = None
     province: str | None = None
     service_interest: str | None = None
@@ -43,6 +60,12 @@ class RegistrationRequest:
     def __post_init__(self) -> None:
         if not self.password:
             raise ValueError("password is required")
+        if self.confirm_password != self.password:
+            # Belt and braces. The request schema rejects a mismatch with a 422
+            # before this point, so reaching here means a caller built the request
+            # by hand. Fail loudly rather than sending the upstream a pair it
+            # will reject with a message we cannot explain to the customer.
+            raise ValueError("confirm_password must match password")
 
 
 @dataclass(frozen=True)
@@ -85,10 +108,40 @@ class ProviderConfigurationError(ProviderError):
     """
 
 
+class ProviderUnavailableError(ProviderError):
+    """The provider could not be reached, or told us to come back later.
+
+    Covers a read/connect timeout, a transport failure (DNS, TLS, refused
+    connection), and an upstream ``429``. All of these are transient: the same
+    request may well succeed shortly. The route maps this to ``503
+    PROVIDER_UNAVAILABLE``.
+    """
+
+
+class ProviderResponseError(ProviderError):
+    """The provider answered, but the answer is unusable.
+
+    Covers an upstream ``5xx`` and a body that is not the JSON object the
+    measured contract describes. The distinction from
+    :class:`ProviderUnavailableError` matters to an operator: "unreachable" is a
+    network or upstream-availability problem, "bad response" means our
+    expectation about the contract no longer holds and the code needs looking at.
+    The route maps this to ``502 PROVIDER_ERROR``.
+    """
+
+
 def redact_request(request: RegistrationRequest) -> dict[str, object]:
-    """A log-safe view of a request: never includes the password."""
+    """A log-safe view of a request: never includes a password.
+
+    ``confirm_password`` is popped as well as ``password``. It is the same value
+    in the path this service drives, but a hand-built request may differ, and a
+    helper whose whole job is "safe to log" must not depend on another layer
+    having already made them equal.
+    """
     data = dataclasses.asdict(request)
     data.pop("password", None)
-    # A placeholder shown in place of the password, never a credential.
+    data.pop("confirm_password", None)
+    # Placeholders shown in place of each secret, never a credential.
     data["password"] = "<redacted>"  # nosec B105
+    data["confirm_password"] = "<redacted>"  # nosec B105
     return data

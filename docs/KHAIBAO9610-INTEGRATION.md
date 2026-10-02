@@ -1,21 +1,46 @@
-# KHAIBAO9610 registration integration
+# KHAIBAO9610 integration — registration and tracking
 
-> ## Status: `BLOCKED_EXTERNAL` — provider mode is `MOCK`
+> ## Status: endpoints OWNER-SUPPLIED since 2026-10-02 — registration still `BLOCKED_EXTERNAL`
 >
-> The real production registration contract has **not been supplied**.
-> `KHAIBAO9610_MODE=mock` is the shipped default in every configuration file.
+> On **2026-10-02 the owner supplied the production endpoint information**, and
+> the implementation landed on `feat/g04b-integration`. The base URL and the
+> three paths are no longer inferences from a public bundle: they are
+> **owner-supplied and authoritative**. What changed, and why the same URL now
+> has a different status, is recorded in §4.6.
 >
-> **No file in this repository states an authoritative endpoint.** Exactly one
-> live URL value exists anywhere in the tree: `https://apiviporder.com/frontend/v1`
-> at `deploy/env.production.example:88`, also the settings default at
-> `backend/app/config.py:39,83`, and a test fixture at
-> `backend/tests/test_khaibao9610_provider.py:42,246`. That value is **an
-> observation, not a contract**: it was read from a public frontend bundle
-> during reconnaissance, and no provider has ever confirmed it. Every mention of
-> it in this document carries that label.
+> **The single most likely production bug: the two tracking endpoints return
+> different envelopes.** `GET /warehouse-imports/{keyword}` answers with a **bare
+> object**; `GET /package-sealings/{keyword}` answers with **`{"data": {...}}`**.
+> A parser that assumes one shape fails on the other. Both shapes, both failure
+> bodies, and the one place that unwraps are in §4.7.
 >
-> The site may be released and used, but real registration must be described as
-> MOCK — never as working — until the checklist in §6 is answered.
+> What the supply does **not** settle:
+>
+> * **No live registration `POST` has ever been made.** The registration half of
+>   this integration is unproven (§11). `KHAIBAO9610_MODE=mock` is still the
+>   shipped default in every configuration file (`backend/app/config.py:107`,
+>   `deploy/env.production.example:80`, `.env.example:33`), and the live adapter
+>   still refuses to exist unless both switches are set
+>   (`backend/app/providers/khaibao9610.py:105-116`).
+> * **Six provider facts remain UNKNOWN** — the registration success, duplicate
+>   and validation response schemas, the rate limit, the provider's expected
+>   timeouts, and whether production requires authentication or an IP allowlist.
+>   They are listed in §4.9, and every parser is defensive because of them.
+> * **Live tracking cannot be switched on by itself.** The two lookups are
+>   methods on the same live adapter that registers, so enabling them enables
+>   real registration writes too (§7).
+>
+> `https://apiviporder.com/frontend/v1` is **owner-supplied and authoritative**
+> as of 2026-10-02 (`backend/app/config.py:39,108`;
+> `deploy/env.production.example:88`). It was previously labelled "an
+> observation, not a contract" because it had been read out of a public frontend
+> bundle during reconnaissance (§4.2). The owner has now supplied it directly as
+> the production frontend API base. The value did not change; the authority
+> behind it did, and that is the whole of the change.
+>
+> The site may be released and used, but real registration must still be
+> described as MOCK — never as working — until the checklist in §6 is answered
+> and §9's steps are done with real evidence (§11).
 >
 > Tracking issue: **#4 — [KHAIBAO9610] Provide production registration API contract**
 
@@ -24,8 +49,9 @@
 ## 1. Why this boundary exists
 
 The customer-code authority is an external system that VIPORDER does not
-control. Its contract is unknown, its availability is unknown, and it may reject
-or duplicate customers in ways nobody has documented.
+control. Its **endpoints** are now known — the owner supplied them on 2026-10-02
+(§4.6) — but its **responses, limits and authentication requirements are not**,
+and it may reject or duplicate customers in ways nobody has documented (§4.9).
 
 Three rules follow, and they shape the whole design:
 
@@ -63,23 +89,74 @@ or returns 5xx, the row already exists. A human can retry it later via
 `POST /api/v1/admin/registrations/{lead_id}/retry` rather than the customer
 having to register again.
 
+### The tracking lookups
+
+Two public lookups (no sign-in), keyword in the path, sharing one response
+contract (`backend/app/routers/tracking.py:6-12`):
+
+```
+browser
+  └─ GET /api/tracking/warehouse-imports/{keyword}
+     (or /api/tracking/package-sealings/{keyword})
+       ├─ sanitise_keyword() — regex only, NO network call on a bad keyword
+       ├─ resolve the provider's finder with getattr (there is none in mock mode)
+       ├─ provider GETs https://apiviporder.com/frontend/v1/...
+       └─ respond
+            ├─ 200 {"result": "found", "search_type": …, "data": {…}}
+            ├─ 400 INVALID_KEYWORD
+            ├─ 404 NOT_FOUND           (provider answered 404)
+            ├─ 502 PROVIDER_ERROR      (provider answered unusably)
+            └─ 503 PROVIDER_UNAVAILABLE (no provider / timeout / 429)
+```
+
+Measured against the merged local backend with the **mock** provider — the
+shipped default — so these are observed, not inferred:
+
+* a hostile keyword → **400 `INVALID_KEYWORD`**, Vietnamese, **no provider call**
+  (`backend/app/tracking.py:115-135`, reached before any network use at
+  `backend/app/routers/tracking.py:141-148`);
+* an empty keyword → **400 `INVALID_KEYWORD`**;
+* a valid keyword → **503 `PROVIDER_UNAVAILABLE`** ("chức năng tra cứu chưa được
+  bật"), because the mock provider implements no tracking method at all
+  (`backend/app/providers/factory.py:30-31`;
+  `backend/app/routers/tracking.py:150-158`; pinned by
+  `backend/tests/test_tracking.py:849-862`).
+
+The single sentence that matters for the 200 path: the two upstream endpoints do
+not agree on their envelope, and §4.7 is where that is spelled out.
+
 ---
 
 ## 3. Environment variables
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KHAIBAO9610_MODE` | `mock` | `mock` or `http` |
-| `KHAIBAO9610_ENABLE_REAL_CALLS` | `no` | **Second switch.** Real calls need this *and* `MODE=http` |
-| `KHAIBAO9610_BASE_URL` | *(empty in `.env.example`; a URL in the in-code default and in the production template)* | Base URL of the registration API. The value present in this repository is **an observation, not a contract** — see §6, item 1 |
-| `KHAIBAO9610_TIMEOUT_SECONDS` | `10` | Hard per-call timeout |
-| `KHAIBAO9610_USER_AGENT` | browser-like | Required by the candidate upstream (see §5) |
-| `MOCK_PROVIDER_BEHAVIOUR` | `success` | `success`/`duplicate`/`invalid`/`unavailable`/`timeout`/`error` |
+| `KHAIBAO9610_MODE` | `mock` | `mock` or `http` (`backend/app/config.py:107`) |
+| `KHAIBAO9610_ENABLE_REAL_CALLS` | `no` | **Second switch.** Real calls need this *and* `MODE=http` (`backend/app/config.py:110`) |
+| `KHAIBAO9610_BASE_URL` | `https://apiviporder.com/frontend/v1` | Base URL of the frontend API. **Owner-supplied and authoritative** since 2026-10-02 (`backend/app/config.py:39,108`; §4.6) |
+| `KHAIBAO9610_REGISTER_PATH` | `/register` | Registration path template (`backend/app/config.py:51,114`) |
+| `KHAIBAO9610_WAREHOUSE_IMPORT_PATH` | `/warehouse-imports/{keyword}` | Warehouse-import lookup; **bare-object** envelope (`backend/app/config.py:52,115`) |
+| `KHAIBAO9610_PACKAGE_SEALING_PATH` | `/package-sealings/{keyword}` | Package-sealing lookup; **wrapped** envelope (`backend/app/config.py:53,116`) |
+| `KHAIBAO9610_TIMEOUT_SECONDS` | `10` | Hard per-call timeout, clamped to 1–30 s (`backend/app/config.py:109`; `backend/app/providers/khaibao9610.py:117-122`) |
+| `KHAIBAO9610_USER_AGENT` | browser-like | Required by the upstream behind Cloudflare (`backend/app/config.py:31-36,111`) |
+| `KHAIBAO9610_MAX_RESPONSE_BYTES` | `2097152` | Cap on a tracking response body (`backend/app/config.py:59,117-119`) |
+| `MOCK_PROVIDER_BEHAVIOUR` | `success` | `success`/`duplicate`/`invalid`/`unavailable`/`timeout`/`error` (`backend/app/config.py:122-124`) |
+
+The three path templates are validated rather than trusted: each must start with
+`/`, and the two tracking templates must contain **exactly one** `{keyword}`
+(`backend/app/config.py:171-206`). Without that, a relative path concatenates
+onto the base URL and produces a 404 an operator would read as "the tracking code
+does not exist" (`backend/app/config.py:178-185`) — two very different things to
+tell a customer. The provider re-checks the same rules at construction, because
+it is also built directly in tests (`backend/app/providers/khaibao9610.py:130-152`).
+
+The tracking lookups are **not** separately switchable: they are methods on the
+live adapter, so the same two keys above are what arm them (§7).
 
 Why two switches: a single `MODE=http` can be set by a typo, a copied config or
 a stale `.env` on a server nobody is watching. Requiring a second, deliberately
-named flag makes "we started sending real customer data to an unverified
-endpoint" a thing someone had to *mean*. The guard itself is described in §7.
+named flag makes "we started sending real customer data to a provider endpoint"
+a thing someone had to *mean*. The guard itself is described in §7.
 
 ---
 
@@ -123,6 +200,13 @@ It is also **not the provider's contract.** It tells us what one public client
 sends and expects. It cannot tell us what the provider requires, permits or
 returns to a server-to-server caller — which is what §6 asks for. Treat every
 row below as an observation with that limit.
+
+**Status update, 2026-10-02.** The base URL below is no longer *only* an
+observation of this bundle: the owner has since supplied the same value as
+authoritative (§4.6). This section is kept as the record of *what the public
+bundle said on 2026-10-01*, which is what it was for and still is. Where the two
+sources would ever disagree, §4.6 wins — a bundle is evidence about a client, an
+owner's statement is evidence about the API.
 
 Method (read-only; no account was created and no POST was ever sent):
 
@@ -200,7 +284,9 @@ before this measurement, because the client code had not been read.
 ### 4.4 Still unknown — genuinely provider-only
 
 Everything below cannot be obtained by reading a public client, because it is
-server-side behaviour or a business decision. See §6.
+server-side behaviour or a business decision. See §6, and §4.9 for the same list
+after the 2026-10-02 supply — **the endpoints are no longer in it**, but
+everything about what comes back still is.
 
 * whether the register **response** carries the code in a field this client
   simply ignores (possible — the client only reads `message`); this is the one
@@ -224,37 +310,302 @@ recommendation: the portal's own behaviour (option 2) is both safe and available
 now, whereas copying the automation's behaviour would import a credential risk
 the portal itself does not have.
 
+### 4.6 Owner-supplied — 2026-10-02 (AUTHORITATIVE)
+
+On 2026-10-02 the owner supplied the production endpoint information directly.
+This is the first time the endpoint shape has come from the party that owns it
+rather than from reconnaissance, so these values are **authoritative**, not
+observations. They answer §6's items 1, 2 and 5, and they include two tracking
+endpoints the original 20-item checklist never asked about (§6 items 21–22). The
+history of the questions is kept in §6 rather than deleted.
+
+| Supplied fact | Value | Where it lives in the code |
+|---|---|---|
+| Base URL | `https://apiviporder.com/frontend/v1` | `backend/app/config.py:39,108`; `deploy/env.production.example:88` |
+| Registration | `POST {base}/register` | `backend/app/config.py:51,114`; `backend/app/providers/khaibao9610.py:356,375-380` |
+| Warehouse lookup | `GET {base}/warehouse-imports/{keyword}` | `backend/app/config.py:52,115`; `backend/app/providers/khaibao9610.py:339-344` |
+| Package lookup | `GET {base}/package-sealings/{keyword}` | `backend/app/config.py:53,116`; `backend/app/providers/khaibao9610.py:346-352` |
+| Registration request fields | `name, phone, email, password, confirmPassword, acceptTerms` | `backend/app/providers/khaibao9610.py:365-372` |
+
+**Status change, stated explicitly.** Before 2026-10-02 this document said *"no
+file in this repository states an authoritative endpoint"* and labelled
+`https://apiviporder.com/frontend/v1` as *"an observation, not a contract"*
+because it had been read from a public frontend bundle (§4.2). The owner has now
+supplied it as the production frontend API base. The string is unchanged; the
+source of authority changed, and that is why the label changed with it. An
+observation of a public client told us what one browser sends; an owner-supplied
+endpoint tells us what the provider's API is.
+
+Two limits on the supply, both important:
+
+* It settles **where** to call and **what field names to send**. It does **not**
+  settle what comes back — see §4.9 for what is still unknown.
+* The field list is the request contract's *names*. Which of those fields the
+  provider treats as required, and what it does with an absent or `null` one, was
+  not supplied (§6 item 5).
+
+### 4.7 The two upstream envelopes differ (MEASURED, 2026-10-02)
+
+This is the most important measured fact in this document, because a parser that
+assumes one shape fails on the other, and it fails by returning a body the code
+then reads as all-null rather than by raising.
+
+Measured by read-only `GET` against `https://apiviporder.com/frontend/v1` on
+2026-10-02:
+
+| Endpoint | Success body | Failure body |
+|---|---|---|
+| `GET /warehouse-imports/{keyword}` | a **BARE object** — no wrapper key | HTTP **404** `{"error":"Mã vận đơn không tồn tại"}` |
+| `GET /package-sealings/{keyword}` | **`{"data": { ... }}`** — WRAPPED | HTTP **404** `{"error":"Mã đóng bao không tồn tại hoặc bạn không có quyền truy cập"}` |
+
+Supporting measurements of the same moment:
+
+* **The working keyword is the FULL tracking code.** `KY4001103376087` → 404;
+  `KY4001103376087-2-4-|s` → 200. The pipe is part of a real code, so it is in
+  the accepted character set (`backend/app/tracking.py:85-99`) and is
+  percent-encoded on the wire (`backend/app/providers/khaibao9610.py:228-234`;
+  measured end-to-end URL at `backend/tests/test_tracking.py:727-736`).
+* **Keyword search needs no authentication — OBSERVED.** `GET /warehouse-imports`
+  (the bare list) returned **401 `{"error":"Unauthenticated."}`** while the
+  keyword form returned 200 with no credentials
+  (`backend/app/tracking.py:20-25`). Observed at measurement time, not a
+  guarantee: a 401 from the keyword endpoint is treated as a contract change
+  (502), never as "the code does not exist"
+  (`backend/app/providers/khaibao9610.py:246-255`).
+* **Hostile keywords all 404'd upstream** without reaching anything — traversal,
+  NUL, encoded script, SQL metacharacters, 300 characters
+  (`backend/app/tracking.py:27-30`). We still validate on our side: a third
+  party's input handling is not a control we own.
+
+**Where the asymmetry is handled, and where it is deliberately not.**
+
+* The provider returns the **RAW parsed body** from both lookups and unwraps
+  nothing: `find_warehouse_import` (`backend/app/providers/khaibao9610.py:339-344`)
+  and `find_package_sealing` (`:346-352`) both delegate to one `_tracking_get`
+  (`:209-280`), and the module says why in as many words at `:329-337` —
+  *"Unwrapping here would mean guessing which shape arrived, and guessing is how
+  the two get conflated."*
+* Unwrapping happens in exactly one place, `backend/app/tracking.py`, and only
+  for package-sealings: `normalize_package_sealing` reads `envelope["data"]`
+  (`backend/app/tracking.py:281`) while `normalize_warehouse_import` reads the
+  bare object directly (`backend/app/tracking.py:245`).
+* Both projections are whitelists that tolerate any shape, so the *wrong*
+  envelope does not raise — it produces nulls
+  (`backend/app/tracking.py:66-72,231-233`;
+  `backend/tests/test_tracking.py:307-312`).
+* The route never inspects the body's shape
+  (`backend/app/routers/tracking.py:17-19,173-182`).
+
+The two measured bodies are kept verbatim as test fixtures — including the fields
+we deliberately drop — at `backend/tests/test_tracking.py:45-129`, and the
+projection's key list is pinned against them at
+`backend/tests/test_tracking.py:425-441`.
+
+### 4.8 Wire names vs provider names — the bug this already caused
+
+There are **two different naming schemes** in this one flow, and the gap between
+them is not cosmetic: it has already produced a real defect.
+
+| Meaning | Our API (snake_case) | Form control `name` | Provider contract (camelCase) |
+|---|---|---|---|
+| Customer name | `full_name` (`backend/app/schemas.py:78`) | `full_name` (`index.html:605`) | `name` (`backend/app/providers/khaibao9610.py:366`) |
+| Password confirmation | `confirm_password` (`backend/app/schemas.py:93`) | `confirmPassword` (`index.html:656`) | `confirmPassword` (`backend/app/providers/khaibao9610.py:370`) |
+| Terms acceptance | `accept_terms` (`backend/app/schemas.py:120`) | `acceptTerms` (`index.html:701`) | `acceptTerms` (`backend/app/providers/khaibao9610.py:371`) |
+
+**The defect, as it happened.** The registration form's `name` attributes for two
+of these three fields are the *provider's* spelling, not ours. A client that sent
+the form's own names therefore sent `confirmPassword` and `acceptTerms` to
+`POST /api/v1/registrations`, whose schema declares `confirm_password` and
+`accept_terms` and whose `extra="ignore"` **silently drops any key it does not
+recognise** (`backend/app/schemas.py:76`). Both keys vanished; both required
+fields arrived missing (`backend/app/schemas.py:93,120`); every live registration
+would have answered **422** while looking correct on both sides. The `full_name`
+control is the reverse trap — it matches *our* API, while the provider expects
+`name` — so a reader who concluded "the form names are the provider names" would
+be wrong in the other direction as well.
+
+It was fixed at the source (commit `cd7f6b6`):
+
+* the client sends **our** snake_case names — `confirm_password` and
+  `accept_terms` at `static/js/register.js:648-649`, built in `buildPayload()`
+  at `static/js/register.js:628-661`;
+* the adapter renames them to the provider's camelCase, which is where that
+  translation belongs — `backend/app/providers/khaibao9610.py:365-372`;
+* `FIELD_ALIASES` maps a server-side `422` back to the right DOM control, so a
+  naming error surfaces on the field instead of nowhere
+  (`static/js/register.js:129-141`).
+
+The form still uses `confirmPassword`/`acceptTerms` as its `name` attributes
+because those are the controls it collects; the controller reads them by DOM name
+(`static/js/register.js:257-263`) and emits the API names. **One translation
+point, at the boundary, is the rule.**
+
+**A second document is stale on exactly this point.**
+`docs/REGISTRATION-FLOW.md` §2.1/§2.2 still tables the pre-G04B form — it has no
+`confirmPassword` control, no `acceptTerms` control and no email input — and its
+line anchors were written against an earlier revision, which its own §9 warns
+about. Measured example: its `index.html:473` anchor for the `full_name` control
+now lands in marketing copy, while the control is at `index.html:605`. For the
+current request shape, read this section, not that one.
+
+### 4.9 Still UNKNOWN after 2026-10-02
+
+The owner supplied endpoints and field names. Everything below is **still
+unknown**, is asserted nowhere in this document, and is the reason the code parses
+defensively rather than optimistically. Each item says which guard exists
+*because* the answer is missing.
+
+1. **Registration success response — exact schema. STILL UNKNOWN.** We know the
+   call is `POST {base}/register`; we do not know the status code, the body, or
+   the discriminator that means "created". The adapter treats **any** 2xx as
+   success (`backend/app/providers/khaibao9610.py:415-424`) and only *tries* to
+   pull a customer id/code out of the body under a list of guessed key names
+   (`:302-327`). Both halves are defensive precisely because the real schema was
+   never supplied.
+2. **Duplicate-registration response — exact status and body. STILL UNKNOWN.**
+   The adapter recognises a duplicate only on HTTP **409 or 422** *and* a body
+   that accent-insensitively matches a phrase list
+   (`backend/app/providers/khaibao9610.py:63-66,426-432`). Any other status or
+   wording falls through to `INVALID`. Defensive by construction: it matches a
+   pattern instead of asserting a status.
+3. **Validation-error response — exact status and body. STILL UNKNOWN.** Every
+   non-2xx that is not a recognised duplicate, not `429` and below `500` becomes
+   the one generic `INVALID` (`backend/app/providers/khaibao9610.py:446-452`),
+   and the upstream body is read only for the duplicate phrase match — never
+   parsed for field detail (`:410-413,426`). Defensive in the sense that it
+   cannot crash on an unknown body; unhelpful in the sense that field detail is
+   discarded.
+4. **Rate limit. STILL UNKNOWN.** No requests/second, burst, `Retry-After` or
+   escalation figure has been supplied. The adapter maps `429` to a retryable
+   `UNAVAILABLE` (`backend/app/providers/khaibao9610.py:242-245,434-444`) without
+   honouring any header, because none was supplied to honour.
+5. **Provider timeout expectations. STILL UNKNOWN.** Their normal and worst-case
+   latency, and the timeout they recommend, were not supplied. Our 10 s is our
+   own default, clamped 1–30 s (`backend/app/config.py:109`;
+   `backend/app/providers/khaibao9610.py:117-122`), and the timeout becomes a
+   read/connect pair at call time (`backend/app/providers/khaibao9610.py:197-207`).
+6. **Whether production requires authentication or an IP allowlist. STILL
+   UNKNOWN.** The keyword GETs were observed to need no credentials (§4.7), but
+   that is an observation of a *read* at one moment, not an answer about
+   production registration. There is **no provider credential setting and no
+   allowlist setting** anywhere in `backend/app/config.py` or in the
+   `KHAIBAO9610` block of `deploy/env.production.example:76-106`, so a required
+   one could not be configured today without a code change. The adapter sends no
+   credential (`backend/app/providers/khaibao9610.py:182-195`), which is correct
+   only if the answer turns out to be "none".
+
+Until each of these is answered, every corresponding parser stays defensive, and
+no success shape is written down as though it were known.
+
 ---
 
-## 5. How the adapter is written today
+## 5. The adapter surface, as shipped
 
-`backend/app/providers/khaibao9610.py` implements the **candidate** contract
-from §4.1 behind the `RegistrationProvider` interface. It is deliberately inert:
+`backend/app/providers/khaibao9610.py` holds one live adapter,
+`ViporderFrontendProvider` (`:86`), and it now carries both halves of the
+integration. The three public methods are:
 
-* it refuses to construct unless `KHAIBAO9610_MODE=http` **and**
-  `KHAIBAO9610_ENABLE_REAL_CALLS=yes`;
-* it never logs the request body, because the body carries a password;
-* timeouts and connection errors become `UNAVAILABLE` with `retryable=True`,
-  never an exception that could lose a lead;
-* accent-insensitive matching is used for the duplicate message, because the
-  upstream text is Vietnamese and may arrive with different diacritic
-  normalisation.
+| Method | Purpose | Measured/known contract | Anchor |
+|---|---|---|---|
+| `register(request)` | Create a customer account | `POST {base}/register`; body `{name, phone, email, password, confirmPassword, acceptTerms}`; response schema still UNKNOWN (§4.9) | `backend/app/providers/khaibao9610.py:356-452` |
+| `find_warehouse_import(keyword)` | Look up a vận đơn | `GET {base}/warehouse-imports/{keyword}`; **bare object**; `None` on 404 | `backend/app/providers/khaibao9610.py:339-344` |
+| `find_package_sealing(keyword)` | Look up a mã đóng bao | `GET {base}/package-sealings/{keyword}`; **`{"data":{...}}`**; `None` on 404 | `backend/app/providers/khaibao9610.py:346-352` |
 
-When the real contract arrives, `provider` is the **only** file that should
-change. `service.py`, the API, the lead model and the tests all speak in terms
-of `ProviderStatus`, not in terms of HTTP.
+Naming note: the work item that produced this called the registration method
+`register_customer`. **No such symbol exists** — `grep -rn register_customer`
+returns nothing. The shipped name is `register`
+(`backend/app/providers/khaibao9610.py:356`), matching the
+`RegistrationProvider` protocol (`backend/app/providers/base.py:91-96`). This
+document records the shipped name.
+
+What the adapter shares between the two halves:
+
+* one `_tracking_get` for both lookups, which returns the **raw parsed body**
+  (`backend/app/providers/khaibao9610.py:209-280`) and treats HTTP 404 as a
+  *result* — `None`, the measured "this code does not exist" answer — not an
+  error (`:240-241`);
+* percent-encoding of the keyword with `safe=""`, so `/`, `?`, `#`, `&` and the
+  real codes' `|` cannot add a path segment, start a query or open a fragment
+  (`:228-234`);
+* no retries on the lookups, on purpose: a retried GET is only safe if
+  idempotency is proven, and the measurement did not test repeat behaviour
+  (`:221-226`);
+* a chunked read capped at `KHAIBAO9610_MAX_RESPONSE_BYTES`, so an oversized
+  reply cannot exhaust a worker's memory (`:282-296`);
+* the two real-call switches, refused loudly at construction
+  (`:105-116`).
+
+Route paths, for the avoidance of doubt — these are **ours**, and they are not
+the provider's paths:
+
+| Ours (public) | Provider's (upstream) |
+|---|---|
+| `POST /api/v1/registrations` (`backend/app/routers/registrations.py:12`) | `POST https://apiviporder.com/frontend/v1/register` |
+| `GET /api/tracking/warehouse-imports/{keyword:path}` (`backend/app/routers/tracking.py:48,77`) | `GET …/frontend/v1/warehouse-imports/{keyword}` |
+| `GET /api/tracking/package-sealings/{keyword:path}` (`backend/app/routers/tracking.py:48,103`) | `GET …/frontend/v1/package-sealings/{keyword}` |
+
+The browser uses our paths and nothing else
+(`static/js/tracking-search.js:54-55,141-142`). The `{keyword:path}` converter on
+the two lookup routes is deliberate: a hostile keyword like `../../etc/passwd`
+has its slashes decoded back by the ASGI server before routing, and with a
+single-segment converter the route would not match at all — returning a routing
+**404** that is indistinguishable from "this tracking code does not exist". The
+path converter lets the whole value reach the validator so it can be refused
+explicitly with the documented **400** (`backend/app/routers/tracking.py:81-91`).
+
+Registration remains deliberately inert: it never logs the request body, because
+the body carries a password and its confirmation
+(`backend/app/providers/khaibao9610.py:34-36,357-364`); timeouts and connection
+errors become `UNAVAILABLE` with `retryable=True`, never an exception that could
+lose a lead (`:381-408`); and duplicate matching is accent-insensitive because
+the upstream text is Vietnamese (`:63-83`). `service.py`, the API, the lead model
+and the tests all speak in terms of `ProviderStatus`, not in terms of HTTP, so a
+provider change stays inside this file.
 
 ---
 
-## 6. Provider handoff checklist — the 20 things we still need
+## 6. Provider handoff checklist — the questions, and where each stands
 
 This is the list to take to the provider. Each item is a question, not a
 statement: **we are not telling them what their API does, we are asking.** Where
-this document seems to know something, it is either the owner's prior work or an
-observation of a *public client* (§4) — neither is their contract.
+this document seems to know something, it is the owner's prior work, an
+observation of a *public client* (§4.2), or — since 2026-10-02 — something the
+owner supplied directly (§4.6).
 
 Items 1–9 are the outbound call. Items 10–15 are the response shapes that decide
 what we tell the customer. Items 16–20 are operational limits and requirements.
+Items 21–22 were **added on 2026-10-02**, when the two tracking lookups became
+known; the original checklist of 20 predates them and never asked.
+
+**Where each item stands (2026-10-02).** Nothing was removed: every question below
+is kept exactly as it was asked, and this table records the outcome. A status of
+**SUPPLIED** means the owner answered it directly; **STILL UNKNOWN** means it has
+not been answered, so the corresponding code stays defensive (§4.9).
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Exact registration endpoint | **SUPPLIED** — `POST {base}/register` (§4.6) |
+| 2 | HTTP method | **SUPPLIED** — `POST` for register, `GET` for both lookups (§4.6) |
+| 3 | Authentication scheme | **STILL UNKNOWN** (§4.9 item 6) |
+| 4 | Request headers | **STILL UNKNOWN** |
+| 5 | Required fields | **SUPPLIED — field names only** (`name, phone, email, password, confirmPassword, acceptTerms`); which are required, and `null`/absent handling, **STILL UNKNOWN** (§4.6, §4.9) |
+| 6 | Optional fields | **STILL UNKNOWN** |
+| 7 | Phone format | **STILL UNKNOWN** |
+| 8 | Password rules | **STILL UNKNOWN** |
+| 9 | Success response example | **STILL UNKNOWN** (§4.9 item 1) |
+| 10 | Customer code field | **STILL UNKNOWN** |
+| 11 | Customer id field | **STILL UNKNOWN** |
+| 12 | Duplicate-account response | **STILL UNKNOWN** (§4.9 item 2) |
+| 13 | Validation error response | **STILL UNKNOWN** (§4.9 item 3) |
+| 14 | Auth error response | **STILL UNKNOWN**, grouped with item 3 |
+| 15 | Provider unavailable response | **STILL UNKNOWN** |
+| 16 | Rate limit | **STILL UNKNOWN** (§4.9 item 4) |
+| 17 | Timeout recommendation | **STILL UNKNOWN** (§4.9 item 5) |
+| 18 | Idempotency support | **STILL UNKNOWN** |
+| 19 | Test/sandbox endpoint | **STILL UNKNOWN** |
+| 20 | IP allowlist requirement | **STILL UNKNOWN** (§4.9 item 6) |
+| 21 | Warehouse-import lookup endpoint | **ADDED + SUPPLIED** — `GET {base}/warehouse-imports/{keyword}`; success body is a **bare object**, failure is 404 (§4.6, §4.7) |
+| 22 | Package-sealing lookup endpoint | **ADDED + SUPPLIED** — `GET {base}/package-sealings/{keyword}`; success body is **`{"data":{...}}`**, failure is 404 (§4.6, §4.7) |
 
 **How to answer.** "Unknown", "we do not support that" and "not applicable" are
 complete and useful answers. One real example response is worth more than a
@@ -264,13 +615,29 @@ cannot be un-published. Write down only *where* the secret is kept.
 
 **How to read the one URL in this repository.**
 `https://apiviporder.com/frontend/v1` appears in this tree
-(`deploy/env.production.example:88`, `backend/app/config.py:39,83`,
-`backend/tests/test_khaibao9610_provider.py:42,246`). It is **an observation,
-not a contract**: read from a public frontend bundle during reconnaissance,
-never confirmed by the provider. It must not be quoted to the provider as "our
-endpoint", and it is not the answer to item 1.
+(`deploy/env.production.example:88`, `backend/app/config.py:39,108`,
+`backend/tests/test_khaibao9610_provider.py:42,246`). Until 2026-10-02 it was
+labelled *"an observation, not a contract"*; it is now **owner-supplied and
+authoritative** (§4.6). The change is in where it came from, not in the string.
+It is still not a *response* contract: what comes back is §4.9.
+
+**Anchor caveat for this section.** The item bodies below were written before the
+G04B merge. `backend/app/config.py` and `backend/app/providers/khaibao9610.py`
+have both grown since, so **many** of the `file:line` anchors inside items 3–20
+land near — not on — the code they name; follow the symbol. The status table
+above, and the status lines and corrected paragraphs in items 1, 2 and 5, are
+anchored against the G04B tree and were re-verified.
 
 ### Item 1 — Exact registration endpoint
+
+**Status 2026-10-02 — SUPPLIED.** What we asked for was a complete URL; what we
+got is the endpoint the owner supplied as authoritative:
+`POST https://apiviporder.com/frontend/v1/register` (§4.6). The host comes from
+`KHAIBAO9610_BASE_URL` (`backend/app/config.py:39,108`), the path from
+`KHAIBAO9610_REGISTER_PATH` (`backend/app/config.py:51,114`), appended in
+`backend/app/providers/khaibao9610.py:375-380`. **Not** supplied: whether a
+trailing slash matters, and what the endpoint returns (§4.9 item 1). The question
+below is kept exactly as it was asked.
 
 **What we need.** The complete URL to call to create a customer account: scheme,
 host, path, and whether a trailing slash matters. If the correct path differs
@@ -287,11 +654,23 @@ form would have no account and no way to retry.
 **Where it lands in the code.** `backend/app/providers/khaibao9610.py:189-190`; base URL from
 `backend/app/config.py:83` and `deploy/env.production.example:88`.
 
-**Current assumption.** NONE — do not guess. The URL value in this repository is
-**an observation, not a contract** (see the note above), so it cannot be treated
-as the answer to this question.
+**Current assumption.** NONE — the question is answered by supply, not by
+assumption. What stood here until 2026-10-02 was *"the URL value in this
+repository is an observation, not a contract, so it cannot be treated as the
+answer to this question."* That is no longer true: the owner supplied it as
+authoritative (§4.6), and the value in the repository is now the answer. What
+remains unconfirmed is the trailing-slash question and the response body
+(§4.9 item 1).
 
 ### Item 2 — HTTP method
+
+**Status 2026-10-02 — SUPPLIED.** `POST` for the create-customer call, and `GET`
+for both tracking lookups (§4.6). Registration uses
+`self._client.post(...)` (`backend/app/providers/khaibao9610.py:375-380`); the
+lookups use `self._client.stream("GET", ...)`
+(`backend/app/providers/khaibao9610.py:236-238`). A provider answering `405` is
+still not specially handled — it falls through to the generic rejection
+described below (§4.9 item 3).
 
 **What we need.** The HTTP method for the create-customer call.
 
@@ -305,9 +684,12 @@ a data-quality problem for as long as nobody reads the raw status code.
 
 **Where it lands in the code.** `backend/app/providers/khaibao9610.py:188-194`.
 
-**Current assumption.** ASSUMPTION — `POST`. Basis: the observed public client
-called `en.post("register", ...)` (§4.2 — an observation of that client, not a
-contract). Not confirmed by the provider.
+**Current assumption.** `POST` is no longer an assumption — the owner supplied
+it as the method for the create-customer call (§4.6), and the code still uses
+`self._client.post(...)` (`backend/app/providers/khaibao9610.py:375-380`). What
+remains an assumption is only that nothing else about the call differs: a `405`
+is still not special-cased and would be recorded as `INVALID`
+(`backend/app/providers/khaibao9610.py:446-452`).
 
 ### Item 3 — Authentication scheme
 
@@ -369,33 +751,45 @@ Cloudflare's edge behaviour, not a documented requirement.
 
 ### Item 5 — Required fields
 
+**Status 2026-10-02 — SUPPLIED (field names only).** The provider's field names
+are `name`, `phone`, `email`, `password`, `confirmPassword`, `acceptTerms`, sent
+verbatim from `backend/app/providers/khaibao9610.py:365-372`. **Still unknown:**
+which of them are required upstream, and what the provider does with an absent or
+`null` field — so the payload is built defensively and the response parsing
+assumes nothing (§4.9 item 1). Our own required set is `full_name`, `phone`,
+`password`, `confirm_password`, `consent`, `accept_terms`
+(`backend/app/schemas.py:78-120`). The two naming schemes, and the bug their
+mismatch already caused, are in §4.8.
+
 **What we need.** The exact JSON field name, JSON type and required/optional
 status of every field on the create-customer call — using the provider's own
 names, not ours.
 
 **Why it matters.** The body is built from fixed keys — `name`, `phone`, `email`,
 `password`, `confirmPassword`, `acceptTerms`
-(`backend/app/providers/khaibao9610.py:179-186`) — and those names come from an
-unverified candidate contract that the module itself warns about
-(`backend/app/providers/khaibao9610.py:1-9,20-24`). One wrong name (for example
-if they want `full_name` rather than `name`) means a mandatory field arrives
-absent or null, the call is rejected, and the rejection surfaces as a generic
-`INVALID` (`backend/app/services/registration.py:426-437`) with nothing pointing
-at the field. Two further specifics: `acceptTerms` is hard-coded `true`
-(`backend/app/providers/khaibao9610.py:185`), so if the provider expects a real
-consent value we are sending an assertion we cannot audit; and `province` and
-`service_interest` exist on our request object but are
-**never sent** (`backend/app/providers/base.py:40-41` versus `backend/app/providers/khaibao9610.py:179-186`).
+(`backend/app/providers/khaibao9610.py:365-372`) — and those names are the ones
+the owner supplied (§4.6), so the naming question is settled. What is *not*
+settled is what the provider does with them: a field it wants under a different
+name, or treats as required when we send it absent, means the call is rejected
+and the rejection surfaces as a generic `INVALID`
+(`backend/app/services/registration.py:426-437`) with nothing pointing at the
+field. One further specific: `acceptTerms` used to be hard-coded `true`; it is
+now the customer's own value, passed through unchanged
+(`backend/app/providers/khaibao9610.py:371`, and why, at `:357-364`). `province`
+and `service_interest` exist on our request object but are
+**never sent** (`backend/app/providers/base.py:29-58` versus `backend/app/providers/khaibao9610.py:365-372`).
 
-**Where it lands in the code.** `backend/app/providers/khaibao9610.py:179-186` (the body);
-`backend/app/providers/base.py:36-41` (our request shape);
-`backend/app/schemas.py:76-83` (what the site collects).
+**Where it lands in the code.** `backend/app/providers/khaibao9610.py:365-372` (the body);
+`backend/app/providers/base.py:29-58` (our request shape);
+`backend/app/schemas.py:75-121` (what the site collects).
 
-**Current assumption.** ASSUMPTION — the body is exactly
-`{name, phone, email, password, confirmPassword, acceptTerms}` and all six are
-required. Basis: the owner's prior automation plus the observed public form,
-which submitted all six; the adapter's own docstring labels this unverified
-(`backend/app/providers/khaibao9610.py:1-9`). Which fields are required
+**Current assumption.** The six field **names** are no longer an assumption — the
+owner supplied them (§4.6) and the adapter sends exactly those
+(`backend/app/providers/khaibao9610.py:365-372`). What remains an assumption is
+that they are the **complete** set and that all six are **required**: that basis
+is still the owner's prior automation plus the observed public form, and the
+module still labels the response side unverified
+(`backend/app/providers/khaibao9610.py:1-12`). Which fields are required
 *server-side* is unknown.
 
 ### Item 6 — Optional fields
@@ -859,6 +1253,45 @@ was observed behind Cloudflare and that a real browser `User-Agent` was needed
 an observation from prior automation about the *edge*, which says nothing about
 whether a server-to-server IP allowlist is required.
 
+### Item 21 — Warehouse-import lookup endpoint (ADDED 2026-10-02)
+
+**What we asked, once we knew tracking existed.** The endpoint that answers "where
+is this vận đơn", its method, and the shape of a successful and a missing answer.
+
+**What we got.** `GET https://apiviporder.com/frontend/v1/warehouse-imports/{keyword}`,
+and a **bare object** on success (§4.6, §4.7). A missing code is HTTP **404**
+`{"error":"Mã vận đơn không tồn tại"}`. Keyword search needed no credentials when
+observed (§4.7).
+
+**Status.** **SUPPLIED** — path, method and both envelopes. Still UNKNOWN: the
+response schema beyond the two envelopes, the rate limit (§4.9 item 4), and
+whether production adds authentication or an IP allowlist (§4.9 item 6).
+
+**Where it lands in the code.** `backend/app/config.py:52,115`;
+`backend/app/providers/khaibao9610.py:339-344`;
+`backend/app/routers/tracking.py:77-100`;
+`backend/app/tracking.py:239-269`.
+
+### Item 22 — Package-sealing lookup endpoint (ADDED 2026-10-02)
+
+**What we asked.** As item 21, for "which parcels are in this mã đóng bao".
+
+**What we got.** `GET https://apiviporder.com/frontend/v1/package-sealings/{keyword}`,
+and a **wrapped** body, `{"data": {...}}`, on success — *not* the same envelope as
+item 21 (§4.6, §4.7). A missing code is HTTP **404**
+`{"error":"Mã đóng bao không tồn tại hoặc bạn không có quyền truy cập"}`.
+
+**Status.** **SUPPLIED** — path, method and both envelopes. The one thing worth
+repeating: a successful body from this endpoint is **not** interchangeable with a
+successful body from item 21, and the code that unwraps it is in one place only
+(`backend/app/tracking.py:281`). Still UNKNOWN: the response schema beyond the
+envelope, and the same operational limits as item 21.
+
+**Where it lands in the code.** `backend/app/config.py:53,116`;
+`backend/app/providers/khaibao9610.py:346-352`;
+`backend/app/routers/tracking.py:103-116`;
+`backend/app/tracking.py:272-299`.
+
 ### Open, but not one of the 20
 
 **Consent basis.** Is VIPORDER permitted to register customers on their behalf
@@ -875,44 +1308,60 @@ Making a real outbound call requires **both** of these to be set:
 
 | Switch | Default | Where |
 |---|---|---|
-| `KHAIBAO9610_MODE=http` | `mock` | `backend/app/config.py:82`, `deploy/env.production.example:80` |
-| `KHAIBAO9610_ENABLE_REAL_CALLS=yes` | `no` | `backend/app/config.py:85`, `deploy/env.production.example:86` |
+| `KHAIBAO9610_MODE=http` | `mock` | `backend/app/config.py:107`, `deploy/env.production.example:80` |
+| `KHAIBAO9610_ENABLE_REAL_CALLS=yes` | `no` | `backend/app/config.py:110`, `deploy/env.production.example:86` |
 
 Either one alone is refused, loudly, at construction time: the adapter raises
 `ProviderConfigurationError` before it can send anything
-(`backend/app/providers/khaibao9610.py:91-102`;
-`backend/app/providers/base.py:80-85`). The provider factory only reaches the
+(`backend/app/providers/khaibao9610.py:105-116`;
+`backend/app/providers/base.py:103-108`). The provider factory only reaches the
 live adapter when the mode is exactly `http`
-(`backend/app/providers/factory.py:30-34`), and the mode is a `Literal` in
+(`backend/app/providers/factory.py:28-34`), and the mode is a `Literal` in
 settings, so a typo fails at startup instead of silently selecting something
-else (`backend/app/config.py:82`).
+else (`backend/app/config.py:107`).
+
+**One adapter, both halves — there is no tracking-only switch.** The two lookups
+are methods on the *same* live adapter that registers
+(`backend/app/providers/khaibao9610.py:339,346,356`), and the factory has exactly
+one mode that selects it (`backend/app/providers/factory.py:28-34`). Setting the
+two switches therefore arms **real registration writes at the same time as live
+tracking**; there is no way to enable one without the other. In the default
+`mock` mode the configured provider implements no tracking method at all, which
+is why a valid keyword answers **503** rather than going silent
+(`backend/app/providers/mock.py:82`;
+`backend/app/routers/tracking.py:150-158`).
 
 Why two switches: a single `MODE=http` can be set by a typo, a copied config, or
 a stale `.env` on a server nobody is watching. A second, deliberately named flag
-makes "we started sending real customer data to an unverified endpoint" a thing
+makes "we started sending real customer data to a provider endpoint" a thing
 someone had to *mean* (`backend/app/config.py:7-10`;
 `deploy/env.production.example:82-85`).
 
-**The live adapter has never made a call.** Nothing in this repository has ever
-reached a registration endpoint of the provider. The shipped mode is `mock` in
-every configuration file (`backend/app/config.py:82`,
+**No live registration call has ever been made through this adapter.** Nothing in
+this repository has ever reached a registration endpoint of the provider: the
+shipped mode is `mock` in every configuration file (`backend/app/config.py:107`,
 `deploy/env.production.example:80`, `.env.example:31-33`), the real-call switch
-defaults to off (`backend/app/config.py:85`) and is `no` in the production
-template (`deploy/env.production.example:86`). Everything in §4 that reads like
-a contract is either the owner's prior work or an observation of a *public
-client* — none of it is a response this code received. The provider's own test
-file reaches it only through a stub HTTP transport, never the network
-(`backend/tests/test_khaibao9610_provider.py:48-52`), and
-`docs/SECURITY.md:857-859` records the same fact independently: *"No live call
-has ever been made, so none of the mapping … has been observed against the real
-upstream."*
+defaults to off (`backend/app/config.py:110`) and is `no` in the production
+template (`deploy/env.production.example:86`). The provider's own test file
+reaches it only through a stub HTTP transport, never the network
+(`backend/tests/test_khaibao9610_provider.py:48-52`;
+`backend/tests/test_tracking.py:162-174`), and `docs/SECURITY.md:857-859` records
+the registration half independently: *"No live call has ever been made, so none
+of the mapping … has been observed against the real upstream."*
 
-Scope of that statement, stated plainly: it rests on (a) the shipped
-configuration in this repository, (b) the absence of any recorded live call, and
-(c) that independent note in `docs/SECURITY.md`. It is **not** a claim about
-what a running server's environment contains — verifying that means reading the
-environment on that server, out of band. Do not report "never called" as a
-measured fact about a deployment on the strength of this document alone.
+That statement is about **registration**, and the distinction is now
+load-bearing. Read-only `GET`s *were* made against the live service on 2026-10-02
+during reconnaissance (§4.7) — but no `POST` was, and the two tracking lookups
+have still never been exercised through this backend against the live service
+(§11).
+
+Scope of the "never registered" statement, stated plainly: it rests on (a) the
+shipped configuration in this repository, (b) the absence of any recorded live
+registration call, and (c) that independent note in `docs/SECURITY.md`. It is
+**not** a claim about what a running server's environment contains — verifying
+that means reading the environment on that server, out of band. Do not report
+"never called" as a measured fact about a deployment on the strength of this
+document alone.
 
 ---
 
@@ -936,6 +1385,15 @@ account anywhere, and that code means nothing to anyone outside this process.
 `backend/app/services/registration.py:359-367`, columns at
 `backend/app/models.py:140-141`).
 
+**In the shipped mock configuration there is no tracking at all.** The mock
+provider implements `register` and nothing else (`backend/app/providers/mock.py:82`),
+so both lookup routes answer **503 `PROVIDER_UNAVAILABLE`** ("chức năng tra cứu
+chưa được bật") rather than inventing a parcel
+(`backend/app/routers/tracking.py:150-158`, pinned at
+`backend/tests/test_tracking.py:849-862`). That is deliberate: fabricating a
+tracking answer would be worse than admitting there is nobody to ask. The same
+503 is what a *valid* keyword gets in the default configuration (§2).
+
 The mock also invents a whole set of responses:
 
 | Behaviour | What the mock returns | Where |
@@ -951,7 +1409,7 @@ Behaviour can be forced per request by phone suffix — `0000` duplicate, `0001`
 invalid, `0002` unavailable, `0003` timeout, `0004` raises, anything else
 success (`backend/app/providers/mock.py:43-49,72-74`) — or for a whole instance
 via `MOCK_PROVIDER_BEHAVIOUR` (`backend/app/providers/mock.py:8-11`;
-`backend/app/config.py:89-91`; `.env.example:51-53`).
+`backend/app/config.py:122-124`; `.env.example:68-70`).
 
 **These are OUR mock's behaviours, not the provider's.** They are useful evidence
 of what we *expect* an upstream to do, and they let us exercise our own failure
@@ -971,9 +1429,24 @@ To state out loud, to anyone who asks whether registration works:
 
 ## 9. Turning the real integration on
 
-Only after §6 is answered and a staging endpoint exists.
+Only after the **still-unknown** items of §4.9 are answered and a staging
+endpoint exists (§6 item 19). The endpoints themselves are no longer the
+blocker — §4.6 settled those.
 
-1. **Record the answers** in this document, replacing §4.2. Keep the evidence.
+**What has actually been exercised, as of 2026-10-02.** Read-only `GET`s against
+the live service were made during reconnaissance and are recorded in §4.7: the
+two envelopes, the two 404 bodies, the full tracking code, and the
+unauthenticated keyword form. **No `POST` has ever been made** against the
+registration endpoint. Tracking has never been exercised against the live
+service *through this backend*, and it cannot be without also enabling real
+registration writes, because the two lookups are methods on the same live
+adapter that registers (§7). The 200 path for both lookups has therefore only
+been exercised against `httpx.MockTransport` and a fake provider
+(`backend/tests/test_tracking.py:1-6,162-174`).
+
+1. **Record the answers** in §4.9 (and in the matching §6 item), keeping the
+   evidence. Do not overwrite §4.6 or §4.7 — those are measured history, and a
+   later answer that contradicts them is a finding, not an edit.
 2. **Write the provider against the contract.** No business logic changes.
 3. **Add contract tests** using `httpx.MockTransport` for every documented
    response, including the duplicate and validation shapes.
@@ -998,9 +1471,65 @@ registration produces customer codes.
 
 * A credential in this repository, in an issue, a PR description, or a log.
 * A password in the lead store, in logs, in traces, or in analytics.
-* `KHAIBAO9610_MODE=http` enabled without §6 answered.
+* `KHAIBAO9610_MODE=http` enabled while any §4.9 item is still UNKNOWN.
+* Setting the two switches for *tracking's* sake without meaning to arm real
+  registration writes as well (§7).
 * A registration that returns success while the provider created nothing —
   this is why the response reports the provider's own status rather than assuming
   it.
 * Retrying a non-idempotent call without checking (§6 item 18) — that is how
   duplicate customers are created.
+
+---
+
+## 11. What is not verified
+
+Stated plainly, because a document that lists only what is known is the one that
+gets trusted past its evidence.
+
+* **No live registration `POST` has ever been made.** Registration against the
+  real API is unproven. Nothing in this repository has observed that endpoint's
+  success, duplicate, validation or auth responses; the adapter's response
+  handling is defensive for exactly that reason
+  (`backend/app/providers/khaibao9610.py:1-12,356-452`), and the mock's
+  responses are ours, not theirs (§8).
+* **The live `GET`s were read-only reconnaissance, on 2026-10-02.** The two
+  envelopes, the two 404 bodies, the full-code keyword and the 401 on the bare
+  list are **measured facts of that moment** (§4.7), not a contract and not a
+  guarantee. Upstream behaviour can change without notice, which is why a 401
+  from the keyword endpoint is treated as a contract change (502) rather than as
+  "the code does not exist" (`backend/app/tracking.py:20-25`;
+  `backend/app/providers/khaibao9610.py:246-255`).
+* **Tracking cannot be exercised against the live API from this backend** without
+  enabling real registration writes: the lookups are methods on the same live
+  adapter (§7; `backend/app/providers/khaibao9610.py:339,346,356`). Both 200
+  paths have been exercised only against `httpx.MockTransport` and a fake
+  provider (`backend/tests/test_tracking.py:1-6,162-174`), never against the
+  service.
+* **The six UNKNOWN provider facts of §4.9**: the registration success schema,
+  the duplicate-registration response, the validation-error response, the rate
+  limit, the provider's expected timeouts, and whether production requires
+  authentication or an IP allowlist. Each is asserted nowhere in this document,
+  and each corresponding parser is defensive because of it.
+* **Anchor drift in this document.** Sections updated on 2026-10-02 — §2's
+  tracking sequence, §3, §4.6–§4.9, §5, §6's status table and the status lines on
+  items 1/2/5, §7, §8's tracking note, §9 and this section — carry anchors
+  re-verified against the G04B tree. The bodies of the original §4.1–§4.5, the
+  bodies of §6's items, and most of §8 were written before that merge;
+  `backend/app/config.py` and `backend/app/providers/khaibao9610.py` have both
+  grown since, so `file:line` anchors there land near — not on — the code they
+  name. Follow the symbol name, not the line number.
+* **`docs/REGISTRATION-FLOW.md` has not been updated for G04B.** Its §2.1/§2.2
+  field table still describes the pre-G04B form — no `confirmPassword` control,
+  no `acceptTerms` control, no email input — and its line anchors were written
+  against an earlier revision, which its own §9 warns about. Measured example:
+  its `index.html:473` anchor for the `full_name` control now lands in marketing
+  copy, while the control is at `index.html:605`. For the current request
+  contract, read §4.8 here.
+* **`REGISTRATION-FLOW.md`'s citations were not re-derived.** Measured: 211
+  fully-qualified `file:line` references (a regex count; the relative `:NN`
+  anchors inside its tables are additional) all resolve to real files and
+  in-range lines — but **in-range is not the same as correct**, as the
+  `index.html:473` example shows. Re-deriving every one is a separate task, and
+  fixing a subset would leave the document looking current while only part of it
+  was.

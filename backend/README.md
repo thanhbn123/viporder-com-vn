@@ -94,10 +94,12 @@ Headers: `Idempotency-Key` (optional), `X-Request-Id` (optional, echoed back).
   "full_name": "Nguyễn Văn A",
   "phone": "0912345678",
   "password": "secret-at-least-8",
+  "confirm_password": "secret-at-least-8",
   "email": "a@example.com",
   "province": "Bắc Ninh",
   "service_interest": "transport",
   "consent": true,
+  "accept_terms": true,
   "attribution": {
     "utm_source": "facebook", "utm_medium": "cpc", "utm_campaign": "g01",
     "utm_content": "ad1", "utm_term": "nhaphang",
@@ -107,16 +109,46 @@ Headers: `Idempotency-Key` (optional), `X-Request-Id` (optional, echoed back).
 }
 ```
 
+> **Breaking change to the request contract.** `confirm_password` and
+> `accept_terms` are both **required** and both new. A client that does not send
+> them gets `422` naming the field. The front end on
+> `feature/g05-g06-g07-frontend-analytics-seo` does **not** send them yet, so the
+> live form needs a confirmation input and an `accept_terms` field before this
+> backend ships. See "Why the confirmation is required" below.
+
 | Field | Rule |
 |---|---|
 | `full_name` | required, 2..120 characters after trim |
 | `phone` | required, normalised server-side to `+84XXXXXXXXX` |
 | `password` | required, min 8 characters. **Forwarded to the provider, never stored.** |
+| `confirm_password` | required, must equal `password`. A mismatch is a `422` on `confirm_password` **before any lead is written**. |
 | `email` | optional, validated if present |
 | `province` | optional, max 120 |
 | `service_interest` | optional; exactly `transport`, `official_import`, `customs`, `order` |
-| `consent` | required, must be `true` — no consent, no account |
+| `consent` | required, must be `true` — no consent, no account. This service's own record; see `consent_given_at` / `consent_version`. |
+| `accept_terms` | required, must be a JSON boolean `true` (**strict**: the string `"true"` is rejected). Forwarded to the provider as `acceptTerms`; the customer's own acceptance, not the server's. |
 | `attribution` | optional; every sub-field optional, each max 300 characters; `landing_page` must be an absolute http(s) URL |
+
+#### Why the confirmation is required
+
+The provider adapter used to build its outbound body with
+`"confirmPassword": request.password` — it *manufactured* the confirmation — and
+a hard-coded `"acceptTerms": True`. Two consequences, both real:
+
+* a genuine "the two passwords differ" check could not happen anywhere in the
+  stack, so a customer who mistyped their confirmation got an account they could
+  not sign in to;
+* the customer's agreement to the terms was asserted by this server on their
+  behalf.
+
+`confirm_password` and `accept_terms` are now carried from the request through
+`RegistrationRequest` into the outbound body. `RegistrationRequest.__post_init__`
+also refuses a mismatch, so a request built by hand cannot reach the provider with
+a pair it will reject.
+
+`consent` is deliberately **not** replaced by `accept_terms`: `consent` is the
+evidence trail for what wording the customer agreed to and when, `accept_terms`
+is what we forward upstream.
 
 Responses:
 
@@ -195,6 +227,76 @@ Requires `X-Tracking-Token` to match the stored token, otherwise a flat `404`
 ```
 
 Never returns the password, phone or email.
+
+### `GET /api/tracking/warehouse-imports/{keyword}`
+
+### `GET /api/tracking/package-sealings/{keyword}`
+
+Look up one parcel or one sealed package by its tracking code. No
+authentication: the code *is* the capability, and it is the code printed on the
+customer's own paperwork. Both routes answer with the **same** contract; only
+`search_type` differs.
+
+```json
+{"result":"found","search_type":"warehouse_import","data":{...}}
+```
+
+| Status | Code | When |
+|---|---|---|
+| `200` | — | found |
+| `400` | `INVALID_KEYWORD` | empty, over 64 characters, or containing a character outside the safe set — rejected **before any network call** |
+| `404` | `NOT_FOUND` | the provider answered `404` (the measured "this code does not exist") |
+| `502` | `PROVIDER_ERROR` | the provider answered `5xx`, or with a body that is not the JSON object the measured contract describes |
+| `503` | `PROVIDER_UNAVAILABLE` | timeout, transport failure, upstream `429`, **or the live adapter is not configured** |
+
+`503` is also what the default (mock) configuration returns: the live adapter is
+only constructed when `KHAIBAO9610_MODE=http` **and**
+`KHAIBAO9610_ENABLE_REAL_CALLS=yes`, so out of the box there is nobody to ask.
+Saying so is the honest answer; fabricating a provider would not be.
+
+#### The two envelopes differ
+
+This is the single most important fact about these two endpoints, and it was
+measured, not inferred:
+
+* `/warehouse-imports/{keyword}` returns a **bare** object;
+* `/package-sealings/{keyword}` returns `{"data": {...}}` — **wrapped**.
+
+A parser that assumes one shape silently returns an all-null record for half its
+traffic. The unwrapping therefore happens in exactly one place
+(`app/tracking.py`), never in the provider, the route and the tests separately.
+
+#### What the customer sees, and what they do not
+
+`data` is a **whitelist projection**, never the provider's object passed through.
+A field the provider adds tomorrow stays invisible until someone edits
+`app/tracking.py` on purpose.
+
+Excluded: `id`, `customer.id`, `created_by`, `area_id`, `area_code` — internal row
+identifiers, staff identity, and warehouse organisation, none of which a customer
+needs. Kept on purpose: `status_background_color` / `status_text_color`, which
+drive the status chip using the provider's own visual language rather than a
+second colour scheme invented here.
+
+Every projected field is nullable. A field with the wrong type degrades to `null`
+and an absent field stays `null`; no shape of provider response makes these routes
+return `500`.
+
+#### Keyword handling
+
+The working keyword is the **full** tracking code — `KY4001103376087` returns
+`404`, `KY4001103376087-2-4-|s` returns `200`. The pipe is percent-encoded in the
+outbound path. Keywords are validated against a safe character set first (which is
+why `.` is absent: `quote()` does not encode it, so `..` would survive as a real
+path segment) and then quoted with `safe=""`, so no keyword can add a path
+segment, start a query, or introduce a fragment.
+
+> **`401` and the auth claim.** At measurement time the keyword form needed no
+> authentication while `GET /warehouse-imports` (the bare list) returned
+> `401 {"error":"Unauthenticated."}`. That is **observed at measurement time, not a
+> guarantee**. If the keyword endpoint starts answering `401`, that is a contract
+> change and is reported as `502` — never quietly presented to the customer as
+> "not found".
 
 ### `POST /api/v1/admin/registrations/{lead_id}/retry`
 

@@ -52,10 +52,20 @@ from tests.conftest import DEFAULT_PASSWORD, Harness
 
 #: What the browser actually posts: no email field, so `email` is empty; no
 #: service pick, so `service_interest` is missing entirely.
+#:
+#: `confirm_password` and `accept_terms` are required by the schema as of the
+#: change that stopped the provider adapter fabricating them, so they are listed
+#: here. NOTE, and it matters: the front end at branch
+#: `feature/g05-g06-g07-frontend-analytics-seo` does NOT send them yet, so the
+#: real browser posting this shape of body gets a 422 naming `confirm_password`.
+#: That is the intended failure, not a regression to paper over — the front-end
+#: workstream has to add a confirmation input and forward the acceptance.
 FRONTEND_PAYLOAD = {
     "full_name": "Nguyễn Văn A",
     "phone": "0912345678",
     "password": DEFAULT_PASSWORD,
+    "confirm_password": DEFAULT_PASSWORD,
+    "accept_terms": True,
     "email": "",
     "province": "Bắc Ninh",
     "consent": True,

@@ -33,6 +33,17 @@ IDEMPOTENCY_KEY_REUSED = "IDEMPOTENCY_KEY_REUSED"
 REGISTRATION_FAILED = "REGISTRATION_FAILED"
 PROVIDER_INVALID = "PROVIDER_INVALID"
 NOT_FOUND = "NOT_FOUND"
+# --- Tracking lookups -------------------------------------------------------
+#: The keyword is not something we will put in a URL (empty, too long, or
+#: containing a character outside the safe set). Rejected before any network call.
+INVALID_KEYWORD = "INVALID_KEYWORD"
+#: The provider answered, but unusably: 5xx, or a body that is not the JSON
+#: object the measured contract describes. This is OUR expectation breaking, not
+#: a transient outage — hence 502, distinct from 503 below.
+PROVIDER_ERROR = "PROVIDER_ERROR"
+#: The provider could not be reached or told us to come back later: timeout,
+#: transport failure, upstream 429. Transient, so the client may retry.
+PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
 PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
 RATE_LIMITED = "RATE_LIMITED"
 INTERNAL_ERROR = "INTERNAL_ERROR"

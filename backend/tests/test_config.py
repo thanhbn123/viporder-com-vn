@@ -121,3 +121,61 @@ def test_login_url_is_not_configurable(monkeypatch) -> None:
 def test_dotenv_file_is_not_committed() -> None:
     """A real .env must never be tracked — the repository is public."""
     assert not (REPO_ROOT / ".env").exists()
+
+
+# --- upstream path templates ------------------------------------------------
+#
+# These are settings so a path move costs one environment variable rather than a
+# release. The validation below exists because every failure mode of a path
+# template is SILENT: a relative path concatenates onto the base URL into a 404
+# that reads like "that tracking code does not exist", and a template with no
+# placeholder queries a fixed URL and can answer with the wrong record.
+
+
+def test_upstream_path_defaults_match_the_measured_contract() -> None:
+    settings = Settings()
+
+    assert settings.khaibao9610_register_path == "/register"
+    assert settings.khaibao9610_warehouse_import_path == "/warehouse-imports/{keyword}"
+    assert settings.khaibao9610_package_sealing_path == "/package-sealings/{keyword}"
+    assert settings.khaibao9610_max_response_bytes == 2 * 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "khaibao9610_register_path",
+        "khaibao9610_warehouse_import_path",
+        "khaibao9610_package_sealing_path",
+    ],
+)
+def test_a_relative_path_template_is_refused(field: str) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(**{field: "warehouse-imports/{keyword}"})
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["khaibao9610_warehouse_import_path", "khaibao9610_package_sealing_path"],
+)
+def test_a_path_template_without_exactly_one_placeholder_is_refused(field: str) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(**{field: "/fixed-path"})
+    with pytest.raises(ValidationError):
+        Settings(**{field: "/a/{keyword}/b/{keyword}"})
+
+
+def test_path_templates_are_stripped() -> None:
+    settings = Settings(khaibao9610_warehouse_import_path="  /warehouse-imports/{keyword}  ")
+    assert settings.khaibao9610_warehouse_import_path == "/warehouse-imports/{keyword}"
+
+
+def test_the_response_cap_must_be_meaningful() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(khaibao9610_max_response_bytes=10)

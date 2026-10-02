@@ -22,6 +22,9 @@ import io
 import logging
 import sys
 
+import pytest
+from pydantic import ValidationError
+
 from app.logging_filters import (
     PasswordRedactionFilter,
     clear_secrets,
@@ -158,6 +161,81 @@ def test_lead_model_has_no_password_column() -> None:
     columns = set(Lead.__table__.columns.keys())
     assert not {c for c in columns if "password" in c.lower()}
     assert "password" not in columns
+    # The confirmation is in the same class of value and gets the same check, so
+    # "we added the field the brief asked for" cannot become "we added a column".
+    assert not {c for c in columns if "confirm" in c.lower()}
+    assert "confirm_password" not in columns
+
+
+def test_confirm_password_cannot_differ_from_the_password_on_the_live_path() -> None:
+    """The two secrets are always the SAME string on the live path, and that matters.
+
+    It means the byte-level and log-level guarantees already proven for the
+    password cover the confirmation as well — there is no second distinct secret
+    to hunt for. Stated as a measurement rather than a hope: the schema refuses a
+    mismatch, so no live request can carry two different values.
+    """
+    from app.schemas import RegistrationCreate
+
+    ok = RegistrationCreate.model_validate(
+        payload(password="aaaaaaaa-1", confirm_password="aaaaaaaa-1")
+    )
+    assert ok.password.get_secret_value() == ok.confirm_password.get_secret_value()
+
+    with pytest.raises(ValidationError):
+        RegistrationCreate.model_validate(
+            payload(password="aaaaaaaa-1", confirm_password="bbbbbbbb-2")
+        )
+
+
+def test_a_provider_echoing_the_confirmation_does_not_leak_it(make_harness, caplog) -> None:
+    """A provider that raises with ``request.confirm_password`` in the message.
+
+    ``RegistrationRequest.__post_init__`` refuses a mismatch and the schema
+    refuses it before that, so a DISTINCT confirmation value is unreachable — which
+    is why this uses the real, equal value. What it proves is the part that is
+    reachable and was worth proving: the *confirmation field* is registered with
+    the log redactor in its own right, so the traceback is scrubbed even though the
+    provider read ``confirm_password`` rather than ``password``.
+    """
+    # gitleaks:allow — a test canary, not a credential.
+    canary = "CONFIRM-canary-9876"
+
+    class EchoingProvider:
+        name = "confirm-echoing"
+
+        def register(self, request):  # type: ignore[no-untyped-def]
+            raise RuntimeError(f"upstream rejected confirmation {request.confirm_password}")
+
+    harness = make_harness(provider=EchoingProvider())
+    caplog.set_level(logging.DEBUG)
+
+    response = harness.post_registration(payload(password=canary, confirm_password=canary))
+
+    # A provider that raises leaves the lead PENDING — a retained lead, not a 500.
+    assert response.status_code == 202, response.text
+
+    # Positive controls: the traceback really was produced and really was captured.
+    assert "upstream rejected confirmation" in caplog.text
+    assert "<redacted>" in caplog.text
+    assert canary not in caplog.text
+    assert canary not in response.text
+    for record in caplog.records:
+        assert canary not in (record.exc_text or "")
+
+
+def test_the_request_refuses_a_mismatch_the_schema_could_not_see() -> None:
+    """The last line before the wire, for a request built without the schema."""
+    from app.providers.base import RegistrationRequest
+
+    with pytest.raises(ValueError, match="confirm_password"):
+        RegistrationRequest(
+            full_name="A",
+            phone="+84912345678",
+            password="aaaaaaaa-1",
+            confirm_password="bbbbbbbb-2",
+            accept_terms=True,
+        )
 
 
 class PasswordEchoingProvider:

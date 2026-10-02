@@ -11,7 +11,9 @@ def _fields(response) -> dict:
     return response.json()["error"].get("fields", {})
 
 
-@pytest.mark.parametrize("missing", ["full_name", "phone", "password", "consent"])
+@pytest.mark.parametrize(
+    "missing", ["full_name", "phone", "password", "confirm_password", "consent", "accept_terms"]
+)
 def test_missing_required_field_is_422(harness: Harness, missing: str) -> None:
     response = harness.post_registration(payload(**{missing: ...}))
     assert response.status_code == 422
@@ -105,6 +107,77 @@ def test_consent_missing_is_rejected(harness: Harness) -> None:
     assert "consent" in _fields(response)
 
 
+# --- the confirmation and the acceptance, both real since the fix -----------
+
+
+def test_a_mismatched_confirmation_is_422_on_the_confirm_field(harness: Harness) -> None:
+    """The check the fabricated ``confirmPassword`` made impossible.
+
+    The provider adapter used to send ``confirmPassword = password``, so a
+    customer who mistyped their confirmation still got an account — one they
+    could not sign in to. The mismatch now fails here, on the ``confirm_password``
+    field, before a lead is written and before any provider call.
+    """
+    response = harness.post_registration(
+        payload(password=DEFAULT_PASSWORD, confirm_password="something-else-entirely")
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert "confirm_password" in _fields(response)
+    # Nothing was created, and nothing was sent upstream.
+    assert harness.lead_rows() == []
+
+
+def test_a_matching_confirmation_is_accepted(harness: Harness) -> None:
+    response = harness.post_registration(
+        payload(password=DEFAULT_PASSWORD, confirm_password=DEFAULT_PASSWORD)
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_the_mismatch_error_names_only_the_confirmation_field(harness: Harness) -> None:
+    """The valid password must not be dragged into the error as a second failure."""
+    response = harness.post_registration(
+        payload(password=DEFAULT_PASSWORD, confirm_password="different-password-1")
+    )
+    fields = _fields(response)
+    assert "confirm_password" in fields
+    assert "password" not in fields
+
+
+@pytest.mark.parametrize("value", [False, None, 0, "true", "yes"])
+def test_accept_terms_must_be_literally_true(harness: Harness, value: object) -> None:
+    """A missing or false acceptance must not silently become consent.
+
+    ``"true"`` and ``"yes"`` are in the list deliberately: this is a boolean, not
+    a truthy string, and pydantic's lax coercion is what would let a client's
+    string quietly stand in for the customer's agreement.
+    """
+    response = harness.post_registration(payload(accept_terms=value))
+    assert response.status_code == 422, response.text
+    assert "accept_terms" in _fields(response)
+    assert harness.lead_rows() == []
+
+
+def test_accept_terms_true_is_accepted(harness: Harness) -> None:
+    response = harness.post_registration(payload(accept_terms=True))
+    assert response.status_code == 201, response.text
+
+
+def test_neither_password_can_escape_through_a_mismatch_error(harness: Harness) -> None:
+    """pydantic echoes offending input; both secrets must be stripped from it."""
+    first = "CANARY-password-1111"
+    second = "CANARY-confirm-2222"
+
+    response = harness.post_registration(payload(password=first, confirm_password=second))
+
+    assert response.status_code == 422
+    assert first not in response.text
+    assert second not in response.text
+    assert first not in str(response.json())
+    assert second not in str(response.json())
+
+
 def test_no_lead_is_written_for_invalid_input(harness: Harness) -> None:
     harness.post_registration(payload(consent=False))
     assert harness.lead_rows() == []
@@ -172,3 +245,7 @@ def test_password_is_a_secret_type() -> None:
     assert DEFAULT_PASSWORD not in str(model)
     assert DEFAULT_PASSWORD not in str(model.model_dump())
     assert model.password.get_secret_value() == DEFAULT_PASSWORD
+    # The confirmation is the same class of value and gets the same treatment:
+    # a second plaintext copy of the password is still a plaintext password.
+    assert DEFAULT_PASSWORD not in str(model.model_dump(mode="json"))
+    assert model.confirm_password.get_secret_value() == DEFAULT_PASSWORD
