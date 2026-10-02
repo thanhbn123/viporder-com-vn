@@ -277,6 +277,12 @@ def test_registration_works_end_to_end_on_postgresql(migrated: str) -> None:
         "password": "pg-canary-not-a-real-secret",
         "email": "",  # the browser sends this empty
         "consent": True,
+        # G04B: required by the schema. This payload is HAND-WRITTEN, so it did
+        # not inherit the new fields from conftest — and being a PostgreSQL test
+        # it is skipped without TEST_DATABASE_URL, which is exactly how a local
+        # green run missed it while CI caught it.
+        "confirm_password": "pg-canary-not-a-real-secret",
+        "accept_terms": True,
         # service_interest deliberately absent
     }
     try:

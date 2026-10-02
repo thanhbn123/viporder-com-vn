@@ -114,6 +114,12 @@ def _body(phone: str) -> dict:
         "password": PASSWORD,
         "email": "",
         "consent": True,
+        # G04B: both are required by the schema now. This body is hand-written
+        # rather than taken from conftest, so it did NOT pick the new fields up —
+        # and because these tests only run with a database, a local run without
+        # TEST_DATABASE_URL skipped them and never saw the 422. CI did.
+        "confirm_password": PASSWORD,
+        "accept_terms": True,
     }
 
 
