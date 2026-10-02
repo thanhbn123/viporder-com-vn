@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import create_engine, text
 
 # Importing `app.main` builds a module-level app with the ambient environment.
 # Point that at a throwaway location BEFORE the import so merely importing the
@@ -120,7 +121,7 @@ class Harness:
 def make_settings(tmp_path: Path):
     def _make(**overrides: Any) -> Settings:
         defaults: dict[str, Any] = {
-            "database_url": f"sqlite:///{tmp_path / (uuid.uuid4().hex + '.db')}",
+            "database_url": _isolated_url(tmp_path),
             "khaibao9610_mode": "mock",
             "mock_provider_behaviour": "success",
             "rate_limit_enabled": False,
@@ -168,3 +169,103 @@ def harness(make_harness) -> Iterator[Harness]:
 @pytest.fixture
 def client(harness: Harness) -> TestClient:
     return harness.client
+
+
+# ---------------------------------------------------------------------------
+# G14 — which database did this run ACTUALLY use?
+# ---------------------------------------------------------------------------
+
+
+def pytest_report_header(config: pytest.Config) -> list[str]:
+    """Print the engine every run, so no result is ambiguous about its backend.
+
+    WHY THIS EXISTS. A previous verification of this project reported a green
+    "SQLite" run while ``TEST_DATABASE_URL`` — or ``DATABASE_URL`` — was still
+    exported in the shell, so **both runs were PostgreSQL** and the default path
+    was never measured. The command's *name* said SQLite; the engine did not.
+
+    ``os.environ.setdefault`` below is the mechanism that let it happen: an
+    inherited ``DATABASE_URL`` wins silently over the intended default. The fix is
+    not to remember to ``env -u`` things — it is to make the engine impossible to
+    be wrong about, by printing it and by asserting it (``test_engine_identity``).
+    """
+    ambient = os.environ.get("DATABASE_URL", "")
+    test_url = os.environ.get("TEST_DATABASE_URL", "")
+    lines = [
+        "",
+        "database engines for this run:",
+        f"    DATABASE_URL       = {ambient or '<unset>'}",
+        f"    TEST_DATABASE_URL  = {test_url or '<unset>'}",
+        f"    default suite engine = {_scheme(ambient) if ambient else 'sqlite'}",
+        f"    PostgreSQL-only tests = {'RUN' if _is_postgres(test_url) else 'SKIPPED'}",
+    ]
+    if _is_postgres(ambient) and not _is_postgres(test_url):
+        lines.append(
+            "    *** WARNING: DATABASE_URL points at PostgreSQL but TEST_DATABASE_URL "
+            "is unset. The default suite will use PostgreSQL, NOT SQLite. ***"
+        )
+    return lines
+
+
+def _isolated_url(tmp_path: Path) -> str:
+    """A database URL that nothing else shares.
+
+    SQLite gets a throwaway file. PostgreSQL gets a **unique schema** inside the
+    database named by ``TEST_DATABASE_URL``, selected through ``search_path`` —
+    because there is no free throwaway *database* per test, and without isolation
+    the suite would share one set of tables and its tests would collide.
+
+    WHY THIS EXISTS. Before it, the shared ``harness`` fixture built SQLite
+    unconditionally. Setting ``TEST_DATABASE_URL`` therefore ran **twelve** tests
+    on PostgreSQL and the other ~516 on SQLite — while the run was reported as
+    "backend (real PostgreSQL), 528 passed". The number was real; the label was
+    not, and it is the same class of mistake as the green "SQLite" run that was
+    secretly PostgreSQL.
+    """
+    test_url = os.environ.get("TEST_DATABASE_URL", "").strip()
+    if not _is_postgres(test_url):
+        return f"sqlite:///{tmp_path / (uuid.uuid4().hex + '.db')}"
+    schema = "t_" + uuid.uuid4().hex[:16]
+    _create_schema(test_url, schema)
+    _SCHEMAS_TO_DROP.append((test_url, schema))
+    sep = "&" if "?" in test_url else "?"
+    return f"{test_url}{sep}options=-csearch_path%3D{schema}"
+
+
+#: Schemas this session created, dropped at exit. Leaving them behind would make
+#: the test database grow a new schema every run, forever.
+_SCHEMAS_TO_DROP: list[tuple[str, str]] = []
+
+
+def _create_schema(test_url: str, schema: str) -> None:
+    """The schema must exist before `metadata.create_all` can create tables in it.
+
+    psycopg says `InvalidSchemaName: no schema has been selected to create in` —
+    and it says it *per table*, so the failure reads as 51 unrelated errors.
+    """
+    engine = create_engine(test_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+    finally:
+        engine.dispose()
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Drop the schemas this run created, so the test database does not grow."""
+    for test_url, schema in _SCHEMAS_TO_DROP:
+        try:
+            engine = create_engine(test_url)
+            with engine.begin() as conn:
+                conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            engine.dispose()
+        except Exception:  # noqa: BLE001 - cleanup must never fail the run
+            pass
+
+
+def _scheme(url: str) -> str:
+    return url.split(":", 1)[0] if "://" in url else "sqlite"
+
+
+def _is_postgres(url: str) -> bool:
+    return _scheme(url).startswith("postgres")

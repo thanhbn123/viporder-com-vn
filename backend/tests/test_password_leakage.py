@@ -58,7 +58,28 @@ def _database_bytes(harness: Harness) -> bytes:
     return blob
 
 
+def _requires_sqlite(harness: Harness) -> None:
+    """Skip the on-disk scan when this run is not SQLite.
+
+    These two tests read the raw database FILE to prove the password is not in it.
+    That scan is only meaningful for SQLite, where the whole store is one file the
+    test can read. On PostgreSQL the equivalent evidence is different — the column
+    does not exist at all — and it is covered by `test_postgres.py`.
+
+    WHY THE GUARD EXISTS: before the shared harness could run on PostgreSQL, these
+    two tests never executed there, so the problem could not appear. Making the
+    suite engine-agnostic surfaced them as two failures in a run that was
+    otherwise green — which is the guard doing its job.
+    """
+    if harness.database.engine.dialect.name != "sqlite":
+        pytest.skip(
+            f"raw-file scan needs SQLite; this run is "
+            f"{harness.database.engine.dialect.name!r} (column absence is covered by test_postgres.py)"
+        )
+
+
 def test_password_is_absent_from_the_sqlite_file(harness: Harness) -> None:
+    _requires_sqlite(harness)
     response = harness.post_registration(payload(password=PASSWORD, phone="0912000011"))
     assert response.status_code == 201
 
@@ -75,6 +96,7 @@ def test_password_is_absent_from_the_sqlite_file_on_a_pending_lead(
     make_harness,
 ) -> None:
     harness = make_harness(mock_provider_behaviour="unavailable")
+    _requires_sqlite(harness)
     response = harness.post_registration(payload(password=PASSWORD))
     assert response.status_code == 202
 

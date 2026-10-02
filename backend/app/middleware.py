@@ -250,7 +250,21 @@ class SecurityHeadersMiddleware:
             "Cross-Origin-Resource-Policy": "same-origin",
         }
         if include_hsts:
-            headers["Strict-Transport-Security"] = f"max-age={self.hsts_max_age}; includeSubDomains"
+            # NO `includeSubDomains`. Measured 2026-10-02: with it, an /api/*
+            # response carried it to the client while nginx sent the withheld
+            # form — TWO headers, and one of them pins every subdomain to HTTPS
+            # for a year.
+            #
+            # HSTS is HOST-scoped, not path-scoped, so an API response can bind
+            # the marketing apex. That defeats the whole staged decision: the
+            # reason `includeSubDomains` is withheld is that
+            # `khachhang.viporder.com.vn` shares this host's IP and the apex
+            # certificate does not cover it, so a TLS mismatch there would become
+            # a error a returning customer cannot click through.
+            #
+            # The application should not be deciding this at all; nginx owns it.
+            # This is the belt to nginx's `proxy_hide_header` braces.
+            headers["Strict-Transport-Security"] = f"max-age={self.hsts_max_age}"
         return headers
 
     def _is_https(self, scope: Scope) -> bool:

@@ -335,8 +335,11 @@ So that 1.1 GB stays on a developer's laptop. **Do not budget for it on the host
 > **Neither deploy path installs Node**, so this does not happen by default. The
 > repository's `fix/deploy-source-exposure` branch replaces the exclude list with
 > `--files-from=deploy/published-files.txt`, which publishes only what the site is.
-> **That fix is not on `develop`**, so at the revision you are deploying, use the
-> correct `rsync` line deliberately and do not run `npm install` on the host.
+> **CORRECTED 2026-10-02: that fix IS on `develop`.** `docs/DEPLOYMENT.md` §4.4/§5 and `docs/STAGING-RUNBOOK.md` §3.3 already use `--files-from=deploy/published-files.txt`, and `tools/check_deploy_exposure.py` is committed. The paragraph that stood here was written against an earlier revision and was false at the SHA it described.
+
+The original text follows, struck through, because the reasoning about the deny list was right and is what produced the fix:
+
+~~That fix is not on `develop`, so at the revision you are deploying, use the exclude list and know that `tests/` and `node_modules/` become fetchable.~~
 
 ---
 
