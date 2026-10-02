@@ -35,7 +35,7 @@ from .middleware import (
 from .providers.base import RegistrationProvider
 from .providers.factory import build_provider
 from .repositories.sqlalchemy_repo import SqlAlchemyLeadRepository
-from .routers import admin, health, registrations
+from .routers import admin, health, registrations, tracking
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,7 @@ def create_app(
     # --- Routes -------------------------------------------------------------
     app.include_router(health.router)
     app.include_router(registrations.router)
+    app.include_router(tracking.router)
     app.include_router(admin.router)
 
     logger.info(

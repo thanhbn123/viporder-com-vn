@@ -227,10 +227,21 @@ class RegistrationService:
             full_name=lead.full_name,
             phone=lead.phone,
             password=SecretStr(password),
+            # The admin retry body carries ONE password, so there is nothing for
+            # the customer's confirmation to disagree with. Setting both from the
+            # same input is not the fabrication this field was introduced to
+            # remove: the operator route cannot express a mismatch, whereas the
+            # public form could. `model_construct` skips validation, so this is
+            # the only place these two are made equal without a check.
+            confirm_password=SecretStr(password),
             email=lead.email,
             province=lead.province,
             service_interest=lead.service_interest,
             consent=True,
+            # The retry is an operator acting on a lead the customer already
+            # submitted, and that submission carried a true acceptance. Re-asking
+            # is not possible here, and refusing to retry would strand the lead.
+            accept_terms=True,
             attribution=None,
         )
         # Take the same claim the customer path takes. Without this the operator
@@ -315,14 +326,20 @@ class RegistrationService:
         self, lead: Lead, payload: RegistrationCreate, *, is_retry: bool = False
     ) -> tuple[int, dict]:
         password = payload.password.get_secret_value()
+        confirm_password = payload.confirm_password.get_secret_value()
         # Belt and braces: even if some other library logs this exact string
         # during the request, the logging filter knows to scrub it. The redactor
         # keeps a small bounded cache, so it also covers a late error handler.
+        # Both values are registered: the schema guarantees they are equal, but a
+        # redactor that relies on another layer's guarantee is not a redactor.
         register_secret(password)
+        register_secret(confirm_password)
         request = RegistrationRequest(
             full_name=payload.full_name,
             phone=payload.phone,
             password=password,
+            confirm_password=confirm_password,
+            accept_terms=payload.accept_terms,
             email=payload.email,
             province=payload.province,
             service_interest=payload.service_interest,
@@ -624,10 +641,18 @@ def fingerprint_payload(payload: RegistrationCreate) -> str:
     excluded on purpose: a hash of a password is password-derived material, and
     storing it would hand an attacker a cheap offline-cracking target for no
     benefit — the key is already scoped to a single browser session.
+    ``confirm_password`` is excluded for the same reason and because it is equal
+    to the password anyway.
 
-    Everything that ends up on the lead (identity, contact, service interest,
-    consent and the whole attribution block) is included, because changing any
-    of it means the caller is describing a different registration.
+    ``accept_terms`` is deliberately NOT added here either. It is required to be
+    ``true`` by the schema, so it carries no information about *whose*
+    registration this is — and adding it would change every fingerprint, which
+    would make an in-flight replay of a lead created before this change fail
+    closed with a spurious 409.
+
+    Everything else that ends up on the lead (identity, contact, service
+    interest, consent and the whole attribution block) is included, because
+    changing any of it means the caller is describing a different registration.
     """
     attribution = payload.attribution
     canonical = {

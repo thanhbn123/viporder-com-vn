@@ -322,6 +322,8 @@ def test_a_json_body_survives_a_migration_round_trip(tmp_path: Path) -> None:
             "full_name": "Nguyễn Văn A",
             "phone": "0912000011",
             "password": "secret-at-least-8",
+            "confirm_password": "secret-at-least-8",
+            "accept_terms": True,
             "email": "",
             "consent": True,
         }

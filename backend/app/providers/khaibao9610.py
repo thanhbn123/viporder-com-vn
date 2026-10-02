@@ -1,12 +1,26 @@
-"""KHAIBAO9610 provider — CANDIDATE CONTRACT, NOT VERIFIED.
+"""KHAIBAO9610 provider — MIXED VERIFICATION STATE. Read which half you are in.
 
-=====================================================================
- STATUS: unverified candidate. Do not treat as the production contract.
-=====================================================================
+=============================================================================
+  REGISTRATION (POST {base}/register): CANDIDATE CONTRACT, NOT VERIFIED.
+  TRACKING (GET warehouse-imports / package-sealings): MEASURED, see below.
+=============================================================================
 
-The request/response shape below was reconstructed from the owner's own prior
-integration work. It has **not** been confirmed against the upstream service,
-and it is **not** reachable by default: the default mode is ``mock``.
+REGISTRATION — unverified. The request/response shape was reconstructed from the
+owner's own prior integration work. It has **not** been confirmed against the
+upstream service, and it is **not** reachable by default: the default mode is
+``mock``. The success and duplicate schemas are UNKNOWN, so the response parsing
+below stays deliberately defensive and reads nothing it was not told to read.
+
+TRACKING — measured live (see app/tracking.py for the full note). Two endpoints,
+and **their envelopes differ**, which is the single most important fact about
+them:
+
+* ``GET /warehouse-imports/{keyword}`` → a BARE object.
+* ``GET /package-sealings/{keyword}`` → ``{"data": {...}}`` (wrapped).
+
+A parser that assumes one shape fails on the other. These two methods return the
+raw parsed body and do not unwrap anything: unwrapping is a normalisation
+concern, and putting it here is exactly how the two shapes get conflated.
 
 Reaching a real customer system requires BOTH switches:
 
@@ -17,31 +31,27 @@ Missing either one raises :class:`ProviderConfigurationError` at construction
 time. Refusing loudly is the point: a half-configured live adapter that
 "mostly works" is how test data ends up in production.
 
-Candidate contract (unverified)::
-
-    POST {base}/register
-    {"name": ..., "phone": ..., "email": ..., "password": ...,
-     "confirmPassword": ..., "acceptTerms": true}
-
-Cloudflare fronting the upstream rejects non-browser clients (Error 1010), so a
-real browser ``User-Agent`` is mandatory.
-
-SECURITY: the request body contains a plaintext password. This module never
-logs it, never logs the body, and never includes the body in an exception
-message.
+SECURITY: the registration request body contains a plaintext password and its
+confirmation. This module never logs either, never logs the body, and never
+includes the body in an exception message.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import unicodedata
+from urllib.parse import quote
 
 import httpx
 
+from ..config import CONNECT_TIMEOUT_CEILING_SECONDS
 from .base import (
     ProviderConfigurationError,
+    ProviderResponseError,
     ProviderStatus,
+    ProviderUnavailableError,
     RegistrationRequest,
     RegistrationResult,
 )
@@ -86,6 +96,10 @@ class ViporderFrontendProvider:
         base_url: str,
         timeout_seconds: float = 10.0,
         user_agent: str,
+        register_path: str = "/register",
+        warehouse_import_path: str = "/warehouse-imports/{keyword}",
+        package_sealing_path: str = "/package-sealings/{keyword}",
+        max_response_bytes: int = 2 * 1024 * 1024,
         client: httpx.Client | None = None,
     ) -> None:
         if mode != "http":
@@ -113,11 +127,38 @@ class ViporderFrontendProvider:
                 "KHAIBAO9610_USER_AGENT must be set: the upstream is behind "
                 "Cloudflare and rejects non-browser clients (Error 1010)."
             )
+        for label, path in (
+            ("REGISTER_PATH", register_path),
+            ("WAREHOUSE_IMPORT_PATH", warehouse_import_path),
+            ("PACKAGE_SEALING_PATH", package_sealing_path),
+        ):
+            # Settings validate these too. Repeated here because the provider is
+            # constructed directly in tests and by anything that predates the
+            # settings field, and a relative path silently concatenates onto the
+            # base URL into a 404 that reads like "no such tracking code".
+            if not (path or "").startswith("/"):
+                raise ProviderConfigurationError(f"KHAIBAO9610_{label} must start with '/'")
+        for label, path in (
+            ("WAREHOUSE_IMPORT_PATH", warehouse_import_path),
+            ("PACKAGE_SEALING_PATH", package_sealing_path),
+        ):
+            if path.count("{keyword}") != 1:
+                raise ProviderConfigurationError(
+                    f"KHAIBAO9610_{label} must contain exactly one '{{keyword}}'"
+                )
+        if int(max_response_bytes) < 1024:
+            raise ProviderConfigurationError(
+                f"KHAIBAO9610_MAX_RESPONSE_BYTES must be at least 1024, got {max_response_bytes!r}"
+            )
 
         self.mode = mode
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = float(timeout_seconds)
         self.user_agent = user_agent
+        self.register_path = register_path
+        self.warehouse_import_path = warehouse_import_path
+        self.package_sealing_path = package_sealing_path
+        self.max_response_bytes = int(max_response_bytes)
         self._owns_client = client is None
         self._client = client or httpx.Client(timeout=self.timeout_seconds)
 
@@ -129,6 +170,10 @@ class ViporderFrontendProvider:
             base_url=settings.khaibao9610_base_url,
             timeout_seconds=settings.khaibao9610_timeout_seconds,
             user_agent=settings.khaibao9610_user_agent,
+            register_path=settings.khaibao9610_register_path,
+            warehouse_import_path=settings.khaibao9610_warehouse_import_path,
+            package_sealing_path=settings.khaibao9610_package_sealing_path,
+            max_response_bytes=settings.khaibao9610_max_response_bytes,
             client=client,
         )
 
@@ -140,6 +185,119 @@ class ViporderFrontendProvider:
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+
+    def _get_headers(self) -> dict[str, str]:
+        """Headers for a GET.
+
+        Deliberately no ``Content-Type``: there is no body to describe, and a
+        content type on a bodyless GET is the kind of thing a WAF scores.
+        """
+        return {"User-Agent": self.user_agent, "Accept": "application/json"}
+
+    def _timeout(self) -> httpx.Timeout:
+        """A connect timeout separate from the read timeout.
+
+        With one number for both, a host that accepts the TCP connection and then
+        never answers and a host that never answers the handshake are
+        indistinguishable — and the connect half is the one worth failing fast on.
+        """
+        return httpx.Timeout(
+            self.timeout_seconds,
+            connect=min(CONNECT_TIMEOUT_CEILING_SECONDS, self.timeout_seconds),
+        )
+
+    def _tracking_get(self, template: str, keyword: str) -> dict | None:
+        """One GET against a ``{keyword}`` path template.
+
+        Returns the raw parsed JSON object, or ``None`` on HTTP 404 — the
+        measured "this code does not exist" answer, which is a *result*, not an
+        error.
+
+        Raises:
+            ProviderUnavailableError: timeout, transport failure, or upstream 429.
+            ProviderResponseError: upstream 5xx, or a body that is not a JSON
+                object.
+
+        NO RETRIES, on purpose. The upstream is a third party, and a retried GET
+        is only safe if the request is idempotent *and* that is proven. The
+        owner's measurement did not test what these endpoints do on repeat, so no
+        retry is added — a single attempt that fails is reported as a failure.
+        ``httpx.Client`` itself defaults to ``HTTPTransport(retries=0)``, so
+        there is no hidden retry under this either.
+
+        The keyword is percent-encoded with ``safe=""``, which encodes ``/``,
+        ``?``, ``#``, ``&`` and the pipe that real codes contain. Nothing a caller
+        can put in a keyword is therefore able to add a path segment, start a
+        query, or introduce a fragment.
+        """
+        segment = quote(keyword, safe="")
+        url = f"{self.base_url}{template.replace('{keyword}', segment)}"
+        try:
+            with self._client.stream(
+                "GET", url, headers=self._get_headers(), timeout=self._timeout()
+            ) as response:
+                status = response.status_code
+                if status == 404:
+                    return None
+                if status == 429:
+                    raise ProviderUnavailableError(
+                        "The tracking service is rate-limiting this client (HTTP 429)."
+                    )
+                if status >= 400:
+                    # Everything left that is >= 400: the other 4xx (401, 403, 405,
+                    # 400, ...) and every 5xx. The 4xx cases mean our idea of this
+                    # endpoint is wrong — the measurement said the keyword form
+                    # needs no auth, so a 401 here is a contract change, not a
+                    # customer problem — and a 5xx means the upstream is broken.
+                    # Both are "the provider answered unusably", which is the 502.
+                    raise ProviderResponseError(
+                        f"The tracking service answered HTTP {status} for {template}."
+                    )
+                # NOTE: a 3xx reaches here rather than being followed. Redirects
+                # are not enabled on the client (`follow_redirects` defaults to
+                # False), which is deliberate: following them would let the
+                # upstream send this service to a host of its choosing, and the
+                # measured endpoints answer 200 directly. A redirect therefore
+                # falls through to the JSON parse and surfaces as a 502.
+                body = self._read_capped(response)
+        except httpx.TimeoutException as exc:
+            raise ProviderUnavailableError("The tracking service did not respond in time.") from exc
+        except httpx.HTTPError as exc:
+            # Includes connection failures, DNS, TLS, protocol errors.
+            raise ProviderUnavailableError("The tracking service could not be reached.") from exc
+
+        try:
+            payload = json.loads(body)
+        except ValueError as exc:
+            # The content type is deliberately never inspected: tolerance for a
+            # wrong or missing charset header is the point, and the parse result
+            # is the only thing that actually matters.
+            raise ProviderResponseError(
+                "The tracking service returned a body that is not JSON."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ProviderResponseError("The tracking service returned JSON that is not an object.")
+        return payload
+
+    def _read_capped(self, response: httpx.Response) -> bytes:
+        """Read a response body, refusing to exceed :attr:`max_response_bytes`.
+
+        Read in chunks rather than with ``response.read()`` so the cap is applied
+        *while* the body arrives. Buffering first and measuring afterwards would
+        mean the memory is already spent, which defeats the cap entirely.
+        """
+        body = bytearray()
+        for chunk in response.iter_bytes():
+            body.extend(chunk)
+            if len(body) > self.max_response_bytes:
+                raise ProviderResponseError(
+                    f"The tracking service returned more than {self.max_response_bytes} bytes."
+                )
+        return bytes(body)
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
 
     @staticmethod
     def _extract(payload: object) -> tuple[str | None, str | None]:
@@ -168,29 +326,57 @@ class ViporderFrontendProvider:
                 return identifier, code
         return None, None
 
-    def close(self) -> None:
-        if self._owns_client:
-            self._client.close()
+    # -- tracking contract ---------------------------------------------------
+    #
+    # Measured live; see the module docstring and app/tracking.py.
+    #
+    # These return the RAW parsed body and deliberately do NOT unwrap the
+    # envelope. `/warehouse-imports/{keyword}` answers with a bare object and
+    # `/package-sealings/{keyword}` answers with `{"data": {...}}`. Unwrapping
+    # here would mean guessing which shape arrived, and guessing is how the two
+    # get conflated. Normalisation owns that decision, in one place.
+
+    def find_warehouse_import(self, keyword: str) -> dict | None:
+        """Look up one warehouse import by tracking code.
+
+        ``None`` means HTTP 404 — the measured "Mã vận đơn không tồn tại".
+        """
+        return self._tracking_get(self.warehouse_import_path, keyword)
+
+    def find_package_sealing(self, keyword: str) -> dict | None:
+        """Look up one package sealing by sealing code.
+
+        ``None`` means HTTP 404. On success the caller gets the FULL envelope,
+        ``{"data": {...}}``, not the inner object.
+        """
+        return self._tracking_get(self.package_sealing_path, keyword)
 
     # -- provider contract ---------------------------------------------------
 
     def register(self, request: RegistrationRequest) -> RegistrationResult:
-        # NOTE: never log `payload` — it contains the plaintext password.
+        # NOTE: never log `payload` — it contains the plaintext password and its
+        # confirmation.
+        #
+        # `confirmPassword` and `acceptTerms` are the customer's own values, not
+        # values manufactured here. The adapter used to send
+        # `confirmPassword = password` and a hard-coded `acceptTerms = True`,
+        # which meant a genuine mismatch could never be detected anywhere in the
+        # stack and the customer's agreement was asserted on their behalf.
         payload = {
             "name": request.full_name,
             "phone": request.phone,
             "email": request.email,
             "password": request.password,
-            "confirmPassword": request.password,
-            "acceptTerms": True,
+            "confirmPassword": request.confirm_password,
+            "acceptTerms": request.accept_terms,
         }
 
         try:
             response = self._client.post(
-                f"{self.base_url}/register",
+                f"{self.base_url}{self.register_path}",
                 json=payload,
                 headers=self._headers(),
-                timeout=self.timeout_seconds,
+                timeout=self._timeout(),
             )
         except httpx.TimeoutException as exc:
             logger.warning(

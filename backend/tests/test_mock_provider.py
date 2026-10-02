@@ -20,6 +20,8 @@ REQUEST = RegistrationRequest(
     full_name="Nguyễn Văn A",
     phone="+84912345678",
     password="secret-at-least-8",
+    confirm_password="secret-at-least-8",
+    accept_terms=True,
     email="a@example.com",
 )
 
@@ -29,6 +31,8 @@ def _request_with_phone(phone: str) -> RegistrationRequest:
         full_name="Nguyễn Văn A",
         phone=phone,
         password="secret-at-least-8",
+        confirm_password="secret-at-least-8",
+        accept_terms=True,
     )
 
 
@@ -112,7 +116,29 @@ def test_documented_suffix_table_matches_the_code() -> None:
 
 def test_missing_password_is_rejected() -> None:
     with pytest.raises(ValueError):
-        RegistrationRequest(full_name="A", phone="+84912345678", password="")
+        RegistrationRequest(
+            full_name="A",
+            phone="+84912345678",
+            password="",
+            confirm_password="",
+            accept_terms=True,
+        )
+
+
+def test_a_mismatched_confirmation_is_rejected_at_the_request() -> None:
+    """Belt and braces behind the schema's 422.
+
+    The request object refuses to exist with two different passwords, so a
+    hand-built call cannot reach the upstream with a pair it will reject.
+    """
+    with pytest.raises(ValueError, match="confirm_password"):
+        RegistrationRequest(
+            full_name="A",
+            phone="+84912345678",
+            password="secret-at-least-8",
+            confirm_password="something-else-9",
+            accept_terms=True,
+        )
 
 
 def test_request_repr_hides_the_password() -> None:
@@ -126,6 +152,7 @@ def test_redact_request_never_includes_the_password() -> None:
     redacted = redact_request(REQUEST)
     assert "secret-at-least-8" not in str(redacted)
     assert redacted["password"] == "<redacted>"
+    assert redacted["confirm_password"] == "<redacted>"
 
 
 def test_unavailable_behaviours_carry_a_distinct_error_code() -> None:
