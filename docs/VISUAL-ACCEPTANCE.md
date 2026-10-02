@@ -23,7 +23,7 @@
 
 ```
 AUTOMATED VISUAL CHECKS: PASS
-HUMAN VISUAL APPROVAL: REQUIRED
+HUMAN VISUAL APPROVAL: **APPROVED** — owner, 2026-10-02
 ```
 
 This document is written for the owner, not for an engineer. No prior knowledge of
@@ -227,6 +227,14 @@ it clears AA by about 10%.
 
 ## 5. Items requiring human visual approval
 
+> **APPROVED — owner, 2026-10-02.** The owner reviewed the eleven screenshots in
+> `docs/visual-acceptance/` and approved them. Recorded here because this section
+> said REQUIRED until it was given, and a pending flag left standing after the
+> thing happens is its own kind of false claim.
+>
+> The list below is kept as the record of **what was put in front of a human**, so
+> a later reader can see the scope of the approval instead of inferring it.
+
 **This is a list of things no automated check in this repository can decide.** Each
 one needs a person to open the PNGs and judge. None of them has been judged.
 
@@ -277,7 +285,17 @@ one needs a person to open the PNGs and judge. None of them has been judged.
 
 Stated plainly so nothing here is mistaken for a clean bill of health:
 
-* **Nobody has looked at the images.** This is the headline and it does not weaken.
+* ~~**Nobody has looked at the images.**~~ **Closed 2026-10-02: the owner reviewed and approved the screenshots.**
+  The bullet is kept rather than deleted, because it was the true and
+  load-bearing statement for as long as it stood — it is what stopped this
+  document claiming a visual pass it had not earned, and it is why the images
+  were generated at all.
+  **What the approval covers, and what it does not:** the owner approved the
+  rendered pages as they appear in these captures. The other limitations in
+  this section — the homepage-only accessibility audit, the single audited
+  viewport, no breakpoint sweep, no screen-reader run, and captures of a
+  staging CANDIDATE rather than a deployed host — were **not** re-verified
+  item by item, and **none of them is discharged by this approval.**
 * The accessibility suite audits the **homepage only**. `404.html` and every
   interaction-gated state (FOUND, NOT_FOUND, success, error, pending) were **not**
   contrast- or type-audited.
