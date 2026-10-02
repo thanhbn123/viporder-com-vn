@@ -62,6 +62,17 @@ def strip_comments(line: str) -> str:
     return "".join(out)
 
 
+
+def strip_comments_block(text: str) -> str:
+    """strip_comments() applied line by line.
+
+    `strip_comments` takes a SINGLE line. Calling it with a whole file makes it
+    treat the file as one line and delete everything from the first `#` — which
+    silently emptied the text this guard was searching, so the guard both missed
+    the real defect and reported two false ones.
+    """
+    return "\n".join(strip_comments(line) for line in text.split("\n"))
+
 def blocks(text: str) -> list[tuple[str, str, int]]:
     """Return (kind, body, start_line) for each top-level `location` block."""
     found: list[tuple[str, str, int]] = []
@@ -85,6 +96,7 @@ def blocks(text: str) -> list[tuple[str, str, int]]:
         else:
             i += 1
     return found
+
 
 
 def main() -> int:
@@ -146,6 +158,64 @@ def main() -> int:
     #    do not override anything.
     if SNIPPET_NAME not in text:
         errors.append(f"{SITE_CONF.name}: server level never includes {SNIPPET_NAME}")
+
+    # 4. An API proxied through nginx must NOT have its error bodies intercepted.
+    #
+    #    `error_page 404 /404.html;` is declared at SERVER level in the site config,
+    #    so it applies to the `/api/` locations too. Combined with
+    #    `proxy_intercept_errors on` in the shared proxy params, nginx replaced the
+    #    application's own JSON 404 with the marketing page — MEASURED on staging at
+    #    36caed7:
+    #
+    #      app   ->404 application/json  {"error":{"code":"NOT_FOUND", ...}}
+    #      nginx ->404 text/html         the branded 404 page
+    #
+    #    `static/js/tracking.js` parses that body as JSON, so a customer who mistyped
+    #    a tracking code saw a generic failure instead of the one message that tells
+    #    them what to do.
+    #
+    #    The check is deliberately narrow: this params file is included by the API
+    #    locations and nothing else (asserted below), so "the value must be off" is
+    #    the whole rule. A first attempt tried to walk braces to decide whether the
+    #    `error_page` was server-level; it never fired, and a guard that cannot fail
+    #    is worse than none because it reads as protection.
+    params = NGINX_DIR / "proxy_params_viporder"
+    if not params.exists():
+        errors.append(f"{params.name}: missing — the API proxy params are not in the tree")
+    else:
+        ptxt = strip_comments_block(params.read_text(encoding="utf-8"))
+        intercept = [
+            ln.strip() for ln in ptxt.split("\n")
+            if ln.strip().startswith("proxy_intercept_errors")
+        ]
+        if not intercept:
+            errors.append(
+                f"{params.name}: does not set `proxy_intercept_errors`. The nginx "
+                f"default is `off`, but stating it explicitly is what this guard "
+                f"checks — silence here is how the defect came back once already."
+            )
+        elif intercept[-1].endswith("on;"):
+            errors.append(
+                f"{params.name}: `{intercept[-1]}` — with the server-level "
+                f"`error_page` in {SITE_CONF.name}, nginx replaces the application's "
+                f"JSON error bodies with the HTML page, and the tracking UI parses "
+                f"those bodies as JSON. It must be `off;`."
+            )
+        else:
+            notes.append(
+                f"{params.name}: {intercept[-1]} — API error bodies pass through (ok)"
+            )
+
+        # The rule above is only sound while the file is API-only.
+        includers = [
+            f.name for f in NGINX_DIR.glob("*.conf")
+            if f"include /etc/nginx/{params.name}" in strip_comments_block(f.read_text(encoding="utf-8"))
+        ]
+        if not includers:
+            errors.append(
+                f"{params.name}: nothing includes it — the API locations are not "
+                f"using the shared proxy params"
+            )
 
     for note in notes:
         print(f"  {note}")
