@@ -194,13 +194,6 @@
    * It is written as an exact match on the ONE string this backend emits, not as a
    * language detector: clever heuristics that fail OPEN are how a filter becomes
    * decoration, whereas this one either matches the measurement or does nothing. */
-  var GENERIC_ROUTE_MISSING_MESSAGE = "not found.";
-
-  function isGenericRouteMissing(body) {
-    var message = errorMessageOf(body);
-    return typeof message === "string" &&
-      message.trim().toLowerCase() === GENERIC_ROUTE_MISSING_MESSAGE;
-  }
 
   /* The response's `search_type` wins when it names one of the two known modes:
    * the server is the authority on what it found, and the two endpoints agree by
@@ -222,10 +215,13 @@
    *   2. A 404 or 400 whose body is NOT this contract's error envelope (an nginx
    *      error page, a proxy that answered instead of the application) is a
    *      PROVIDER_ERROR.
-   *   3. A 404 that carries the backend's GENERIC "Not found." body is ALSO a
-   *      PROVIDER_ERROR, because an unimplemented route answers exactly that and
-   *      the client cannot tell it from a genuine tracking NOT_FOUND. See
-   *      `isGenericRouteMissing` for the measurement and the reasoning.
+   *   3. A 404 whose code is NOT_FOUND is a not-found. An earlier revision also
+   *      treated the backend's generic `"Not found."` body as a provider error,
+   *      because while the tracking router was unmerged an unimplemented route
+   *      answered exactly that and the client could not tell it from a genuine
+   *      NOT_FOUND. Verified by measurement after the merge: the route answers
+   *      404/400/503 with its own Vietnamese messages and never that string, so
+   *      the guard was deleted rather than left as decoration.
    *
    * The server's own `error.message` is deliberately NOT carried out of here: the
    * client cannot tell a curated Vietnamese sentence from a relayed provider
@@ -251,9 +247,6 @@
     }
 
     if (status === 404 && code === "NOT_FOUND") {
-      if (isGenericRouteMissing(body)) {
-        return { state: STATE.PROVIDER_ERROR, mode: mode, code: "ROUTE_NOT_IMPLEMENTED", data: null };
-      }
       return { state: STATE.NOT_FOUND, mode: mode, code: code, data: null };
     }
 
@@ -509,7 +502,6 @@
     keywordPath: keywordPath,
     errorCodeOf: errorCodeOf,
     errorMessageOf: errorMessageOf,
-    isGenericRouteMissing: isGenericRouteMissing,
     resolveMode: resolveMode,
     interpret: interpret,
     resultForState: resultForState,

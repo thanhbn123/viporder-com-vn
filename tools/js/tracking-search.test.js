@@ -242,59 +242,6 @@ test("a 404 that is NOT the contract envelope is a provider error", () => {
   }
 });
 
-test("the backend's GENERIC 404 is a provider error, not a not-found", () => {
-  /* MEASURED against the real service on this branch:
-   *
-   *   $ curl -s .../api/tracking/warehouse-imports/KIEMTRA0001
-   *   {"error":{"code":"NOT_FOUND","message":"Not found."}}
-   *
-   * That is what an UNIMPLEMENTED route answers, and it is shape-identical to a
-   * genuine tracking NOT_FOUND. Without this rule, every lookup made before the
-   * tracking router merges tells the customer their parcel does not exist.
-   *
-   * The contract says the message is Vietnamese, so the English generic is a
-   * violation of it, and the safe reading of a violation is "we do not know". */
-  const measured = { error: { code: "NOT_FOUND", message: "Not found." } };
-  const outcome = t.interpret("warehouse_import", 404, measured);
-  assert.equal(outcome.state, t.STATE.PROVIDER_ERROR);
-  assert.equal(outcome.code, "ROUTE_NOT_IMPLEMENTED");
-  assert.equal(t.isGenericRouteMissing(measured), true);
-
-  /* A contract-shaped Vietnamese message is the real thing and still means
-   * not-found. */
-  const genuine = { error: { code: "NOT_FOUND", message: "Không tìm thấy mã vận đơn này." } };
-  assert.equal(t.interpret("warehouse_import", 404, genuine).state, t.STATE.NOT_FOUND);
-  assert.equal(t.isGenericRouteMissing(genuine), false);
-});
-
-test("the route-missing guard matches only the ONE measured string", () => {
-  /* Trimming and case folding are the only tolerance: an HTTP header-style
-   * variation must not slip past, and the guard must NOT become a language
-   * detector that swallows real Vietnamese messages. */
-  for (const message of ["Not found.", "not found.", "NOT FOUND.", "  Not found.  "]) {
-    assert.equal(
-      t.isGenericRouteMissing({ error: { code: "NOT_FOUND", message } }),
-      true,
-      JSON.stringify(message),
-    );
-  }
-  for (const message of [
-    "Not found",
-    "not found in warehouse",
-    "Không tìm thấy mã vận đơn này.",
-    "Khong tim thay ma van don.",
-    "",
-    null,
-    undefined,
-    42,
-  ]) {
-    assert.equal(
-      t.isGenericRouteMissing({ error: { code: "NOT_FOUND", message } }),
-      false,
-      JSON.stringify(message),
-    );
-  }
-});
 
 test("a contract 400 means INVALID", () => {
   const outcome = t.interpret("warehouse_import", 400, {

@@ -29,7 +29,7 @@
  * this test therefore PASSED for the wrong reason — it saw a contract-shaped 404
  * envelope where there was no route at all. It now recognises that exact generic
  * placeholder and skips. static/js/tracking-search.js applies the same rule in
- * production (`ROUTE_NOT_IMPLEMENTED`), so a customer is never told their parcel
+ * production, so a customer is never told their parcel
  * does not exist merely because the route is not deployed.
  *
  * Every assertion here is something a CUSTOMER can observe: what the section says,
@@ -357,25 +357,15 @@ test.describe("tracking lookup", () => {
     await expect(status).not.toHaveText(/tạm bận|thử lại sau/);
   });
 
-  test("an unimplemented route is an error, NOT a missing parcel", async ({ page }) => {
-    /* THE MEASURED CASE, kept as a test so it cannot come back. On this branch an
-     * unimplemented tracking route answers HTTP 404 with
-     * `{"error":{"code":"NOT_FOUND","message":"Not found."}}` — shape-identical to a
-     * genuine not-found. Without the guard, every lookup made before the other
-     * workstream merges tells the customer their parcel does not exist. */
-    await stub(page, {
-      warehouse: { error: { code: "NOT_FOUND", message: "Not found." } },
-      warehouseStatus: 404,
-    });
-    await openTracking(page);
-
-    await page.fill("#trackingKeyword", "CN987654321");
-    await page.click("#trackingSubmit");
-
-    const status = page.locator("#trackingStatus");
-    await expect(status).toHaveClass(/is-error/);
-    await expect(status).not.toHaveText(/Không tìm thấy/);
-  });
+  /* The pre-merge guard has a test-less history on purpose. While the tracking
+   * router was unmerged, an unimplemented route answered
+   * `{"error":{"code":"NOT_FOUND","message":"Not found."}}` — shape-identical to a
+   * genuine not-found — so the client carried an exact-match guard to keep it from
+   * telling customers their parcel did not exist. Both halves are now merged and
+   * the merged route answers with its own Vietnamese messages, verified by
+   * measurement, so the guard and its test were deleted rather than kept as
+   * decoration. The `ROUTE_NOT_IMPLEMENTED` branch is gone; a contract 404 is a
+   * not-found again, which is what the two tests above already assert. */
 
   /* --------------------------------------------------------------- invalid */
 

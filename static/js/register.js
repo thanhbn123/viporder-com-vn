@@ -20,7 +20,7 @@
  *    not something a response body gets to change.
  * 4. NO innerHTML. Every server-provided string is written with textContent.
  * 5. NO CREDENTIAL IS EVER LOGGED OR PERSISTED (G04B). `password` and
- *    `confirmPassword` exist in the request body and in the two inputs, and
+ *    `confirm_password` exist in the request body and the two inputs, and
  *    nowhere else — not in storage, not in an event, not in a debug line. Both
  *    inputs are cleared once the registration completes.
  *
@@ -126,12 +126,15 @@
     return form.querySelector('[name="' + name + '"]');
   }
 
-  /* Server field errors are keyed by the API's own field names, which are not
-   * always the form's names. `consent` is the one that differs: the request sends
-   * both `acceptTerms` and the legacy `consent`, so the API can still answer with
-   * a 422 on `consent` — and without this map that message would be attached to no
-   * field at all and the customer would see only the generic summary. */
-  var FIELD_ALIASES = { consent: "acceptTerms" };
+  /* Server field name -> the DOM field it belongs to, so a 422 lands on the
+   * right control. `consent` is the API's older name for the same checkbox;
+   * the other two exist because the API is snake_case while the form's `name`
+   * attributes are not. */
+  var FIELD_ALIASES = {
+    consent: "acceptTerms",
+    accept_terms: "acceptTerms",
+    confirm_password: "confirmPassword"
+  };
 
   function domFieldName(name) {
     return own(FIELD_ALIASES, name) ? FIELD_ALIASES[name] : name;
@@ -642,8 +645,8 @@
        *
        * The password and its confirmation are in the request body on purpose and
        * nowhere else: not in storage, not in an event, not in a log. */
-      confirmPassword: values.confirmPassword,
-      acceptTerms: values.acceptTerms,
+      confirm_password: values.confirmPassword,
+      accept_terms: values.acceptTerms,
       consent: values.acceptTerms,
       province: values.province,
       attribution: apiAttribution()
