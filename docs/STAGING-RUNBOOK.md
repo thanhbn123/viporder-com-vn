@@ -851,6 +851,102 @@ separate PR. Nothing in this repository is a browser test today.
 
 ---
 
+## 11.1 Tracking lookups (warehouse import and package sealing)
+
+The two public search functions fan out to the legacy provider. They are separate
+from the registration path and are worth checking on their own, because a working
+registration says nothing about whether `KHAIBAO9610_BASE_URL` is correct for the
+READ endpoints.
+
+Both routes are behind the same double opt-in as registration
+(`KHAIBAO9610_MODE=http` **and** `KHAIBAO9610_ENABLE_REAL_CALLS=yes`). **With the
+default mock configuration they answer `503 PROVIDER_UNAVAILABLE`** — and that is
+the correct, honest response, not a fault. Check which one you are looking at:
+
+```bash
+# Is live mode even on? Read it from the running service, not from the file.
+sudo systemctl show viporder-web -p Environment | tr ' ' '\n' | grep -E 'KHAIBAO9610_(MODE|ENABLE_REAL_CALLS)'
+```
+
+```bash
+# Warehouse import. NOTE: the keyword must be the FULL tracking code.
+# Measured 2026-10-02: KY4001103376087 -> 404, but
+# KY4001103376087-2-4-|s -> 200. The pipe MUST be percent-encoded.
+curl -sS -o /tmp/wh.json -w 'warehouse HTTP %{http_code}\n' \
+  "https://$STAGING_HOST/api/tracking/warehouse-imports/KY4001103376087-2-4-%7Cs"
+python3 -m json.tool /tmp/wh.json | head -20
+```
+
+```bash
+# Package sealing.
+curl -sS -o /tmp/seal.json -w 'sealing  HTTP %{http_code}\n' \
+  "https://$STAGING_HOST/api/tracking/package-sealings/A1918106"
+python3 -m json.tool /tmp/seal.json | head -20
+```
+
+```bash
+# A keyword that must NOT be accepted: rejected locally, no provider call.
+curl -sS -o /dev/null -w 'hostile  HTTP %{http_code} (must be 400)\n' \
+  "https://$STAGING_HOST/api/tracking/warehouse-imports/%3Cscript%3E"
+```
+
+**Expected:** `200` with `{"result":"found",...}` when live; `400` for the hostile
+keyword **always**, because that check runs before any network call; `503` with a
+Vietnamese message when live mode is off.
+
+**What to record:** the status AND the body's key names. The two upstream envelopes
+**differ** — `warehouse-imports` is a bare object, `package-sealings` is wrapped in
+`{"data": {...}}` — and a staging check that only looks at status will not notice if
+that has changed.
+
+---
+
+## 11.2 Source exposure checks (run this one out loud)
+
+The deploy publishes an **allow list** (`deploy/published-files.txt`). A previous
+revision published the whole repository minus a few names, and everything added
+later became public: measured against real nginx, `/package.json`,
+`/playwright.config.js`, `/tests/e2e/*.spec.js` and the entire `node_modules/` tree
+were all fetchable.
+
+Run these against staging. **Every one must be 403 or 404. A 200 is a release
+blocker.**
+
+```bash
+for p in /backend/app/config.py /docs/SECURITY.md /.git/config /.env \
+         /docker-compose.yml /requirements.txt /README.md /package.json \
+         /package-lock.json /playwright.config.js /tests/e2e/helpers.js /node_modules; do
+  printf '%-38s %s\n' "$p" "$(curl -sS -o /dev/null -w '%{http_code}' "https://$STAGING_HOST$p")"
+done
+```
+
+And confirm the files that SHOULD be public still are:
+
+```bash
+for p in / /robots.txt /sitemap.xml /static/js/register.js /static/css/style.css; do
+  printf '%-30s %s\n' "$p" "$(curl -sS -o /dev/null -w '%{http_code}' "https://$STAGING_HOST$p")"
+done
+```
+
+Guard the same thing statically before you even deploy:
+
+```bash
+python3 tools/check_deploy_exposure.py
+```
+
+**One more, because it is easy to get wrong:** confirm the deployed site actually
+has its CSS and JavaScript. `rsync --files-from` **cancels** the `-r` implied by
+`-a`; without an explicit `-r` the directories are created and their contents are
+not copied, producing a site that returns `200` for `/` and `404` for every asset
+it needs.
+
+```bash
+curl -sS -o /dev/null -w 'style.css HTTP %{http_code}\n' "https://$STAGING_HOST/static/css/style.css"
+curl -sS -o /dev/null -w 'register.js HTTP %{http_code}\n' "https://$STAGING_HOST/static/js/register.js"
+```
+
+---
+
 ## 12. Rollback
 
 ### 12.1 Read the rollback target first
