@@ -170,9 +170,11 @@ def harness(make_harness) -> Iterator[Harness]:
 def client(harness: Harness) -> TestClient:
     return harness.client
 
+
 # ---------------------------------------------------------------------------
 # G14 — which database did this run ACTUALLY use?
 # ---------------------------------------------------------------------------
+
 
 def pytest_report_header(config: pytest.Config) -> list[str]:
     """Print the engine every run, so no result is ambiguous about its backend.
