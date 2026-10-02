@@ -1,0 +1,29 @@
+# What this project PUBLISHES to the web root.
+#
+# The deploy step copies exactly this list and nothing else:
+#
+#   rsync -a --delete --files-from="$SRC/deploy/published-files.txt" "$SRC/" "$SITE/"
+#
+# WHY A LIST AND NOT AN EXCLUDE LIST. The deploy used to copy the whole tree and
+# then subtract `backend`, `deploy`, `tools`, `docs`, `var` and `.git`. That is a
+# deny list, and deny lists rot in the dangerous direction: every new file at the
+# repository root is published BY DEFAULT. When the browser workstream added
+# `package.json`, `playwright.config.js`, `tests/` and `node_modules/`, all of them
+# silently became fetchable over HTTPS — measured, not theorised: 200 for
+# `/package.json`, `/playwright.config.js` and `/tests/e2e/registration.spec.js`.
+#
+# `node_modules/` alone is thousands of files, several of which ship their own
+# README and package metadata, and `package-lock.json` hands an attacker the exact
+# dependency tree to look up CVEs against.
+#
+# Nothing secret leaked — `backend/`, `deploy/`, `docs/` and `tools/` were already
+# excluded, and the dotfile rule denies `/.env` and `/.git`. But publishing the
+# test suite and a 200 MB dependency tree from a marketing domain is not a
+# defensible default, and "we remembered to exclude it" is not a control.
+#
+# Adding a file to the site is now a deliberate edit here.
+index.html
+404.html
+robots.txt
+sitemap.xml
+static

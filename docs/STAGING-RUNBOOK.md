@@ -199,9 +199,9 @@ source (`docs/DEPLOYMENT.md:106-109`):
 
 ```bash
 sudo rsync -a --delete "$SRC/backend/" "$APP/"
-sudo rsync -a --delete \
-  --exclude '.git' --exclude 'backend' --exclude 'deploy' \
-  --exclude 'tools' --exclude 'docs' --exclude 'var' \
+# Publish ONLY what the site is, by name. `-r` is required: --files-from cancels
+# the -r implied by -a, so without it you would deploy a site with no CSS or JS.
+sudo rsync -a -r --delete --files-from="$SRC/deploy/published-files.txt" \
   "$SRC/" "$SITE/"
 sudo chown -R viporder:viporder "$APP" "$SITE"
 ```
@@ -872,9 +872,9 @@ git -C "$SRC" status --porcelain                # must print nothing
 
 sudo "$VENV/bin/pip" install -r "$SRC/backend/requirements.txt"
 sudo rsync -a --delete "$SRC/backend/" "$APP/"
-sudo rsync -a --delete \
-  --exclude '.git' --exclude 'backend' --exclude 'deploy' \
-  --exclude 'tools' --exclude 'docs' --exclude 'var' \
+# Publish ONLY what the site is, by name. `-r` is required: --files-from cancels
+# the -r implied by -a, so without it you would deploy a site with no CSS or JS.
+sudo rsync -a -r --delete --files-from="$SRC/deploy/published-files.txt" \
   "$SRC/" "$SITE/"
 sudo chown -R viporder:viporder "$APP" "$SITE"
 
