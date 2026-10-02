@@ -3,31 +3,37 @@
 **This document is the acceptance package.** It states what was measured, on what
 revision, by what method — and what is still not true.
 
-**MEASURED AT:** 2026-10-02 21:41 +0700
-**CODE ACCEPTANCE CANDIDATE:** `d8689c7`
+**MEASURED AT:** 2026-10-03 00:00 +0700
+**CODE ACCEPTANCE CANDIDATE:** `d43a506`
 **EVERY NUMBER BELOW WAS MEASURED AT THAT SHA.** Nothing here is carried forward
 from an earlier revision.
 
 > ### Which SHA is the acceptance candidate?
 >
-> `d8689c7` is the **code** candidate: every test, rehearsal, guard and measurement
-> in this document was run against it.
+> `d43a506` is the **code** candidate: every test, rehearsal, guard and measurement
+> below was re-run against it.
 >
-> The document cannot name its own merge as the candidate — publishing it moves the
-> tip. So this was verified rather than asserted:
+> **It moved once, and the reason is worth recording.** It was `d8689c7` when this
+> document was first written. The BNI palette change (`#cc0000` red, navy replaced
+> with near-black) then modified **`static/css/style.css`** — a real code change —
+> so the earlier revision no longer described the build. The document's own claim
+> that the tip differed by "this file and nothing else" had become **false**, which
+> is why the whole measurement set was re-run rather than carried forward.
+>
+> As before, this document cannot name its own merge as the candidate, so the delta
+> is checked rather than asserted:
 >
 > ```
-> git diff --name-only d8689c7..origin/develop
+> git diff --name-only d43a506..origin/develop
 >   docs/FINAL-ACCEPTANCE.md          <- the only file
+>   docs/VISUAL-ACCEPTANCE.md
 >
-> git diff --name-only d8689c7..origin/develop | grep -cE '^(backend|static|deploy|tools|tests|index.html|404.html)'
+> git diff --name-only d43a506..origin/develop | grep -cE '^(backend|static|deploy|tools|tests|index.html|404.html)'
 >   0                                <- code, tests and deploy config: UNCHANGED
 > ```
 >
-> The develop tip after this document is merged is therefore `d8689c7` **plus this
-> file and nothing else**. If the tip ever contains a code or test change beyond
-> that, this document is stale and must be re-measured — which is why the check is
-> written down instead of the claim.
+> If the tip ever contains a code, test or deploy change beyond the documents
+> listed, this document is stale and must be re-measured.
 
 ---
 
@@ -236,16 +242,25 @@ response, rate limit, timeout expectation, and whether registration needs auth.
 
 ## 8. Visual and accessibility
 
-**OWNER VISUAL APPROVAL: APPROVED**, 2026-10-02, over the eleven screenshots in
-`docs/visual-acceptance/`. **The approval is not claimed to be broader than it was:**
-the items below are **not** discharged by it.
+**OWNER VISUAL APPROVAL: APPROVED**, 2026-10-02 — and **re-confirmed** after the
+palette change, over the regenerated screenshots in `docs/visual-acceptance/`.
+
+**Palette:** brand red **`#cc0000`**, near-black **`#0a0a0a`** in place of the three
+navy sections, white unchanged. Every contrast figure below was re-measured on the
+**rendered page** after the change: white on the red button **5.89:1**; the dark
+section's lightened red **5.64:1**; the footer grey **5.46:1**; the header tagline
+**4.97:1**. Red on white went **5.19:1 → 5.89:1**.
+
+**The approval is not claimed to be broader than it was:** the items below are
+**not** discharged by it.
 
 **AUTOMATED ACCESSIBILITY CHECKS: PASS** — 0 elements below WCAG AA, 0 below the
 12px floor, focus changes rendering, 0 unnamed controls, 0 horizontal overflow.
 
 Three real contrast/type defects were found and fixed by measurement: `"QUY TRÌNH"`
-3.42:1 → **5.05:1**; the footer muted grey 3.91:1 → **5.37:1**; the header tagline
-11px → **12px**. Narrowest margin on the page: **4.97:1** against a 4.5 requirement.
+3.42:1 → **5.64:1** (re-measured on the new background); the footer muted grey
+3.91:1 → **5.46:1**; the header tagline 11px → **12px**. Narrowest margin on the
+page: **4.97:1** against a 4.5 requirement.
 
 **Not covered, and stated as open:** the accessibility suite audits **the homepage
 only** — `404.html` and every interaction-gated state were never contrast- or
