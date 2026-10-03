@@ -7,3 +7,36 @@ __pycache__/
 node_modules/
 .vscode/
 .idea/
+
+# --- Runtime data: lead storage, databases, logs ---------------------------
+# These must never be committed. Customer lead data and runtime state are not
+# source code, and this repository is public.
+var/
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.log
+
+# --- Python tooling --------------------------------------------------------
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+*.egg-info/
+dist/
+build/
+
+# --- Local smoke-test leftovers -------------------------------------------
+tmp/
+.tmp-e2e/
+
+# --- Browser tests (G12A) ---------------------------------------------------
+# Dev-only dependency tree and run artifacts. The page itself has no build
+# step and no runtime dependencies; these exist only to drive a real browser.
+playwright-report/
+test-results/

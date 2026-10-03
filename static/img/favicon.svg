@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="VIPORDER">
+  <!--
+    VIPORDER brand mark (G06).
+    Geometry only — no external font, no external reference, no raster data.
+    Matches the .brand-mark token in static/css/style.css (--primary #d71920,
+    white glyph, rounded square).
+  -->
+  <rect width="64" height="64" rx="14" fill="#d71920"/>
+  <path d="M16.5 19.5 L32 45.5 L47.5 19.5"
+        fill="none"
+        stroke="#ffffff"
+        stroke-width="8.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+</svg>

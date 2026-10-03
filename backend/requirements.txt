@@ -1,0 +1,16 @@
+# Runtime dependencies for the VIPORDER.COM.VN backend.
+# Pinned to the versions this gate was actually tested against.
+#
+# Deliberately absent: any KHAIBAO9610 SDK. The upstream registration contract
+# has not been supplied, so nothing here pre-commits us to it.
+
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+SQLAlchemy==2.1.1
+alembic==1.20.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+email-validator==2.3.0
+httpx==0.28.1
+# Production database driver (postgresql+psycopg://...). SQLite needs nothing.
+psycopg[binary]==3.3.6
