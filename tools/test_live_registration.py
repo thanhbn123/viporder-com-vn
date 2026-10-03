@@ -56,6 +56,29 @@ sys.path.insert(0, str(ROOT / "backend"))
 ENABLE_FLAG = "ENABLE_LIVE_REGISTRATION_TEST"
 DEFAULT_BASE = "https://apiviporder.com/frontend/v1"
 
+#: Field names the provider's contract requires, in order. Pinned so a rename
+#: here cannot silently change the wire format.
+PROVIDER_FIELDS = ("name", "phone", "email", "password", "confirmPassword", "acceptTerms")
+
+
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Raise on any 30x instead of following it.
+
+    WHY THIS EXISTS. `urllib` follows redirects by DEFAULT. The owner authorized
+    EXACTLY ONE POST; a 301/302/303/307 would have produced a SECOND request, to a
+    location the provider chose rather than one we did. A redirect is therefore
+    reported as an unexpected response and never chased.
+
+    Verified by a test that counts requests at the transport, not by reading this
+    comment.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        raise urllib.error.HTTPError(
+            req.full_url, code, f"refusing to follow a redirect to {newurl}", headers, fp
+        )
+
+
 REQUIRED_ENV = {
     "LIVE_REG_NAME": "name",
     "LIVE_REG_PHONE": "phone",
@@ -107,14 +130,49 @@ def main() -> int:
         return _fail([f"the base URL points at the MARKETING domain ({host}), not the provider"])
 
     password = os.environ["LIVE_REG_PASSWORD"]
+    name = os.environ["LIVE_REG_NAME"]
+    phone = os.environ["LIVE_REG_PHONE"]
+    email = os.environ["LIVE_REG_EMAIL"]
+
+    # VERIFY IN MEMORY BEFORE TRANSMITTING. Nothing is sent until every one of
+    # these holds. No password value is ever printed — only whether it matches.
+    expected_phone = os.environ.get("LIVE_REG_EXPECT_PHONE", "").strip()
+    expected_email = os.environ.get("LIVE_REG_EXPECT_EMAIL", "").strip()
+    problems: list[str] = []
+    if not password:
+        problems.append("the password is empty")
+    if len(password) < 16:
+        problems.append(f"the password is shorter than 16 characters (got {len(password)})")
+    if expected_phone and phone != expected_phone:
+        problems.append(f"phone is {phone!r}, expected {expected_phone!r}")
+    if expected_email and email != expected_email:
+        problems.append(f"email is {email!r}, expected {expected_email!r}")
+    if name != name.strip() or not name:
+        problems.append("name is empty or padded")
+
+    # `confirmPassword` is built from `password`, so equality is by construction —
+    # asserted anyway, because construction is not verification, and a later change
+    # that lets the two diverge must fail here rather than at the provider.
+    confirm_password = password
+    if confirm_password != password:
+        problems.append("confirmPassword does not equal password")
+    accept_terms = True
+    if accept_terms is not True:
+        problems.append("acceptTerms is not exactly True")
+
+    if problems:
+        return _fail([f"pre-send check: {p}" for p in problems])
+
     body = {
-        "name": os.environ["LIVE_REG_NAME"],
-        "phone": os.environ["LIVE_REG_PHONE"],
-        "email": os.environ["LIVE_REG_EMAIL"],
+        "name": name,
+        "phone": phone,
+        "email": email,
         "password": password,
-        "confirmPassword": password,
-        "acceptTerms": True,
+        "confirmPassword": confirm_password,
+        "acceptTerms": accept_terms,
     }
+    # Exactly the provider's field names, in the provider's order, and nothing else.
+    assert tuple(body) == PROVIDER_FIELDS, f"unexpected wire fields: {tuple(body)}"
 
     url = f"{base}/register"
     print("LIVE REGISTRATION — ONE POST, NO RETRY")
@@ -139,9 +197,22 @@ def main() -> int:
 
     started = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+        opener = urllib.request.build_opener(_RefuseRedirects())
+        with opener.open(req, timeout=30) as resp:  # noqa: S310
             status, ctype, raw = resp.status, resp.headers.get("Content-Type", ""), resp.read()
     except urllib.error.HTTPError as exc:
+        # A 30x lands here because `_RefuseRedirects` raised rather than followed it.
+        # Say so plainly: an operator must understand this is a RESULT, and that
+        # chasing it would spend a second POST the owner did not authorize.
+        if 300 <= exc.code < 400:
+            print(f"  REDIRECT REFUSED: the provider answered {exc.code}.")
+            print(f"    Location: {exc.headers.get('Location', '(none)')}")
+            print()
+            print("  The tool did NOT follow it. Following a redirect would be a SECOND")
+            print("  HTTP request, and the authorization covers exactly one POST.")
+            print("  Treat this as a consumed attempt and report it — do not retry.")
+            print("  The budget is spent: one POST was transmitted and answered 30x.")
+            return 1
         status, ctype, raw = exc.code, exc.headers.get("Content-Type", ""), exc.read()
     except urllib.error.URLError as exc:
         print(f"  TRANSPORT FAILURE after {time.monotonic() - started:.2f}s: {exc.reason}")
