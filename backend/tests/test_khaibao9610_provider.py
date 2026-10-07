@@ -234,12 +234,33 @@ def test_timeout_maps_to_unavailable_and_retryable() -> None:
     assert result.http_status is None
 
 
-def test_unparseable_success_body_is_still_success() -> None:
+def test_an_unparseable_2xx_body_is_NOT_reported_as_success() -> None:
+    """CHANGED 2026-10-07, on measured evidence, from the opposite assertion.
+
+    This test used to require `SUCCESS` for a 2xx whose body identified nobody. That
+    was defensible while the live contract was unknown: a provider might accept a
+    registration and return nothing useful on purpose.
+
+    The owner-authorized one-shot live POST settled it the other way. The provider
+    answered 2xx and `_extract` found **no customer id and no customer code
+    anywhere**, so the customer was told "Đăng ký thành công" and handed **no code** —
+    the one thing registering is for. Nothing anywhere was loud about it.
+
+    A body that identifies nobody is therefore its own condition, `UNUSABLE_RESPONSE`,
+    and **not retryable**: the request may well have created an account, so an
+    automatic retry could double-register somebody.
+
+    The old assertion is kept in words above rather than deleted, because the reason
+    it changed is the useful part.
+    """
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(201, text="<html>thanks</html>")
 
     result = build(handler).register(REQUEST)
-    assert result.status is ProviderStatus.SUCCESS
+    assert result.status is ProviderStatus.UNUSABLE_RESPONSE
+    assert result.error_code == "UNUSABLE_RESPONSE"
+    assert result.retryable is False
+    assert result.http_status == 201, "the upstream status is evidence and must survive"
     assert result.external_customer_code is None
 
 
