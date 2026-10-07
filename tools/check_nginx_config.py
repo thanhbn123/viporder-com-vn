@@ -217,6 +217,79 @@ def main() -> int:
                 f"using the shared proxy params"
             )
 
+        # -- 5. ONE SOURCE PER SECURITY HEADER ON THE PROXY PATH -------------
+        #
+        # nginx `add_header` ADDS to a proxied response, and the application sets
+        # its own copies of these headers, so the two tiers STACK. MEASURED on
+        # /api/v1/health with `curl -D-` before this check existed:
+        #
+        #   x-content-type-options x2 · x-frame-options x2 · referrer-policy x2
+        #   permissions-policy x2 · content-security-policy x2 (two DIFFERENT
+        #   policies) · strict-transport-security x2
+        #
+        # Duplicate CSP is the worst of them, because browsers intersect policies:
+        # the effective /api/* policy was the intersection of the application's
+        # strict one and nginx's marketing one, i.e. a policy nobody chose.
+        #
+        # The rule: every security header the snippet defines must be HIDDEN from
+        # the upstream on the proxy path, so the snippet is the single source. And
+        # the hide list must not name anything the snippet does not define —
+        # hiding a header with no other source DELETES it.
+        snippet_headers = {
+            h.lower()
+            for h in re.findall(
+                r"^\s*add_header\s+([A-Za-z-]+)",
+                strip_comments_block(snippet.read_text(encoding="utf-8")),
+                re.MULTILINE,
+            )
+        }
+        hidden = {
+            h.lower()
+            for h in re.findall(r"^\s*proxy_hide_header\s+([A-Za-z-]+)", ptxt, re.MULTILINE)
+        }
+        stacked = sorted(snippet_headers - hidden)
+        if stacked:
+            errors.append(
+                f"{params.name}: {', '.join(stacked)} — the application sends its own "
+                f"copy and nginx `add_header` ADDS, so /api/* returns TWO of each. "
+                f"Add `proxy_hide_header` for every one of them."
+            )
+        else:
+            notes.append(
+                f"{params.name}: hides all {len(snippet_headers)} header(s) the snippet "
+                f"defines — one source per header on the proxy path (ok)"
+            )
+        over_hidden = sorted(hidden - snippet_headers)
+        if over_hidden:
+            errors.append(
+                f"{params.name}: proxy_hide_header {', '.join(over_hidden)} — the security "
+                f"snippet does not define this, so hiding it removes the ONLY source of "
+                f"the header rather than de-duplicating it"
+            )
+
+        # -- 6. every proxying location actually uses these params ------------
+        #     `proxy_hide_header` and `proxy_intercept_errors` only apply where
+        #     this file is included, so a new /api location without the include
+        #     silently reintroduces both defects.
+        proxying = [
+            (kind, line) for kind, body, line in locs if "proxy_pass" in body.lower()
+        ]
+        if not proxying:
+            errors.append(
+                f"{SITE_CONF.name}: no location proxies — parser broken, or the API "
+                f"locations were removed"
+            )
+        for kind, line in proxying:
+            body = next(b for k, b, ln in locs if ln == line and k == kind)
+            if f"include /etc/nginx/{params.name}" not in body:
+                errors.append(
+                    f"{SITE_CONF.name}:{line}: {kind} proxies but does NOT include "
+                    f"{params.name} — duplicate security headers and intercepted error "
+                    f"bodies both come back for this location"
+                )
+            else:
+                notes.append(f"line {line}: {kind} — proxies and includes {params.name} (ok)")
+
     for note in notes:
         print(f"  {note}")
     for err in errors:

@@ -34,3 +34,43 @@ proxy_read_timeout    30s;
 # controlled, sanitised JSON and never a stack trace (tests/ covers this).
 proxy_intercept_errors off;
 proxy_buffering on;
+
+# ---------------------------------------------------------------------------
+# ONE SOURCE PER SECURITY HEADER ON THE PROXY PATH
+# ---------------------------------------------------------------------------
+# The APPLICATION sends its own copies of every security header
+# (backend/app/middleware.py, SecurityHeadersMiddleware). nginx `add_header`
+# ADDS to a proxied response rather than replacing it, so the two tiers STACK on
+# every /api/* response.
+#
+# MEASURED on /api/v1/health before this file hid anything, `curl -D-`:
+#
+#   x-content-type-options   x2
+#   x-frame-options          x2
+#   referrer-policy          x2
+#   permissions-policy       x2
+#   content-security-policy  x2   <- and they were DIFFERENT policies
+#   strict-transport-security x2  <- already hidden, in the site config
+#
+# The duplicate HSTS was fixed first and the other five were missed, because the
+# report said "HSTS" and the check looked for HSTS. Two CSPs is the worse half:
+# browsers INTERSECT multiple policies, so the effective /api/* policy was neither
+# the application's strict one nor nginx's marketing one (which carries
+# `'unsafe-inline'` and googletagmanager). Nobody chose that policy; it was the
+# intersection of two that each tier had chosen.
+#
+# Hiding the upstream's copies leaves the nginx snippet as the single source for
+# every one of the six. This file is included by the API locations ONLY (asserted
+# by tools/check_nginx_config.py), so the hide cannot leak onto a static path,
+# where there is no upstream copy to hide in the first place.
+#
+# Everything the application sends that nginx does NOT set is deliberately left
+# alone — `Cross-Origin-Resource-Policy` and `X-Request-ID` pass through as the
+# application's single source. The guard fails if this list ever hides a header
+# the snippet does not itself define, which would delete the only source.
+proxy_hide_header Strict-Transport-Security;
+proxy_hide_header X-Content-Type-Options;
+proxy_hide_header X-Frame-Options;
+proxy_hide_header Referrer-Policy;
+proxy_hide_header Permissions-Policy;
+proxy_hide_header Content-Security-Policy;
