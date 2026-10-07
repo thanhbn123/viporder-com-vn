@@ -19,9 +19,26 @@ ONE POST PER INVOCATION. There is no retry loop and no batch mode. If it fails, 
 person decides whether to run it again. Registering the same identity twice is how
 you create a duplicate customer on somebody else's system.
 
-NEVER PRINTS THE PASSWORD. Not on success, not on failure, not inside an error
-body — the response is scanned and any occurrence of the password is redacted
-before anything is written to the terminal.
+IT WRITES ITS OWN EVIDENCE TO DISK, AND PRINTS THE PATH BEFORE THE POST.
+
+The authorized POST of 2026-10-07 lost its raw body when the container was
+recreated; the only copy was terminal scrollback. PR #65 patched the SERVER side.
+This tool is the CLIENT side of the same fix: before the request is sent it prints
+where the record will go, then records status code, content-type, byte count,
+elapsed time, the sanitized body, the response's key names and a timezone-carrying
+timestamp — SUCCESS OR FAILURE. A redirect refusal, a transport failure, a
+non-JSON body and a 4xx/5xx are all results, and a failed attempt is still
+evidence. The file is written through a same-directory temp file plus
+`os.replace`, so a crash mid-write cannot truncate a previous record.
+
+WHERE THE FILE GOES. Default `var/live-registration/` under the repository root,
+which is git-ignored and outside tracker reach. Override with
+`LIVE_REG_EVIDENCE_DIR` (a directory) or `LIVE_REG_EVIDENCE_FILE` (an exact path).
+
+NEVER PRINTS AND NEVER STORES THE PASSWORD. Not on success, not on failure, not
+inside an error body. Every response is passed through `_sanitize`, which redacts
+every normalization and JSON-escape form of the password before anything is
+written to the terminal or to the evidence file.
 
 USAGE (the owner runs this; substitute real values):
 
@@ -35,19 +52,22 @@ USAGE (the owner runs this; substitute real values):
 Add `--base-url https://apiviporder.com/frontend/v1` to override the endpoint.
 
 WHAT IT PRINTS: HTTP status, content type, elapsed time, the response's KEY NAMES
-(never values blindly), and a sanitized body with any password occurrence redacted
-and long values truncated. That is enough to write a real contract from, and not
-enough to leak a credential into a terminal scrollback or a CI log.
+(never values blindly), a sanitized body with any password occurrence redacted and
+long values truncated, and the evidence file path — before the POST is sent.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
+import tempfile
 import time
+import unicodedata
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,6 +75,11 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 ENABLE_FLAG = "ENABLE_LIVE_REGISTRATION_TEST"
 DEFAULT_BASE = "https://apiviporder.com/frontend/v1"
+
+#: Where evidence goes when the environment does not say otherwise. `var/` is in
+#: `.gitignore` AND in the repo-hygiene forbidden-path list, so a record left here
+#: cannot be committed even by a mistaken `git add -A`.
+DEFAULT_EVIDENCE_DIR = ROOT / "var" / "live-registration"
 
 #: Field names the provider's contract requires, in order. Pinned so a rename
 #: here cannot silently change the wire format.
@@ -109,18 +134,135 @@ def _fail(missing: list[str]) -> int:
     return 2
 
 
-def _sanitize(value: object, secret: str, depth: int = 0) -> object:
-    """Redact the password and truncate long values, recursively."""
+def _sanitize(value: object, secret: str, depth: int = 0, *, truncate: bool = True) -> object:
+    """Redact every form of the password and truncate long values, recursively.
+
+    THE ONLY REDACTION PATH IN THIS FILE. `str.replace(secret, ...)` alone is not
+    enough: the same Vietnamese password can reach a record as NFC or NFD (or
+    NFKC/NFKD), and it can reach it JSON-escaped as ``\\uXXXX`` in either
+    `ensure_ascii` mode. A literal replacement misses those and has leaked a
+    Vietnamese password before. So all normalizations and both JSON escape modes
+    are redacted here — and this same function is run once more over the finished
+    evidence text, so an escape introduced by the serializer cannot survive.
+    """
     if depth > 6:
         return "<max depth>"
     if isinstance(value, dict):
-        return {k: _sanitize(v, secret, depth + 1) for k, v in value.items()}
+        return {k: _sanitize(v, secret, depth + 1, truncate=truncate) for k, v in value.items()}
     if isinstance(value, list):
-        return [_sanitize(v, secret, depth + 1) for v in value[:20]]
+        return [_sanitize(v, secret, depth + 1, truncate=truncate) for v in value[:20]]
     if isinstance(value, str):
-        out = value.replace(secret, "<REDACTED>") if secret else value
-        return out if len(out) <= MAX_VALUE else out[:MAX_VALUE] + "...<truncated>"
+        out = value
+        if secret:
+            forms: list[str] = []
+            for normalised in (
+                secret,
+                unicodedata.normalize("NFC", secret),
+                unicodedata.normalize("NFD", secret),
+                unicodedata.normalize("NFKC", secret),
+                unicodedata.normalize("NFKD", secret),
+            ):
+                for form in (
+                    normalised,
+                    json.dumps(normalised, ensure_ascii=True)[1:-1],
+                    json.dumps(normalised, ensure_ascii=False)[1:-1],
+                ):
+                    if form and form not in forms:
+                        forms.append(form)
+            for form in sorted(forms, key=len, reverse=True):
+                out = out.replace(form, "<REDACTED>")
+        if truncate and len(out) > MAX_VALUE:
+            return out[:MAX_VALUE] + "...<truncated>"
+        return out
     return value
+
+
+def _now_iso() -> str:
+    """Local time WITH an explicit UTC offset — never a bare timestamp."""
+    return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
+
+
+def _evidence_path() -> Path:
+    exact = os.environ.get("LIVE_REG_EVIDENCE_FILE", "").strip()
+    if exact:
+        return Path(exact).expanduser().resolve()
+    directory = os.environ.get("LIVE_REG_EVIDENCE_DIR", "").strip()
+    base = Path(directory).expanduser() if directory else DEFAULT_EVIDENCE_DIR
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return (base / f"registration-evidence-{stamp}.json").resolve()
+
+
+def _write_evidence(path: Path, report: dict[str, object], secret: str) -> None:
+    """Record via a same-directory temp file, then rename it into place.
+
+    §16.3: the rename is the atomic step. A crash before it leaves any existing
+    record untouched; opening the real path with `'w'` would truncate it first and
+    turn a failed write into lost evidence. The redaction is applied once more to
+    the finished text, through the SAME `_sanitize`, so a JSON escape produced by
+    the serializer is covered too.
+    """
+    text = json.dumps(report, ensure_ascii=False, indent=2, default=str)
+    redacted = _sanitize(text, secret, truncate=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".part")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(str(redacted))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+def _report(
+    *,
+    outcome: str,
+    endpoint: str,
+    recorded_at: str,
+    elapsed_seconds: float | None,
+    status: int | None,
+    content_type: str | None,
+    raw_bytes: int | None,
+    body_is_json: bool,
+    key_names: list[str],
+    body: object,
+    password_echoed: bool,
+    note: str,
+) -> dict[str, object]:
+    """The on-disk contract of one attempt. Keys are stable so a later run diffs."""
+    return {
+        "tool": "tools/test_live_registration.py",
+        "recorded_at": recorded_at,
+        "outcome": outcome,
+        "endpoint": endpoint,
+        "http_status": status,
+        "content_type": content_type,
+        "elapsed_seconds": None if elapsed_seconds is None else round(elapsed_seconds, 3),
+        "bytes": raw_bytes,
+        "body_is_json": body_is_json,
+        "key_names": key_names,
+        "body_sanitized": body,
+        "password_echoed": password_echoed,
+        "note": note,
+    }
+
+
+def _response_keys(o: object, prefix: str = "", depth: int = 0) -> list[str]:
+    """The response's key names, structure only, never the values."""
+    if depth > 4:
+        return []
+    if isinstance(o, dict):
+        out = []
+        for k, v in o.items():
+            out.append(f"{prefix}{k}")
+            out.extend(_response_keys(v, f"{prefix}{k}.", depth + 1))
+        return out
+    if isinstance(o, list) and o:
+        return _response_keys(o[0], f"{prefix}[].", depth + 1)
+    return []
 
 
 def main() -> int:
@@ -186,12 +328,18 @@ def main() -> int:
     assert tuple(body) == PROVIDER_FIELDS, f"unexpected wire fields: {tuple(body)}"
 
     url = f"{base}/register"
+    evidence_file = _evidence_path()
     print("LIVE REGISTRATION — ONE POST, NO RETRY")
     print(f"  endpoint   : {url}")
     print(f"  field names: {', '.join(body)}")
     print(f"  phone      : {body['phone']}")
     print(f"  email      : {body['email']}")
     print(f"  password   : <{len(password)} chars, never printed>")
+    # PRINTED BEFORE THE POST ON PURPOSE: if the terminal dies, the operator still
+    # knows where the record is. A path discovered only after the reply arrives is
+    # worthless exactly when it is needed most.
+    print(f"  evidence   : {evidence_file}")
+    print("  (printed BEFORE the POST; the record is written whatever the answer)")
     print()
 
     data = json.dumps(body).encode("utf-8")
@@ -206,7 +354,17 @@ def main() -> int:
         method="POST",
     )
 
+    recorded_at = _now_iso()
     started = time.monotonic()
+    status: int | None = None
+    ctype: str | None = None
+    raw = b""
+    outcome = "http_response"
+    note = ""
+    redirect_refused = False
+    redirect_location = "(none)"
+    transport_failure: str | None = None
+
     try:
         opener = urllib.request.build_opener(_RefuseRedirects())
         with opener.open(req, timeout=30) as resp:  # noqa: S310
@@ -220,25 +378,56 @@ def main() -> int:
         # Say so plainly: an operator must understand this is a RESULT, and that
         # chasing it would spend a second POST the owner did not authorize.
         if 300 <= exc.code < 400:
-            print(f"  REDIRECT REFUSED: the provider answered {exc.code}.")
-            print(f"    Location: {exc.headers.get('Location', '(none)')}")
-            print()
-            print("  The tool did NOT follow it. Following a redirect would be a SECOND")
-            print("  HTTP request, and the authorization covers exactly one POST.")
-            print("  Treat this as a consumed attempt and report it — do not retry.")
-            print("  The budget is spent: one POST was transmitted and answered 30x.")
-            return 1
+            redirect_refused = True
+            outcome = "redirect_refused"
+            redirect_location = exc.headers.get("Location", "(none)")
+            note = (
+                f"the provider answered {exc.code}; Location={redirect_location}; "
+                f"the redirect was NOT followed (one-POST budget)"
+            )
         status, ctype, raw = exc.code, exc.headers.get("Content-Type", ""), exc.read()
     except urllib.error.URLError as exc:
-        print(f"  TRANSPORT FAILURE after {time.monotonic() - started:.2f}s: {exc.reason}")
+        transport_failure = str(exc.reason)
+        outcome = "transport_failure"
+        note = f"transport failure: {exc.reason}"
+
+    elapsed = time.monotonic() - started
+
+    def record(**fields: object) -> None:
+        report = _report(
+            endpoint=url,
+            recorded_at=recorded_at,
+            outcome=outcome,
+            note=note,
+            **fields,  # type: ignore[arg-type]
+        )
+        try:
+            _write_evidence(evidence_file, report, password)
+            print(f"  evidence written: {evidence_file}")
+        except OSError as exc:
+            # Never lose the terminal report because the disk refused the file.
+            print(f"  WARNING: evidence NOT written to {evidence_file}: {exc}", file=sys.stderr)
+
+    if transport_failure is not None:
+        print(f"  TRANSPORT FAILURE after {elapsed:.2f}s: {transport_failure}")
         print("\n  No response. This is NOT a contract answer — the request may or may")
         print("  not have reached the provider. Do NOT simply re-run: check with the")
         print("  provider whether the account was created before trying again.")
+        record(
+            elapsed_seconds=elapsed,
+            status=None,
+            content_type=None,
+            raw_bytes=None,
+            body_is_json=False,
+            key_names=[],
+            body=None,
+            password_echoed=False,
+        )
         return 1
 
-    elapsed = time.monotonic() - started
     text = raw.decode("utf-8", errors="replace")
-    if password and password in text:
+    password_echoed = bool(password) and _sanitize(text, password, truncate=False) != text
+    if password_echoed:
         print("  NOTE: the response echoed the password; it is redacted below.")
 
     print(f"  HTTP status : {status}")
@@ -246,38 +435,57 @@ def main() -> int:
     print(f"  elapsed     : {elapsed:.2f}s")
     print(f"  bytes       : {len(raw)}")
 
+    if redirect_refused:
+        print()
+        print(f"  REDIRECT REFUSED: the provider answered {status}.")
+        print(f"    Location: {redirect_location}")
+        print("  The tool did NOT follow it. Following a redirect would be a SECOND")
+        print("  HTTP request, and the authorization covers exactly one POST.")
+        print("  Treat this as a consumed attempt and report it — do not retry.")
+
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
         print("\n  BODY IS NOT JSON. First 300 chars, redacted:")
         print("   ", _sanitize(text, password))
         print("\n  A non-JSON body means the contract question is still open.")
+        record(
+            elapsed_seconds=elapsed,
+            status=status,
+            content_type=ctype,
+            raw_bytes=len(raw),
+            body_is_json=False,
+            key_names=[],
+            body=_sanitize(text, password),
+            password_echoed=password_echoed,
+        )
         return 1
 
-    def keys(o: object, prefix: str = "", depth: int = 0) -> list[str]:
-        if depth > 4:
-            return []
-        if isinstance(o, dict):
-            out = []
-            for k, v in o.items():
-                out.append(f"{prefix}{k}")
-                out.extend(keys(v, f"{prefix}{k}.", depth + 1))
-            return out
-        if isinstance(o, list) and o:
-            return keys(o[0], f"{prefix}[].", depth + 1)
-        return []
-
+    key_names = _response_keys(parsed)
     print("\n  KEY NAMES (structure only):")
-    for k in keys(parsed)[:40]:
+    for k in key_names[:40]:
         print(f"    {k}")
 
     print("\n  SANITIZED BODY:")
     print(json.dumps(_sanitize(parsed, password), indent=4, ensure_ascii=False)[:4000])
 
-    if not (200 <= status < 300):
+    record(
+        elapsed_seconds=elapsed,
+        status=status,
+        content_type=ctype,
+        raw_bytes=len(raw),
+        body_is_json=True,
+        key_names=key_names,
+        body=_sanitize(parsed, password),
+        password_echoed=password_echoed,
+    )
+
+    if redirect_refused:
+        return 1
+    if not (200 <= (status or 0) < 300):
         print("\n  The provider did not accept this registration. That is a RESULT:")
         print("  record it in docs/KHAIBAO9610-INTEGRATION.md rather than guessing.")
-    return 0 if 200 <= status < 300 else 1
+    return 0 if 200 <= (status or 0) < 300 else 1
 
 
 if __name__ == "__main__":
