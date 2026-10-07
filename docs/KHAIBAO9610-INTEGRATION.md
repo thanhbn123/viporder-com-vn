@@ -1564,8 +1564,29 @@ LIVE_REG_NAME='Khách Kiểm Thử' \
 LIVE_REG_PHONE='0900000000' \
 LIVE_REG_EMAIL='test@example.com' \
 LIVE_REG_PASSWORD='<a-real-test-password>' \
+LIVE_REG_READ_BACK=yes \
 python3 tools/test_live_registration.py
 ```
+
+**To answer issue #4 in the same run, add `LIVE_REG_READ_BACK=yes`.** After a 2xx
+registration the tool then sends exactly one `POST /login` (`{account, password}`,
+the same identity) and, only if a token comes back, exactly one
+`GET /auth/profile` — the route §10.7 found the customer code behind. Neither
+creates anything, neither is retried, both are announced before the registration is
+sent, and all three answers land in one evidence file with the password **and the
+token** redacted. The terminal ends with `customer-code candidates:` — every value
+shaped `TT<digits>` and the key path it sits under. Without this flag, a second run
+would only re-measure what §10.6 already measured.
+
+The tool presents the backend's browser `User-Agent` (`DEFAULT_BROWSER_USER_AGENT`,
+pinned equal by a test): Cloudflare answers a self-describing one with Error 1010,
+which would spend the authorized attempt on a 403 that never reached the API.
+
+**Use a phone number and email that have never registered** — the provider already
+holds the 2026-10-02 and 2026-10-07 accounts, so re-using either would measure the
+duplicate response instead of the success schema. Run it from a machine that can
+reach `apiviporder.com` (the staging host can; a sandboxed CI or agent container
+may not).
 
 **Before running it, decide two things:** that the identity is one the owner is
 content to have created, and that a duplicate is acceptable if the call is repeated.

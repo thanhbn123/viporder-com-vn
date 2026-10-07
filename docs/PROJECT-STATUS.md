@@ -57,8 +57,8 @@ Owner-supplied SHAs **matched the remote exactly**.
 
 | Item | Value | Command |
 |---|---|---|
-| `main` | `c0cbe28` — **untouched throughout** | `git rev-parse --short origin/main` |
-| `develop` | `deeab14` | `git rev-parse --short origin/develop` |
+| `main` | `b8eb576` — **merged into** by PR #17 (`develop` → `main`), merged by the owner at `2026-10-07T14:09:00Z`. Until then `c0cbe28`, untouched | `git rev-parse --short origin/main`; PR #17 `merged_at` |
+| `develop` | `ae7edab` — same tree as `main` (`git diff origin/develop origin/main` is empty) | `git rev-parse --short origin/develop` |
 | Merged pull requests | `60` | `gh pr list --state merged --limit 500 --json number -q length` |
 | Required status checks | **12** | `gh api repos/thanhbn123/viporder-com-vn/branches/develop/protection` |
 | `pytest -q` (SQLite) | `607 passed, 12 skipped` | `env -u DATABASE_URL -u TEST_DATABASE_URL python -m pytest -q` |
@@ -103,7 +103,7 @@ redundancy (SHA retained above for recovery).
 | **G10** | CI | **PASS** | `.github/workflows/ci.yml` — **12 required checks** (`gh api repos/thanhbn123/viporder-com-vn/branches/develop/protection`; the Python matrix is two of them), all pinned to the PR **head SHA** and all required before merge. Includes a PostgreSQL service and a negative control for the destructive-test guard. This row said "10 jobs producing 11 required checks" |
 | **G11** | Documentation | **PASS** | `docs/` — architecture, flow, integration, deployment, security, go-live |
 | **G12** | Staging | **PASS (deployed and verified)** | PR #6, plus CR PR #15 (`--workers 1`, pinned `--forwarded-allow-ips`, upstream made deployment-specific). **Deployed as the compose stack on the staging host** and verified 2026-10-07: `curl -D-` header counts, the staging browser suite, the source-exposure probe, and the two live tracking `GET`s. `registration_writes` stays **DISABLED** there. This row said "Nothing deployed — no VPS or DNS access. Docker was never executed"; the containerised path has now been executed, in staging only |
-| **G13** | Release | **BLOCKED_EXTERNAL** | release PR (`develop` → `main`) opened as a **candidate only**, awaiting owner authorization. Staging acceptance has now been performed (G12); KHAIBAO9610 registration is still MOCK, and the provider's response schema is still unknown |
+| **G13** | Release | **BLOCKED_EXTERNAL** | The release PR #17 (`develop` → `main`) **was merged by the owner at `2026-10-07T14:09:00Z`** — `main` is now `b8eb576`. This row said it was "awaiting owner authorization" after that had happened. Still BLOCKED, for what the merge does not settle: **no production deployment has been measured from this repository**, and KHAIBAO9610 registration is still MOCK with the provider's response schema unknown (issue #4). PR #87 makes the next authorized live run read the customer code back |
 
 Statuses in this table are updated by the gate that changes them. If a row and a
 PR disagree, **the PR is wrong** — re-measure. A gate is `PASS` only when the
@@ -120,9 +120,9 @@ gets skimmed.
 
 | Not verified | Why it matters |
 |---|---|
-| **The real KHAIBAO9610 API** | No live call has ever been made from this repository. **`MOCK` is not working registration.** |
+| **The real KHAIBAO9610 API** | Two live registration POSTs have reached it: one **unauthorised** on 2026-10-02 (answered 200) and one **owner-authorised** on 2026-10-07 (answered 2xx) — neither captured the provider's raw body, and neither returned a customer code where the adapter looks (G04, issue #4). This row said "no live call has ever been made" after both. The success schema is still unknown, so **`MOCK` is still not working registration.** |
 | ~~**A human LOOKING at the rendered page**~~ — **CLOSED 2026-10-02** | There is a real-browser gate (G12A) rendering every page at desktop and Pixel 7 in CI, checking geometry, contrast, type size, focus visibility and accessible names — it caught three real contrast/size defects on its first run. What was missing was **judgement**, because the agent doing this work **has no image input**. Eleven screenshots were committed to `docs/visual-acceptance/` and the **owner reviewed and approved them on 2026-10-02**. Kept visible because the row was true and load-bearing while it stood. **Not discharged by the approval:** the homepage-only accessibility audit, the single audited viewport, no breakpoint sweep, no screen-reader run, and captures of a staging *candidate* rather than a deployed host. |
-| **Docker / docker-compose** | Docker is not installed on the machine this was built on. The compose file is validated as configuration (YAML parses, every key is a real setting, defaults are safe) but the stack has **never been run**. |
+| **Docker / docker-compose in production** | The compose stack **has run** — on the staging host (G12, 2026-10-07). This row said it had "never been run" after that. What is still unverified is any **production** run of it. |
 | **More than one uvicorn worker** | Both deployment paths pin `--workers 1`. The concurrency guarantees — the phone claim and the idempotency binding — are verified within a process (sync handlers run in a threadpool, so the races are real), but they have **not** been exercised across multiple workers. Raise the worker count only after re-running `tests/test_concurrency.py` against that topology. |
 
 **Closed since the first revision of this document:**
@@ -212,7 +212,7 @@ replacing them would make the document unable to show that anything moved.
 | # | Blocker | Why it is external | Impact |
 |---|---|---|---|
 | 1 | Real KHAIBAO9610 / `apiviporder.com` registration contract | Only the owner/provider can supply it | Real customer registration stays in MOCK. Issue #4 |
-| 2 | DNS + VPS access for `viporder.com.vn` | Owner-held | Nothing can be deployed. Prep only. |
+| 2 | DNS + VPS access for `viporder.com.vn` | Owner-held | Staging is deployed (G12). A **production** deployment has not been measured from this repository. |
 | 3 | Final legal/contact content (company name, address, phone) | Business-authoritative | Footer/contact cannot be completed truthfully |
 
 Blocked gates do not stop other gates — see the gate table.
