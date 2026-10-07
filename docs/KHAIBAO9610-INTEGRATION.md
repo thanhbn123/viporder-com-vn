@@ -19,7 +19,9 @@
 > * **Exactly ONE live registration `POST` has been made** — the owner-authorised
 >   one-shot test of **2026-10-07 05:53:38 UTC**, accepted with **201** (§10.6).
 >   It is not a working integration: the provider's raw response body was not
->   captured, so no customer code has ever been observed, and a second `POST`
+>   captured, so no customer code has ever been observed (that POST also predates
+>   PR #63 by 7m45s, so it ran against the OLD success handling — see §10.6), and a
+>   second `POST`
 >   needs new owner authorisation. `KHAIBAO9610_MODE=mock` is still the shipped
 >   default in every configuration file (`backend/app/config.py:107`,
 >   `deploy/env.production.example:80`, `.env.example:33`). The live adapter
@@ -1631,6 +1633,57 @@ switch and that discarded the log holding the body. Recorded rather than glossed
 Consequence, fixed in the same round: a 2xx that identifies nobody is no longer
 reported as a plain success. It becomes `UNUSABLE_RESPONSE`, the lead stays `PENDING`
 with that error code, the client gets a truthful 202, and a warning is logged.
+
+### READ THE MERGE TIMESTAMPS BEFORE CONCLUDING ANYTHING ABOUT TODAY'S BEHAVIOUR
+
+The `REGISTERED` lead above is **not** what this code does now. Measured with
+`gh pr view <n> --json mergedAt`:
+
+| Event | UTC |
+|---|---|
+| PR #61 merged — compose finally passed the WRITE switch through | `05:52:37` |
+| **the owner-authorised POST** | **`05:53:38`** |
+| PR #63 merged — an empty 2xx becomes `UNUSABLE_RESPONSE` | `06:01:23` |
+
+The POST ran **61 seconds** after the write switch became usable, and **7 minutes
+45 seconds BEFORE** PR #63. So it exercised the **OLD** code, the one that treated an
+empty 2xx as `SUCCESS` — which is exactly why the lead row reads `REGISTERED` with
+`external_customer_code = null`.
+
+**The same provider body today would return `UNUSABLE_RESPONSE` and would NOT mark
+the lead `REGISTERED`.** A reader who skips this table will mistake a behaviour that
+was patched out 8 minutes later for the behaviour of the running system. The
+observation is still valid evidence about the *provider*; it is **stale** evidence
+about *our* code.
+
+### THE PHONE NUMBER FROM THAT TEST IS NOW CLAIMED — measured 2026-10-07 on staging
+
+Read-only query against the staging database (`viporder-db-1`), structure and counts
+only, no personal data printed:
+
+```
+uq_leads_live_phone  UNIQUE (phone)
+  WHERE lead_type = 'REGISTER_LEAD'
+    AND (in_flight_at IS NOT NULL OR registration_status = 'REGISTERED')
+
+rows currently matching that predicate : 4
+  of which REGISTERED with NO customer code : 2
+  including the lead created 2026-10-07 05:53:38Z — the authorised POST
+```
+
+**Operational consequence for the NEXT authorised POST:** re-using the same phone
+number will be **refused by our own application before the request ever reaches the
+provider** — the partial unique index blocks the insert and the retry route answers
+"already registered". Either clear that lead row on staging first, or use a different
+number. Budgeting one POST and then spending it on a local uniqueness violation would
+waste the authorisation.
+
+**Also measured, and worth knowing before anyone goes looking:** of the five leads on
+staging, two carry a customer code — but both codes match the **mock** provider's
+exact format `^TT[0-9]{5}$` (`backend/app/providers/mock.py`, `f"TT{sequence:05d}"`),
+with 19-character non-numeric ids. They are **mock** rows, not provider rows. And the
+`leads.response_body` column holds **our own API's** response, not the provider's raw
+body — so the raw body really is gone, and `response_body` is not a way to recover it.
 
 ### Still UNKNOWN after this test
 
