@@ -58,7 +58,14 @@ DEFAULT_BASE = "https://apiviporder.com/frontend/v1"
 
 #: Field names the provider's contract requires, in order. Pinned so a rename
 #: here cannot silently change the wire format.
-PROVIDER_FIELDS = ("name", "phone", "email", "password", "confirmPassword", "acceptTerms")
+PROVIDER_FIELDS = (
+    "name",
+    "phone",
+    "email",
+    "password",
+    "confirmPassword",
+    "acceptTerms",
+)
 
 
 class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
@@ -75,7 +82,11 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         raise urllib.error.HTTPError(
-            req.full_url, code, f"refusing to follow a redirect to {newurl}", headers, fp
+            req.full_url,
+            code,
+            f"refusing to follow a redirect to {newurl}",
+            headers,
+            fp,
         )
 
 
@@ -127,7 +138,9 @@ def main() -> int:
 
     host = base.split("//", 1)[-1].split("/")[0]
     if host in ("viporder.com.vn", "www.viporder.com.vn"):
-        return _fail([f"the base URL points at the MARKETING domain ({host}), not the provider"])
+        return _fail(
+            [f"the base URL points at the MARKETING domain ({host}), not the provider"]
+        )
 
     password = os.environ["LIVE_REG_PASSWORD"]
     name = os.environ["LIVE_REG_NAME"]
@@ -142,7 +155,9 @@ def main() -> int:
     if not password:
         problems.append("the password is empty")
     if len(password) < 16:
-        problems.append(f"the password is shorter than 16 characters (got {len(password)})")
+        problems.append(
+            f"the password is shorter than 16 characters (got {len(password)})"
+        )
     if expected_phone and phone != expected_phone:
         problems.append(f"phone is {phone!r}, expected {expected_phone!r}")
     if expected_email and email != expected_email:
@@ -184,7 +199,7 @@ def main() -> int:
     print()
 
     data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(  # noqa: S310 - fixed https endpoint, operator-supplied
+    req = urllib.request.Request(  # fixed https endpoint, operator-supplied
         url,
         data=data,
         headers={
@@ -198,8 +213,12 @@ def main() -> int:
     started = time.monotonic()
     try:
         opener = urllib.request.build_opener(_RefuseRedirects())
-        with opener.open(req, timeout=30) as resp:  # noqa: S310
-            status, ctype, raw = resp.status, resp.headers.get("Content-Type", ""), resp.read()
+        with opener.open(req, timeout=30) as resp:
+            status, ctype, raw = (
+                resp.status,
+                resp.headers.get("Content-Type", ""),
+                resp.read(),
+            )
     except urllib.error.HTTPError as exc:
         # A 30x lands here because `_RefuseRedirects` raised rather than followed it.
         # Say so plainly: an operator must understand this is a RESULT, and that
@@ -208,14 +227,18 @@ def main() -> int:
             print(f"  REDIRECT REFUSED: the provider answered {exc.code}.")
             print(f"    Location: {exc.headers.get('Location', '(none)')}")
             print()
-            print("  The tool did NOT follow it. Following a redirect would be a SECOND")
+            print(
+                "  The tool did NOT follow it. Following a redirect would be a SECOND"
+            )
             print("  HTTP request, and the authorization covers exactly one POST.")
             print("  Treat this as a consumed attempt and report it — do not retry.")
             print("  The budget is spent: one POST was transmitted and answered 30x.")
             return 1
         status, ctype, raw = exc.code, exc.headers.get("Content-Type", ""), exc.read()
     except urllib.error.URLError as exc:
-        print(f"  TRANSPORT FAILURE after {time.monotonic() - started:.2f}s: {exc.reason}")
+        print(
+            f"  TRANSPORT FAILURE after {time.monotonic() - started:.2f}s: {exc.reason}"
+        )
         print("\n  No response. This is NOT a contract answer — the request may or may")
         print("  not have reached the provider. Do NOT simply re-run: check with the")
         print("  provider whether the account was created before trying again.")

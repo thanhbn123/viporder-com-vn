@@ -47,7 +47,9 @@ ROOT_RE = re.compile(r"^\s*root\s+([^;]+);", re.MULTILINE)
 #: this tool has to run under the same bare `python3` as the other repo tools, and
 #: in the site-checks CI job nothing is pip-installed. Adding PyYAML here would
 #: make the guard fail OPEN in exactly the environment it is meant to protect.
-_VOLUME_RE = re.compile(r"^\s*-\s*([^\s#][^:]*):([^:\s]+)(?::[a-zA-Z,]+)?\s*$", re.MULTILINE)
+_VOLUME_RE = re.compile(
+    r"^\s*-\s*([^\s#][^:]*):([^:\s]+)(?::[a-zA-Z,]+)?\s*$", re.MULTILINE
+)
 
 
 def _container_paths(text: str) -> dict[str, str]:
@@ -101,7 +103,7 @@ def main() -> int:
                 errors.append(
                     f"{conf.name} includes {target}, but the compose nginx service "
                     f"does not mount it. nginx will exit at startup with "
-                    f"`[emerg] open() \"{target}\" failed`."
+                    f'`[emerg] open() "{target}" failed`.'
                 )
 
     # -- 2. the web root must not expose the repository ----------------------
@@ -136,14 +138,18 @@ def main() -> int:
         except ValueError:  # pragma: no cover - py<3.9 safety
             under_root = str(host_path).startswith(str(ROOT))
         if under_root and host_path == ROOT.resolve():
-            errors.append(f"a volume mounts the whole repository ({host} -> {container})")
+            errors.append(
+                f"a volume mounts the whole repository ({host} -> {container})"
+            )
 
     for line in notes:
         print(f"  {line}")
     for line in errors:
         print(f"ERROR {line}")
 
-    print(f"compose-nginx: {len(mounts)} mount(s), {len(confs)} config(s), {len(errors)} error(s)")
+    print(
+        f"compose-nginx: {len(mounts)} mount(s), {len(confs)} config(s), {len(errors)} error(s)"
+    )
     print(
         "scope: include/mount agreement and web-root exposure in "
         "deploy/docker-compose.yml + deploy/nginx/*.conf only — this does NOT run "

@@ -283,6 +283,22 @@ jobs:
       - name: ruff format --check
         working-directory: backend
         run: ruff format --check .
+      # -----------------------------------------------------------------------
+      # tools/ is EXECUTED by this workflow (five repo guards + the live-POST
+      # tool) but until now nothing linted it: the backend steps above are
+      # pinned to `working-directory: backend`. These steps close that hole.
+      #
+      # They run from the repository root, where there is no `[tool.ruff]`
+      # config, so tools/ is checked with ruff's own default rule set. That is
+      # the same invocation that measured 22 errors, all of them in tools/.
+      # The job name above is kept EXACTLY as the required status check in
+      # branch protection; putting the tools/ steps in this job is what makes a
+      # tools/ lint error actually block the pull request.
+      # -----------------------------------------------------------------------
+      - name: ruff check (tools)
+        run: ruff check tools
+      - name: ruff format --check (tools)
+        run: ruff format --check tools
 
   backend-security:
     name: Backend security (bandit)

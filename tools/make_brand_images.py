@@ -78,7 +78,9 @@ def font_has_glyphs(font: ImageFont.FreeTypeFont) -> bool:
     probe = "Vận chuyển ậễộớụỹđĐ"
     try:
         mask = font.getmask(probe)
-    except Exception:
+    except (OSError, ValueError):
+        # Pillow raises OSError/ValueError for a font it cannot render with;
+        # rejecting that font is the whole purpose of this probe.
         return False
     return mask.size[0] > 0
 
@@ -106,14 +108,14 @@ def make_og() -> Path:
     # Red accent block holding the VIP mark.
     pad = 88
     box = 190
-    draw.rounded_rectangle(
-        [pad, pad, pad + box, pad + box], radius=38, fill=RED
-    )
+    draw.rounded_rectangle([pad, pad, pad + box, pad + box], radius=38, fill=RED)
     mark_font = load_font(78)
     tw, th = text_size(draw, "VIP", mark_font)
     draw.text(
         (pad + (box - tw) / 2, pad + (box - th) / 2 - 10),
-        "VIP", font=mark_font, fill=WHITE,
+        "VIP",
+        font=mark_font,
+        fill=WHITE,
     )
 
     # Wordmark.
@@ -129,7 +131,8 @@ def make_og() -> Path:
     dw, dh = text_size(draw, DOMAIN, dom_font)
     draw.line(
         [(W - pad - dw, H - pad - dh - 34), (W - pad, H - pad - dh - 34)],
-        fill=RED, width=6,
+        fill=RED,
+        width=6,
     )
     draw.text((W - pad - dw, H - pad - dh), DOMAIN, font=dom_font, fill=WHITE)
 
@@ -146,11 +149,16 @@ def make_icon(size: int, name: str, text: str, font_ratio: float) -> Path:
     draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=RED)
     # Subtle depth without relying on a gradient at tiny sizes.
     draw.rounded_rectangle(
-        [0, 0, size - 1, size - 1], radius=radius, outline=RED_DARK, width=max(size // 32, 1)
+        [0, 0, size - 1, size - 1],
+        radius=radius,
+        outline=RED_DARK,
+        width=max(size // 32, 1),
     )
     font = load_font(max(round(size * font_ratio), 6))
     tw, th = text_size(draw, text, font)
-    draw.text(((size - tw) / 2, (size - th) / 2 - size * 0.06), text, font=font, fill=WHITE)
+    draw.text(
+        ((size - tw) / 2, (size - th) / 2 - size * 0.06), text, font=font, fill=WHITE
+    )
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / name
     img.save(path, "PNG", optimize=True)
@@ -167,7 +175,9 @@ def main() -> int:
     for path in written:
         size = path.stat().st_size
         with Image.open(path) as im:
-            print(f"  {path.relative_to(ROOT)}  {im.size[0]}x{im.size[1]}  {size:,} bytes")
+            print(
+                f"  {path.relative_to(ROOT)}  {im.size[0]}x{im.size[1]}  {size:,} bytes"
+            )
     print(f"\nwrote {len(written)} asset(s) to {OUT.relative_to(ROOT)}")
     return 0
 

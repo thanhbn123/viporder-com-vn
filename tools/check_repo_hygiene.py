@@ -60,14 +60,25 @@ SECRET_PATTERNS: list[tuple[str, str]] = [
     (r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "Slack token"),
     (r"\bAIza[0-9A-Za-z_\-]{35}\b", "Google API key"),
     (r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b", "JWT"),
-    (r"(?i)\b(api[_-]?key|secret[_-]?key|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*[\"'][^\"']{16,}[\"']",
-     "hard-coded credential"),
+    (
+        r"(?i)\b(api[_-]?key|secret[_-]?key|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*[\"'][^\"']{16,}[\"']",
+        "hard-coded credential",
+    ),
 ]
 
 # A missing-value template is fine: KEY="" or KEY=changeme
 PLACEHOLDER_VALUES = {
-    "", "changeme", "change-me", "your-key-here", "replace-me",
-    "xxx", "todo", "example", "placeholder", "none", "null",
+    "",
+    "changeme",
+    "change-me",
+    "your-key-here",
+    "replace-me",
+    "xxx",
+    "todo",
+    "example",
+    "placeholder",
+    "none",
+    "null",
 }
 
 #: Names that mean "this file is a key" even when the CONTENT scan cannot read
@@ -108,7 +119,10 @@ def looks_like_text(data: bytes) -> bool:
 def tracked_files() -> list[str]:
     out = subprocess.run(
         ["git", "ls-files", "-z"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     return [p for p in out.split("\0") if p]
 
@@ -149,8 +163,10 @@ def main() -> int:
         # 2. size
         size = path.stat().st_size
         if size > MAX_FILE_BYTES:
-            errors.append(f"{rel}: {size / 1024 / 1024:.2f} MiB exceeds "
-                          f"{MAX_FILE_BYTES / 1024 / 1024:.0f} MiB limit")
+            errors.append(
+                f"{rel}: {size / 1024 / 1024:.2f} MiB exceeds "
+                f"{MAX_FILE_BYTES / 1024 / 1024:.0f} MiB limit"
+            )
             continue  # already a finding; do not read a huge file into memory
 
         # 3. content scan — SNIFFED, not gated by the file name
@@ -172,19 +188,24 @@ def main() -> int:
                 line = text[: m.start()].count("\n") + 1
                 errors.append(f"{rel}:{line}: possible {why}")
 
-    print(f"  content-scanned {scanned} file(s); "
-          f"skipped {skipped_binary} binary file(s)")
+    print(
+        f"  content-scanned {scanned} file(s); skipped {skipped_binary} binary file(s)"
+    )
     for w in warnings:
         print(f"WARN  {w}")
     for e in errors:
         print(f"ERROR {e}")
 
     print()
-    print(f"repo-hygiene: {len(files)} file(s) checked, "
-          f"{len(errors)} error(s), {len(warnings)} warning(s)")
-    print("scope: tracked-path patterns, key-ish basenames, file size > 1 MiB, and "
-          "secret-shaped strings in every tracked file whose CONTENT sniffs as text "
-          "(UTF-8, no NUL byte) — binary content is NOT scanned.")
+    print(
+        f"repo-hygiene: {len(files)} file(s) checked, "
+        f"{len(errors)} error(s), {len(warnings)} warning(s)"
+    )
+    print(
+        "scope: tracked-path patterns, key-ish basenames, file size > 1 MiB, and "
+        "secret-shaped strings in every tracked file whose CONTENT sniffs as text "
+        "(UTF-8, no NUL byte) — binary content is NOT scanned."
+    )
     return 1 if errors else 0
 
 
