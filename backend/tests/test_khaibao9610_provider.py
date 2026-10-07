@@ -253,6 +253,7 @@ def test_an_unparseable_2xx_body_is_NOT_reported_as_success() -> None:
     The old assertion is kept in words above rather than deleted, because the reason
     it changed is the useful part.
     """
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(201, text="<html>thanks</html>")
 
