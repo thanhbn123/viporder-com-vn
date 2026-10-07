@@ -1546,6 +1546,69 @@ with the provider first.
 Whatever it returns, the result belongs in §4.9 of this document as MEASURED — that
 is what moves registration from UNKNOWN, and nothing else will.
 
+## 10.6 OBSERVED LIVE REGISTRATION — owner-authorized one-shot test
+
+**SOURCE: OWNER-AUTHORIZED LIVE TEST**
+**DATE/TIME: 2026-10-07 05:53:38 UTC** (lead `created_at`)
+**POSTS: exactly one.** Consumed once. No retry, and a second POST requires new
+owner authorization.
+
+### Request
+
+`POST https://apiviporder.com/frontend/v1/register`, field names exactly
+`name / phone / email / password / confirmPassword / acceptTerms`. Sent through the
+application, so the adapter's own wire format is what reached the provider.
+
+### Observed result
+
+| | |
+|---|---|
+| our HTTP status to the client | **201** |
+| content type | `application/json` |
+| latency | 0.747 s |
+| response bytes | 228 |
+| resulting lead | `REGISTER_LEAD \| REGISTERED \| resp_status=201` |
+| **`external_customer_id`** | **null** |
+| **`external_customer_code`** | **null** |
+| customer message | "Đăng ký thành công." |
+
+Sanitised body, exactly as our API returned it:
+
+```json
+{"lead_id":"<uuid>","registration_status":"REGISTERED",
+ "external_customer_id":null,"external_customer_code":null,
+ "message":"Đăng ký thành công.","login_url":"https://khachhang.viporder.com.vn"}
+```
+
+### What this establishes, and what it does NOT
+
+**Established:** the provider accepts a registration for these field names and
+answers 2xx. The lead is created, reaches `REGISTERED`, stores no password, and the
+request is **not** retried.
+
+**NOT established, and it is the important part:** the provider's **raw JSON was not
+captured**. `_extract` found no customer id and no customer code anywhere — it
+searches the top level plus `data`/`customer`/`result` against
+`customer_code | customerCode | code | ma_khach_hang` and
+`customer_id | customerId | id | user_id`. So either
+
+* the provider does not return a customer code in the register response, or
+* it returns one under a key we do not yet parse.
+
+**We cannot tell which**, because the container was recreated to disarm the write
+switch and that discarded the log holding the body. Recorded rather than glossed over.
+
+Consequence, fixed in the same round: a 2xx that identifies nobody is no longer
+reported as a plain success. It becomes `UNUSABLE_RESPONSE`, the lead stays `PENDING`
+with that error code, the client gets a truthful 202, and a warning is logged.
+
+### Still UNKNOWN after this test
+
+Registration success **response schema** · duplicate response · validation-error
+schema · rate limit · timeout expectation · whether production needs auth or an IP
+allowlist. One call answers one question, and this one answered "the call works and
+the code does not arrive".
+
 ## 11. What is not verified
 
 Stated plainly, because a document that lists only what is known is the one that
