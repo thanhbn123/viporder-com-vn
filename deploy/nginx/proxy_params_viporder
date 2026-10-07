@@ -73,4 +73,18 @@ proxy_hide_header X-Content-Type-Options;
 proxy_hide_header X-Frame-Options;
 proxy_hide_header Referrer-Policy;
 proxy_hide_header Permissions-Policy;
-proxy_hide_header Content-Security-Policy;
+# Content-Security-Policy IS DELIBERATELY *NOT* HIDDEN, and this is the one header
+# where de-duplication would make things WORSE.
+#
+# The other five headers carry the SAME value from both tiers, so keeping one copy
+# is correct. CSP is different: nginx sends the MARKETING policy (which needs
+# 'unsafe-inline' and the analytics/font hosts for the static site) while the
+# application sends a STRICT one (no 'unsafe-inline', no third parties).
+#
+# Browsers INTERSECT multiple CSPs — a resource must satisfy every policy — so the
+# two headers together yield the STRICTER of the two. Hiding the application's copy
+# would leave /api/* with only the marketing policy, i.e. a WEAKER effective policy
+# than before the de-duplication work. That regression was measured on staging and
+# is exactly what this comment prevents someone re-introducing.
+#
+# So: leave both. The intersection is the control.

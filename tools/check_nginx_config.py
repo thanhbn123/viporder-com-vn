@@ -247,17 +247,46 @@ def main() -> int:
             h.lower()
             for h in re.findall(r"^\s*proxy_hide_header\s+([A-Za-z-]+)", ptxt, re.MULTILINE)
         }
-        stacked = sorted(snippet_headers - hidden)
+        # Content-Security-Policy IS A DELIBERATE EXCEPTION, and it is the one header
+        # where de-duplicating makes things WORSE.
+        #
+        # The other five carry the SAME value from both tiers, so one copy is right.
+        # CSP differs: nginx sends the MARKETING policy (which needs 'unsafe-inline'
+        # and the analytics hosts for the static site) and the application sends a
+        # STRICT one. Browsers INTERSECT multiple CSPs, so both together give the
+        # STRICTER of the two. Hiding the application's copy leaves /api/* with only
+        # the marketing policy — a WEAKER effective policy than before the
+        # de-duplication work. That regression was measured on staging.
+        #
+        # So CSP is expected to appear in BOTH sets, and this guard asserts exactly
+        # that rather than tolerating it silently: if someone hides CSP again, or
+        # stops nginx sending it, this fails.
+        CSP = "content-security-policy"
+        stacked = sorted((snippet_headers - hidden) - {CSP})
         if stacked:
             errors.append(
                 f"{params.name}: {', '.join(stacked)} — the application sends its own "
                 f"copy and nginx `add_header` ADDS, so /api/* returns TWO of each. "
                 f"Add `proxy_hide_header` for every one of them."
             )
+        elif CSP not in snippet_headers:
+            errors.append(
+                f"{snippet.name}: no Content-Security-Policy — the marketing policy is "
+                f"the only one that may stack, and it must exist"
+            )
         else:
             notes.append(
-                f"{params.name}: hides all {len(snippet_headers)} header(s) the snippet "
-                f"defines — one source per header on the proxy path (ok)"
+                f"{params.name}: hides {len(hidden)} of {len(snippet_headers)} header(s) "
+                f"the snippet defines; Content-Security-Policy deliberately NOT hidden so "
+                f"the stricter app policy intersects the marketing one (ok)"
+            )
+        if CSP in hidden:
+            errors.append(
+                f"{params.name}: Content-Security-Policy IS hidden. That removes the "
+                f"application's STRICT policy and leaves /api/* with only nginx's "
+                f"marketing policy ('unsafe-inline' + third parties) — browsers "
+                f"intersect CSPs, so hiding the stricter one WEAKENS the effective "
+                f"policy. Leave both."
             )
         over_hidden = sorted(hidden - snippet_headers)
         if over_hidden:

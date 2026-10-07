@@ -208,7 +208,12 @@ fi
 #
 # `grep -ci "^NAME:"` counts HEADER LINES, which is the number of copies sent.
 API_HDRS=$(curl -sk -D - -o /dev/null -m 10 -H "Host: viporder.com.vn" "$H/api/v1/health" | tr -d '\r')
-for h in "Strict-Transport-Security" "X-Content-Type-Options" "X-Frame-Options" "Referrer-Policy" "Permissions-Policy" "Content-Security-Policy"; do
+# Five headers carry the SAME value from both tiers, so exactly ONE copy is correct.
+# Content-Security-Policy is the deliberate exception and is checked separately
+# below: nginx sends the marketing policy and the application sends a STRICT one, and
+# browsers INTERSECT multiple CSPs, so BOTH together give the stricter policy. Hiding
+# the application's copy would leave /api/* weaker than before — measured on staging.
+for h in "Strict-Transport-Security" "X-Content-Type-Options" "X-Frame-Options" "Referrer-Policy" "Permissions-Policy"; do
   N=$(echo "$API_HDRS" | grep -ci "^$h:")
   if [ "$N" = "1" ]; then
     ok "API path sends exactly one $h"
@@ -218,10 +223,20 @@ for h in "Strict-Transport-Security" "X-Content-Type-Options" "X-Frame-Options" 
     bad "API path sends $N $h headers (must be exactly 1) — the tiers are stacking"
   fi
 done
-if [ "$(echo "$API_HDRS" | grep -ci "^Content-Security-Policy:")" = "1" ]; then
-  ok "API path CSP comes from ONE source, so no browser intersection"
+CSP_N=$(echo "$API_HDRS" | grep -ci "^Content-Security-Policy:")
+if [ "$CSP_N" = "2" ]; then
+  ok "API path sends TWO CSPs on purpose (browser intersection = the stricter policy)"
+elif [ "$CSP_N" = "1" ]; then
+  bad "API path sends ONE CSP — one tier's policy was dropped; if the strict app policy went, /api/* is now WEAKER"
 else
-  bad "API path CSP comes from more than one source — browsers intersect them"
+  bad "API path sends $CSP_N CSP headers (expected 2: the marketing one plus the strict app one)"
+fi
+# The one that must be present is the STRICT one. `unsafe-inline` marks the marketing
+# policy; at least one of the two copies must NOT contain it.
+if echo "$API_HDRS" | grep -i "^Content-Security-Policy:" | grep -qvi "unsafe-inline"; then
+  ok "API path keeps the application's STRICT CSP (no 'unsafe-inline')"
+else
+  bad "API path CSPs ALL contain 'unsafe-inline' — the strict application policy is gone"
 fi
 if curl -sk -D - -o /dev/null -m 10 -H "Host: viporder.com.vn" "$H/api/v1/health" \
      | tr -d '\r' | grep -i "strict-transport-security" | grep -qi "includeSubDomains"; then
