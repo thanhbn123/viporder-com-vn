@@ -23,6 +23,11 @@ class ProviderStatus(StrEnum):
     DUPLICATE = "DUPLICATE"
     INVALID = "INVALID"
     UNAVAILABLE = "UNAVAILABLE"
+    # The provider answered 2xx but identified nobody we can read — no customer id
+    # and no customer code. Distinct from UNAVAILABLE on purpose: that is a network
+    # or availability problem, this is a CONTRACT problem. Measured with the
+    # owner-authorized live POST on 2026-10-07, which is why it exists.
+    UNUSABLE_RESPONSE = "UNUSABLE_RESPONSE"
 
 
 @dataclass(frozen=True)

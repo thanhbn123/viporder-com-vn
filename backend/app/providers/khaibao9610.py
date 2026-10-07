@@ -446,6 +446,37 @@ class ViporderFrontendProvider:
 
         if 200 <= http_status < 300:
             identifier, code = self._extract(_safe_json(response))
+            if identifier is None and code is None:
+                # A 2xx that identifies NOBODY is not a usable success.
+                #
+                # MEASURED with the owner-authorized one-shot live POST
+                # (2026-10-07): the provider answered 2xx and this extraction found
+                # nothing at all, so the customer received "Đăng ký thành công" with
+                # no customer code. The customer code is the point of registering.
+                #
+                # It is NOT reported as SUCCESS because a caller cannot tell such a
+                # registration apart from a real one, and the customer cannot be
+                # told anything useful. It is NOT retried either: the request may
+                # well have created an account, so a retry could double-register.
+                #
+                # `UNUSABLE_RESPONSE` is distinct from UNAVAILABLE on purpose — this
+                # is a contract problem, not a network one — and it is not
+                # retryable, so nothing upstream will try again automatically.
+                logger.warning(
+                    "khaibao9610 register returned %s but no customer id or code "
+                    "could be extracted; the response shape is not the documented one",
+                    http_status,
+                )
+                return RegistrationResult(
+                    status=ProviderStatus.UNUSABLE_RESPONSE,
+                    message=(
+                        "The provider accepted the registration but returned no "
+                        "customer identifier we can read."
+                    ),
+                    http_status=http_status,
+                    retryable=False,
+                    error_code="UNUSABLE_RESPONSE",
+                )
             return RegistrationResult(
                 status=ProviderStatus.SUCCESS,
                 external_customer_id=identifier,
