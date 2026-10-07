@@ -71,11 +71,19 @@ def test_the_shallowest_code_wins() -> None:
 def test_a_pair_from_ONE_object_beats_a_lonely_code_higher_up() -> None:
     """A code and an id that arrived TOGETHER belong together.
 
-    Top level has a code but no id; the wrapper has both. Taking the shallow code
-    and a deeper id would pair two values that were never a pair.
+    Both codes are AMBIGUOUS here, so pass 2 applies and the wrapper's complete pair
+    wins over the top level's lonely code. Pairing two values that never arrived
+    together would be a silent mismatch.
     """
-    identifier, code = extract({"customer_code": "SHALLOW", "data": {"code": "TT1", "id": "42"}})
+    identifier, code = extract({"code": "SHALLOW", "data": {"code": "TT1", "id": "42"}})
     assert (identifier, code) == ("42", "TT1")
+
+
+def test_an_UNAMBIGUOUS_key_wins_over_an_ambiguous_one() -> None:
+    """`customer_code` can only mean a customer; `code` is also an envelope status.
+    So the unambiguous key is taken even though it arrives without an id."""
+    identifier, code = extract({"customer_code": "SHALLOW", "data": {"code": "TT1", "id": "42"}})
+    assert code == "SHALLOW", f"the ambiguous key was preferred: {code!r}"
 
 
 def test_the_shallowest_object_holding_BOTH_wins() -> None:
@@ -151,3 +159,46 @@ def test_a_boolean_is_never_a_code_or_an_id() -> None:
 def test_a_non_object_payload_is_handled() -> None:
     for payload in ("a string", 42, None, []):
         assert extract(payload) == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# THE ADVERSARIAL FINDINGS — an envelope's own status must never be the code
+# ---------------------------------------------------------------------------
+
+
+def test_the_laravel_envelope_yields_the_REAL_code_not_the_status() -> None:
+    """THE BUG AN ADVERSARIAL REVIEW FOUND, and it was severe.
+
+    `{"code": 200, "message": "success", "data": {"customer_code": "TT00123"}}` is the
+    most common Laravel-shaped response. The old extractor returned `(None, "200")`:
+    the envelope's own status was handed to the customer as their code — a number that
+    signs in nowhere — while the REAL code inside `data` was discarded. The lead then
+    went `REGISTERED`, so the partial unique index blocked that phone permanently and
+    the retry route answered "already registered".
+    """
+    identifier, code = extract(
+        {"code": 200, "message": "success", "data": {"customer_code": "TT00123"}}
+    )
+    assert code == "TT00123", f"the envelope status was taken as the code: {code!r}"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"code": 200}, {"code": "0"}, {"code": 201, "message": "created"}],
+    ids=["int-200", "string-0", "created-201"],
+)
+def test_an_envelope_status_alone_is_NOT_a_success(body: object) -> None:
+    """Nothing but a status means the registration identified nobody, and the honest
+    answer is UNUSABLE_RESPONSE — with the body kept for an operator to read."""
+    assert extract(body) == (None, None), f"{body!r} -> {extract(body)!r}"
+
+
+def test_an_all_digit_code_under_the_ambiguous_key_is_refused() -> None:
+    """A real all-digit customer code would be refused, and that is the deliberate
+    direction: no code is truthful; a wrong one is not."""
+    assert extract({"code": "12345678"}) == (None, None)
+
+
+def test_an_all_digit_code_under_an_UNAMBIGUOUS_key_is_accepted() -> None:
+    """Because `customer_code: 12345` can only mean a customer."""
+    assert extract({"customer_code": 12345}) == (None, "12345")
