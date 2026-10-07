@@ -1,0 +1,137 @@
+# =============================================================================
+# VIPORDER.COM.VN — containerised stack (staging / small production)
+# =============================================================================
+# This is an ALTERNATIVE to the systemd deployment in deploy/systemd/. Use one
+# or the other, not both.
+#
+#   cd deploy
+#   cp env.production.example .env      # fill it in; .env is git-ignored
+#   docker compose up -d
+#   docker compose run --rm app alembic upgrade head
+#
+# The stack deliberately puts PostgreSQL behind the app so the production data
+# path is exercised in staging rather than only in development.
+# =============================================================================
+
+name: viporder
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-viporder}
+      POSTGRES_USER: ${POSTGRES_USER:-viporder}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-viporder} -d ${POSTGRES_DB:-viporder}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Not published: only the app network reaches the database.
+    expose:
+      - "5432"
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      # The application does not read LOG_LEVEL — it was removed as an orphan
+      # key. uvicorn's own verbosity comes from its --log-level flag.
+      #
+      # MUST be false: the default is true, which would make the app create
+      # tables with create_all and bypass the `alembic upgrade head` step below.
+      AUTO_CREATE_SCHEMA: "false"
+      # API docs stay hidden in production.
+      ENABLE_API_DOCS: ""
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-viporder}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-viporder}
+      TRUST_PROXY_HEADERS: "yes"
+      CORS_ALLOW_ORIGINS: ""
+      RATE_LIMIT_ENABLED: "yes"
+      RATE_LIMIT_ATTEMPTS: "10"
+      MAX_REQUEST_BYTES: "65536"
+      # Safe default. A real outbound call additionally needs
+      # KHAIBAO9610_ENABLE_REAL_CALLS=yes — see docs/KHAIBAO9610-INTEGRATION.md
+      KHAIBAO9610_MODE: ${KHAIBAO9610_MODE:-mock}
+      KHAIBAO9610_ENABLE_REAL_CALLS: ${KHAIBAO9610_ENABLE_REAL_CALLS:-no}
+      # SEPARATE write switch. It was added to config.py and to the systemd env
+      # example but NOT here, so under compose the container never saw it and the
+      # capability was unreachable — `registration_writes` stayed `disabled` with
+      # `.env` set to `yes`. A setting nobody wires into the deployment is invisible
+      # until someone tries to use it.
+      KHAIBAO9610_ENABLE_REAL_REGISTRATION: ${KHAIBAO9610_ENABLE_REAL_REGISTRATION:-no}
+      # The remaining provider settings, so compose can express everything
+      # `Settings` can. They previously fell back to their defaults, which meant a
+      # deployment could not point the adapter at a different base URL, change the
+      # timeout, or adjust the paths — invisible until someone needed to.
+      #
+      # Defaults are repeated here rather than inlined from config.py because a
+      # compose file cannot import Python; a test asserts compose passes every
+      # provider setting, so a NEW setting cannot be forgotten silently.
+      KHAIBAO9610_BASE_URL: ${KHAIBAO9610_BASE_URL:-https://apiviporder.com/frontend/v1}
+      KHAIBAO9610_TIMEOUT_SECONDS: ${KHAIBAO9610_TIMEOUT_SECONDS:-10.0}
+      KHAIBAO9610_USER_AGENT: ${KHAIBAO9610_USER_AGENT:-Mozilla/5.0 (compatible; VIPORDER/1.0)}
+      KHAIBAO9610_REGISTER_PATH: ${KHAIBAO9610_REGISTER_PATH:-/register}
+      KHAIBAO9610_WAREHOUSE_IMPORT_PATH: ${KHAIBAO9610_WAREHOUSE_IMPORT_PATH:-/warehouse-imports/{keyword}}
+      KHAIBAO9610_PACKAGE_SEALING_PATH: ${KHAIBAO9610_PACKAGE_SEALING_PATH:-/package-sealings/{keyword}}
+      KHAIBAO9610_MAX_RESPONSE_BYTES: ${KHAIBAO9610_MAX_RESPONSE_BYTES:-2097152}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+    # NOT published to the host. Only the nginx service reaches this, over the
+    # private compose network. Publishing it would expose an application that
+    # trusts X-Forwarded-For from any peer (see deploy/Dockerfile).
+    expose:
+      - "8000"
+
+  # Static site + TLS + rate limiting in front of the app.
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # ONLY the public site files, mounted one by one.
+      #
+      # This was `../:/srv/viporder/site:ro` — the whole repository — and the site
+      # config sets `root /srv/viporder/site` with `try_files $uri $uri/ =404`
+      # (viporder.com.vn.conf:111,174). That made the application's own source,
+      # `docs/SECURITY.md`, the tooling and the test suite fetchable over HTTPS.
+      # `.env` was protected only by the dotfile rule at viporder.com.vn.conf:179,
+      # which is a mitigation for something that should never have been reachable.
+      #
+      # A list of the public files is also a reviewable statement of what this
+      # server publishes: adding a file to the site is now a deliberate edit here.
+      - ../index.html:/srv/viporder/site/index.html:ro
+      - ../404.html:/srv/viporder/site/404.html:ro
+      - ../robots.txt:/srv/viporder/site/robots.txt:ro
+      - ../sitemap.xml:/srv/viporder/site/sitemap.xml:ro
+      - ../static:/srv/viporder/site/static:ro
+      - ./nginx/viporder.com.vn.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/proxy_params_viporder:/etc/nginx/proxy_params_viporder:ro
+      # The site config includes its security headers from this path in five
+      # places. Without this mount nginx exits at startup with
+      # `[emerg] open() "/etc/nginx/snippets/viporder-security-headers.conf" failed`
+      # — the containerised stack could not start at all. Measured with nginx
+      # 1.31.6; see docs/STAGING-RUNBOOK.md.
+      - ./nginx/viporder-security-headers.conf:/etc/nginx/snippets/viporder-security-headers.conf:ro
+      # The site config includes its upstream from this path. Under compose the
+      # application is a sibling container (`app:8000`), NOT 127.0.0.1 — which
+      # inside this container is Nginx itself. Mounting the compose upstream is
+      # what makes the containerised stack able to reach the application at all.
+      - ./nginx/upstream-compose.conf:/etc/nginx/upstreams/viporder-upstream.conf:ro
+      - ./certs:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot
+
+volumes:
+  db-data:
+  certbot-webroot:

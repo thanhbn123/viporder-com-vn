@@ -1,0 +1,14 @@
+# Chép thành deploy/deploy.local.conf rồi điền. File thật KHÔNG vào Git.
+# Secret ứng dụng KHÔNG ở đây — chúng ở <APP_ROOT>/<env>/shared/.env TRÊN MÁY CHỦ
+# (mẫu: deploy/env.production.example).
+
+# STAGING_HOST=
+# STAGING_USER=deploy
+# STAGING_SSH_KEY=~/.ssh/viporder_staging_deploy
+# STAGING_URL=https://staging.viporder.com.vn
+# APP_ROOT=/home/deploy/vip/viporder     # nếu user không ghi được /opt
+
+# PRODUCTION_HOST=
+# PRODUCTION_USER=deploy
+# PRODUCTION_SSH_KEY=~/.ssh/viporder_prod_deploy
+# PRODUCTION_URL=https://viporder.com.vn

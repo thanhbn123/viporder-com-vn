@@ -1,0 +1,832 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>VIPORDER - Vận chuyển & nhập hàng Trung Quốc</title>
+  <meta name="description" content="VIPORDER cung cấp dịch vụ vận chuyển Trung Quốc - Việt Nam, nhập khẩu chính ngạch, khai báo hải quan và hỗ trợ đặt hàng 1688, Taobao, Pinduoduo.">
+  <meta name="robots" content="index,follow">
+
+  <link rel="canonical" href="https://viporder.com.vn/">
+
+  <!-- Open Graph (G06). og:image must be an absolute URL: relative values are
+       not resolved by most social crawlers. -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="VIPORDER">
+  <meta property="og:locale" content="vi_VN">
+  <meta property="og:title" content="VIPORDER - Vận chuyển & nhập hàng Trung Quốc">
+  <meta property="og:description" content="VIPORDER cung cấp dịch vụ vận chuyển Trung Quốc - Việt Nam, nhập khẩu chính ngạch, khai báo hải quan và hỗ trợ đặt hàng 1688, Taobao, Pinduoduo.">
+  <meta property="og:url" content="https://viporder.com.vn/">
+  <meta property="og:image" content="https://viporder.com.vn/static/img/og-viporder.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="VIPORDER - Vận chuyển, nhập khẩu và logistics Trung Quốc - Việt Nam">
+
+  <!-- Twitter / X card (G06) -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="VIPORDER - Vận chuyển & nhập hàng Trung Quốc">
+  <meta name="twitter:description" content="VIPORDER cung cấp dịch vụ vận chuyển Trung Quốc - Việt Nam, nhập khẩu chính ngạch, khai báo hải quan và hỗ trợ đặt hàng 1688, Taobao, Pinduoduo.">
+  <meta name="twitter:image" content="https://viporder.com.vn/static/img/og-viporder.png">
+  <meta name="twitter:image:alt" content="VIPORDER - Vận chuyển, nhập khẩu và logistics Trung Quốc - Việt Nam">
+
+  <!-- Icons. favicon.svg is the crisp scalable mark; the PNGs are the fallback
+       for browsers without SVG icon support. All raster brand assets come from
+       tools/make_brand_images.py, which is their single source. -->
+  <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/img/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/static/img/favicon-16.png" sizes="16x16" type="image/png">
+  <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+
+  <!--
+    Structured data (G06). type="application/ld+json" is a DATA block, not
+    executable JavaScript — the browser never evaluates it.
+
+    Every property below is a fact already stated on this page. The following
+    are deliberately ABSENT because VIPORDER does not publish them, and a search
+    result must not be built on an invented fact:
+
+      TODO(g06-content): MISSING FACTS — supply from the business, never guess:
+        - telephone       no support hotline is published anywhere on the site
+        - address         no registered office / PostalAddress is published
+        - sameAs          no official Facebook / Zalo / YouTube profile links
+        - foundingDate    unknown
+        - legalName/taxID no registered entity name or tax code is published
+        - contactPoint    depends on telephone, so blocked by the same gap
+        - potentialAction G04B added a public tracking lookup (#tracking), but it
+                          is a client-side form answered from a JSON API: it has no
+                          crawlable result URL, so there is still no SearchAction
+                          to declare and a search result must not imply one.
+  -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://viporder.com.vn/#organization",
+        "name": "VIPORDER",
+        "url": "https://viporder.com.vn/",
+        "description": "VIPORDER cung cấp dịch vụ vận chuyển Trung Quốc - Việt Nam, nhập khẩu chính ngạch, khai báo hải quan và hỗ trợ đặt hàng 1688, Taobao, Pinduoduo.",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://viporder.com.vn/static/img/apple-touch-icon.png",
+          "width": 180,
+          "height": 180
+        }
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://viporder.com.vn/#website",
+        "name": "VIPORDER",
+        "url": "https://viporder.com.vn/",
+        "inLanguage": "vi-VN",
+        "publisher": { "@id": "https://viporder.com.vn/#organization" }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="/static/css/style.css">
+
+  <!-- External scripts only: tools/check_site.py fails the build on any inline
+       executable <script> body or inline event handler, so every handler is
+       bound from these files. `defer` keeps them off the critical path. -->
+  <script src="/static/js/analytics-attribution.js" defer></script>
+  <script src="/static/js/analytics.js" defer></script>
+  <script src="/static/js/register-validation.js" defer></script>
+  <script src="/static/js/register-errors.js" defer></script>
+  <script src="/static/js/register.js" defer></script>
+  <!-- G04B. tracking-search.js holds the pure rules (keyword boundary, URL
+       building, status-to-state mapping) and MUST be evaluated before tracking.js,
+       which is the DOM controller; `defer` preserves document order. -->
+  <script src="/static/js/tracking-search.js" defer></script>
+  <script src="/static/js/tracking.js" defer></script>
+  <script src="/static/js/contact-links.js" defer></script>
+  <script src="/static/js/app.js" defer></script>
+</head>
+
+<body>
+
+<a class="skip-link" href="#main">Bỏ qua tới nội dung chính</a>
+
+<header class="site-header">
+  <div class="container header-inner">
+
+    <a href="/" class="brand" aria-label="VIPORDER - về trang chủ">
+      <div class="brand-mark" aria-hidden="true">VIP</div>
+      <div class="brand-text">
+        <strong>VIPORDER</strong>
+        <span>China - Vietnam Logistics</span>
+      </div>
+    </a>
+
+    <nav class="desktop-nav" id="primaryNav" aria-label="Điều hướng chính">
+      <a href="#tracking">Tra cứu vận đơn</a>
+      <a href="#services">Dịch vụ</a>
+      <a href="#process">Quy trình</a>
+      <a href="#why">Vì sao chọn VIPORDER</a>
+      <a href="#contact">Liên hệ</a>
+    </nav>
+
+    <a
+      class="btn btn-outline header-login"
+      href="https://khachhang.viporder.com.vn"
+    >
+      Đăng nhập
+    </a>
+
+    <!-- Mobile menu control (G07). Hidden above the 980px breakpoint; the nav
+         it controls is the same landmark used on desktop. -->
+    <button
+      class="nav-toggle"
+      id="navToggle"
+      type="button"
+      aria-expanded="false"
+      aria-controls="primaryNav"
+      aria-label="Mở menu"
+    >
+      <span class="nav-toggle-box" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </span>
+    </button>
+
+  </div>
+</header>
+
+
+<main id="main">
+
+  <section class="hero">
+    <div class="container hero-grid">
+
+      <div class="hero-copy">
+
+        <div class="eyebrow">
+          VẬN CHUYỂN • NHẬP KHẨU • HẢI QUAN
+        </div>
+
+        <h1>
+          Nhập hàng Trung Quốc
+          <span>đơn giản hơn cùng VIPORDER</span>
+        </h1>
+
+        <p class="hero-description">
+          Một hệ thống dành cho khách hàng cần đặt hàng, vận chuyển,
+          nhập khẩu và theo dõi đơn hàng Trung Quốc - Việt Nam.
+        </p>
+
+        <div class="hero-actions">
+
+          <a href="#register" class="btn btn-primary btn-large">
+            Đăng ký mã khách hàng
+          </a>
+
+          <a
+            href="https://khachhang.viporder.com.vn"
+            class="btn btn-secondary btn-large"
+          >
+            Đăng nhập / Kiểm tra đơn
+          </a>
+
+        </div>
+
+        <div class="hero-note">
+          Khách hàng cũ có thể tiếp tục đăng nhập và theo dõi đơn hàng
+          trên hệ thống hiện tại.
+        </div>
+
+      </div>
+
+
+      <div class="hero-card">
+
+        <div class="hero-card-label">
+          HỆ SINH THÁI VIPORDER
+        </div>
+
+        <h2>Một tài khoản cho hành trình nhập hàng</h2>
+
+        <div class="feature-mini">
+          <span>01</span>
+          <div>
+            <strong>Đăng ký mã khách hàng</strong>
+            <p>Tạo mã khách để sử dụng dịch vụ VIPORDER.</p>
+          </div>
+        </div>
+
+        <div class="feature-mini">
+          <span>02</span>
+          <div>
+            <strong>Theo dõi đơn hàng</strong>
+            <p>Đăng nhập hệ thống khách hàng hiện tại.</p>
+          </div>
+        </div>
+
+        <div class="feature-mini">
+          <span>03</span>
+          <div>
+            <strong>Hỗ trợ nhập khẩu</strong>
+            <p>Vận chuyển, hải quan và nhập khẩu chính ngạch.</p>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </section>
+
+
+  <section class="quick-actions">
+
+    <div class="container action-grid">
+
+      <article class="action-card primary-card">
+        <div class="action-icon" aria-hidden="true">+</div>
+
+        <div>
+          <span class="action-label">KHÁCH HÀNG MỚI</span>
+          <h2>Đăng ký mã khách hàng</h2>
+
+          <p>
+            Tạo mã khách hàng VIPORDER để bắt đầu gửi hàng,
+            đặt hàng và sử dụng các dịch vụ.
+          </p>
+
+          <a href="#register" class="text-link">
+            Đăng ký ngay →
+          </a>
+        </div>
+      </article>
+
+
+      <article class="action-card">
+
+        <div class="action-icon" aria-hidden="true">→</div>
+
+        <div>
+          <span class="action-label">KHÁCH HÀNG HIỆN TẠI</span>
+          <h2>Đăng nhập hệ thống</h2>
+
+          <p>
+            Kiểm tra đơn hàng, kiện hàng và thông tin tài khoản
+            trên hệ thống khách hàng cũ.
+          </p>
+
+          <a
+            href="https://khachhang.viporder.com.vn"
+            class="text-link"
+          >
+            Đăng nhập →
+          </a>
+        </div>
+
+      </article>
+
+    </div>
+  </section>
+
+
+  <!-- ==========================================================================
+       TRA CỨU VẬN ĐƠN (G04B) — public, no account, no login.
+
+       Placed BEFORE the service sections on purpose: a customer holding a
+       tracking code is mid-shipment and came to the page for exactly one thing.
+
+       Six states are rendered here, all of them from static/js/tracking.js:
+         IDLE · LOADING · FOUND · NOT_FOUND · INVALID · PROVIDER_ERROR
+       Nothing is inline (no inline script, no on* handler): the section is bound
+       from the external files, so a strict Content-Security-Policy still holds.
+
+       The idle sentence below is duplicated in static/js/tracking-search.js as
+       MESSAGES.IDLE so the section reads correctly with scripts disabled;
+       tools/js/tracking-search.test.js asserts the two stay identical.
+       ======================================================================= -->
+  <section class="section tracking-section" id="tracking">
+
+    <div class="container">
+
+      <div class="section-heading">
+        <span>TRA CỨU VẬN ĐƠN</span>
+        <h2>Kiểm tra hành trình đơn hàng của bạn</h2>
+        <p>
+          Nhập mã vận đơn hoặc mã kiện để xem tình trạng hiện tại.
+          Không cần đăng nhập.
+        </p>
+      </div>
+
+
+      <div class="tracking-card">
+
+        <!-- Two modes. Real <button> elements with aria-pressed, not tabs: the
+             content does not live in panels, it is fetched, so the ARIA tab
+             pattern would promise a relationship that does not exist. -->
+        <div
+          class="tracking-modes"
+          id="trackingModes"
+          role="group"
+          aria-label="Chọn cách tra cứu"
+        >
+          <button
+            class="tracking-mode is-active"
+            type="button"
+            data-mode="warehouse_import"
+            aria-pressed="true"
+          >
+            Tra mã vận đơn
+          </button>
+
+          <button
+            class="tracking-mode"
+            type="button"
+            data-mode="package_sealing"
+            aria-pressed="false"
+          >
+            Tra mã bao
+          </button>
+        </div>
+
+
+        <!-- No method/action: there is no working fallback for a JSON API with
+             scripts disabled, and a GET to the documented path would answer 405.
+             The form element is here for semantics and for Enter-key submission. -->
+        <form class="tracking-form" id="trackingForm">
+
+          <label class="tracking-label" for="trackingKeyword">
+            Mã vận đơn hoặc mã kiện
+          </label>
+
+          <div class="tracking-input-row">
+
+            <input
+              class="tracking-input"
+              id="trackingKeyword"
+              name="keyword"
+              type="text"
+              placeholder="Nhập mã vận đơn / mã kiện"
+              maxlength="64"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+              aria-describedby="trackingStatus"
+              required
+            >
+
+            <button
+              class="btn btn-primary btn-large tracking-submit"
+              id="trackingSubmit"
+              type="submit"
+            >
+              Tra cứu
+            </button>
+
+          </div>
+
+        </form>
+
+
+        <!-- The live region. Every state is announced through this one node, so a
+             screen reader hears the answer wherever focus happens to be. -->
+        <div
+          class="tracking-status"
+          id="trackingStatus"
+          role="status"
+          aria-live="polite"
+          tabindex="-1"
+        >Nhập mã vận đơn hoặc mã kiện rồi bấm Tra cứu.</div>
+
+
+        <!-- Filled only in the FOUND state, always with createElement +
+             textContent: provider text is untrusted and never reaches innerHTML. -->
+        <div class="tracking-results" id="trackingResults" hidden></div>
+
+      </div>
+
+    </div>
+  </section>
+
+
+  <section class="section" id="services">
+
+    <div class="container">
+
+      <div class="section-heading">
+        <span>DỊCH VỤ VIPORDER</span>
+        <h2>Giải pháp nhập hàng Trung Quốc - Việt Nam</h2>
+
+        <p>
+          Từ đặt hàng, vận chuyển đến nhập khẩu và khai báo hải quan.
+        </p>
+      </div>
+
+
+      <!-- data-service values match the service_interest enum documented for
+           POST /api/v1/registrations, so service_view and the lead record line
+           up. Changing one means changing both. -->
+      <div class="services-grid">
+
+        <article class="service-card" data-service="transport">
+          <div class="service-number">01</div>
+
+          <h3>Vận chuyển Trung - Việt</h3>
+
+          <p>
+            Nhận hàng tại Trung Quốc, vận chuyển về Việt Nam
+            và hỗ trợ giao hàng.
+          </p>
+        </article>
+
+
+        <article class="service-card" data-service="official_import">
+          <div class="service-number">02</div>
+
+          <h3>Nhập khẩu chính ngạch</h3>
+
+          <p>
+            Hỗ trợ doanh nghiệp nhập khẩu hàng hóa với bộ chứng từ
+            phù hợp.
+          </p>
+        </article>
+
+
+        <article class="service-card" data-service="customs">
+          <div class="service-number">03</div>
+
+          <h3>Khai báo hải quan</h3>
+
+          <p>
+            Hỗ trợ khai báo, hồ sơ và quy trình thông quan hàng hóa.
+          </p>
+        </article>
+
+
+        <article class="service-card" data-service="order">
+          <div class="service-number">04</div>
+
+          <h3>1688 / Taobao / Pinduoduo</h3>
+
+          <p>
+            Hỗ trợ khách hàng tìm nguồn và đặt hàng từ các nền tảng
+            Trung Quốc.
+          </p>
+        </article>
+
+      </div>
+
+    </div>
+  </section>
+
+
+  <section class="section section-dark" id="process">
+
+    <div class="container">
+
+      <div class="section-heading light-heading">
+        <span>QUY TRÌNH</span>
+        <h2>Bắt đầu với VIPORDER</h2>
+      </div>
+
+
+      <div class="process-grid">
+
+        <div class="process-item">
+          <strong>01</strong>
+          <h3>Đăng ký</h3>
+          <p>Đăng ký thông tin và nhận mã khách hàng.</p>
+        </div>
+
+        <div class="process-item">
+          <strong>02</strong>
+          <h3>Gửi hàng</h3>
+          <p>Sử dụng mã khách khi gửi hoặc đặt hàng.</p>
+        </div>
+
+        <div class="process-item">
+          <strong>03</strong>
+          <h3>Theo dõi</h3>
+          <p>Đăng nhập để kiểm tra tình trạng đơn hàng.</p>
+        </div>
+
+        <div class="process-item">
+          <strong>04</strong>
+          <h3>Nhận hàng</h3>
+          <p>Nhận hàng tại kho hoặc theo phương án giao hàng.</p>
+        </div>
+
+      </div>
+
+    </div>
+  </section>
+
+
+  <section class="section" id="why">
+
+    <div class="container">
+
+      <div class="section-heading">
+        <span>VIPORDER</span>
+        <h2>Một hệ thống phục vụ toàn bộ hành trình khách hàng</h2>
+      </div>
+
+
+      <div class="why-grid">
+
+        <div class="why-card">
+          <strong>01</strong>
+          <h3>Mã khách hàng riêng</h3>
+          <p>
+            Mỗi khách hàng được quản lý bằng mã riêng để sử dụng
+            xuyên suốt hệ thống.
+          </p>
+        </div>
+
+        <div class="why-card">
+          <strong>02</strong>
+          <h3>Theo dõi trực tuyến</h3>
+          <p>
+            Khách hàng cũ tiếp tục sử dụng hệ thống kiểm tra đơn
+            hiện tại.
+          </p>
+        </div>
+
+        <div class="why-card">
+          <strong>03</strong>
+          <h3>Hỗ trợ doanh nghiệp</h3>
+          <p>
+            Có thể mở rộng từ vận chuyển sang nhập khẩu,
+            hải quan và logistics.
+          </p>
+        </div>
+
+      </div>
+
+    </div>
+  </section>
+
+
+  <section class="section register-section" id="register">
+
+    <div class="container register-grid">
+
+      <div class="register-copy">
+
+        <span class="section-kicker">KHÁCH HÀNG MỚI</span>
+
+        <h2>Đăng ký mã khách hàng VIPORDER</h2>
+
+        <p>
+          Điền thông tin để đăng ký tài khoản VIPORDER. Sau khi gửi,
+          hệ thống ghi nhận thông tin đăng ký và trả về mã khách hàng,
+          hoặc trạng thái chờ xử lý nếu hệ thống tạo mã đang bận.
+        </p>
+
+        <ul>
+          <li>Tạo mã khách hàng</li>
+          <li>Ghi nhận nguồn đăng ký</li>
+          <li>Hỗ trợ chăm sóc khách hàng</li>
+          <li>Sử dụng hệ thống kiểm tra đơn hàng hiện tại</li>
+        </ul>
+
+      </div>
+
+
+      <form class="register-form" id="registerForm" method="post" action="/api/v1/registrations">
+
+        <div class="form-title">
+          <strong>Đăng ký khách hàng mới</strong>
+          <span>Thông tin của bạn được dùng để tạo tài khoản và hỗ trợ dịch vụ VIPORDER.</span>
+        </div>
+
+
+        <label>
+          Họ và tên
+          <input
+            type="text"
+            name="full_name"
+            placeholder="Nguyễn Văn A"
+            autocomplete="name"
+            required
+          >
+        </label>
+
+
+        <label>
+          Số điện thoại
+          <input
+            type="tel"
+            name="phone"
+            placeholder="09xxxxxxxx"
+            inputmode="tel"
+            autocomplete="tel"
+            required
+          >
+        </label>
+
+
+        <label>
+          Email
+          <input
+            type="email"
+            name="email"
+            placeholder="ten@congty.com"
+            inputmode="email"
+            autocomplete="email"
+            required
+          >
+        </label>
+
+
+        <label>
+          Mật khẩu
+          <input
+            type="password"
+            name="password"
+            placeholder="Tạo mật khẩu"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          >
+        </label>
+
+
+        <label>
+          Xác nhận mật khẩu
+          <input
+            type="password"
+            name="confirmPassword"
+            placeholder="Nhập lại mật khẩu"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          >
+        </label>
+
+
+        <label>
+          Tỉnh / Thành phố
+          <input
+            type="text"
+            name="province"
+            placeholder="Ví dụ: Bắc Ninh"
+            autocomplete="address-level1"
+          >
+        </label>
+
+
+        <label>
+          Nhu cầu
+          <select name="service">
+            <option value="">Chọn dịch vụ</option>
+            <option value="transport">
+              Vận chuyển Trung - Việt
+            </option>
+            <option value="official_import">
+              Nhập khẩu chính ngạch
+            </option>
+            <option value="customs">
+              Khai báo hải quan
+            </option>
+            <option value="order">
+              Order 1688 / Taobao / Pinduoduo
+            </option>
+          </select>
+        </label>
+
+
+        <!-- The consent checkbox the API already knows is named `acceptTerms`
+             here (G04B) and sent as BOTH `acceptTerms` and the legacy `consent`
+             key — see buildPayload in static/js/register.js for why dropping
+             `consent` would make every registration answer 422. -->
+        <label class="checkbox-row">
+          <input type="checkbox" name="acceptTerms" value="true" required>
+
+          <span>
+            <strong>Chấp nhận điều khoản.</strong>
+            Tôi đồng ý để VIPORDER dùng thông tin trên nhằm tạo tài khoản
+            và hỗ trợ dịch vụ.
+          </span>
+        </label>
+
+
+        <button class="btn btn-primary btn-large full-width" type="submit">
+          Đăng ký mã khách hàng
+        </button>
+
+
+        <div
+          class="form-message"
+          id="formMessage"
+          role="status"
+          aria-live="polite"
+          tabindex="-1"
+        ></div>
+
+
+        <div class="form-success" id="formSuccess" hidden>
+          <a
+            class="btn btn-secondary btn-large full-width"
+            id="formPortalLink"
+            href="https://khachhang.viporder.com.vn"
+          >
+            Đăng nhập / Kiểm tra đơn
+          </a>
+        </div>
+
+
+        <div class="existing-customer">
+
+          Đã có tài khoản?
+
+          <a href="https://khachhang.viporder.com.vn">
+            Đăng nhập tại đây
+          </a>
+
+        </div>
+
+      </form>
+
+    </div>
+  </section>
+
+
+  <section class="contact-section" id="contact">
+
+    <div class="container contact-inner">
+
+      <div>
+        <span>CẦN HỖ TRỢ?</span>
+        <h2>Liên hệ VIPORDER</h2>
+        <p>
+          Đội ngũ VIPORDER hỗ trợ tư vấn vận chuyển,
+          nhập khẩu và khai báo hải quan.
+        </p>
+
+        <!--
+          DIRECT CONTACT CHANNELS — NOT PUBLISHED YET
+
+          TODO(g07-content): VIPORDER has not published a support hotline or a
+          Zalo account anywhere on this site, and one must not be invented. Add
+          the real values here and the tracking already wired in app.js starts
+          reporting phone_click / zalo_click with no further code change:
+
+            <a href="tel:+84XXXXXXXXX" class="contact-link"
+               data-viporder-contact="phone">Hotline: 0xxx xxx xxx</a>
+
+            <a href="https://zalo.me/XXXXXXXXX" class="contact-link"
+               data-viporder-contact="zalo"
+               target="_blank" rel="noopener">Chat Zalo</a>
+        -->
+      </div>
+
+      <a href="#register" class="btn btn-light btn-large">
+        Bắt đầu đăng ký
+      </a>
+
+    </div>
+
+  </section>
+
+</main>
+
+
+<footer class="footer">
+
+  <div class="container footer-grid">
+
+    <div>
+      <strong class="footer-logo">VIPORDER</strong>
+
+      <p>
+        Vận chuyển, nhập khẩu và logistics Trung Quốc - Việt Nam.
+      </p>
+    </div>
+
+    <div>
+      <strong>Khách hàng</strong>
+
+      <a href="#register">Đăng ký mã khách</a>
+
+      <a href="https://khachhang.viporder.com.vn">
+        Đăng nhập
+      </a>
+    </div>
+
+    <div>
+      <strong>Dịch vụ</strong>
+
+      <a href="#services">Vận chuyển Trung - Việt</a>
+      <a href="#services">Nhập khẩu chính ngạch</a>
+      <a href="#services">Khai báo hải quan</a>
+    </div>
+
+  </div>
+
+
+  <div class="container footer-bottom">
+    © <span id="year"></span> VIPORDER. All rights reserved.
+  </div>
+
+</footer>
+
+</body>
+</html>

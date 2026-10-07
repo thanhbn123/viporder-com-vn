@@ -1,0 +1,10 @@
+# Trạng thái triển khai của TỪNG MÁY TRẠM — không vào Git. Nếu state/ được Git
+# theo dõi thì lượt staging đầu tiên làm cây BẨN và production.sh (vốn đòi cây
+# sạch) bị khoá chết. Có ca thử chốt điều này.
+state/
+artifacts/
+deploy.local.conf
+
+# Chứng chỉ TLS và file ghi đè sinh tại máy chủ.
+certs/
+docker-compose.override.yml

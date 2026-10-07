@@ -1,0 +1,90 @@
+# Shared proxy parameters for the VIPORDER.COM.VN application.
+# Place at /etc/nginx/proxy_params_viporder and include from the site config.
+
+proxy_http_version 1.1;
+proxy_set_header Host              $host;
+proxy_set_header X-Real-IP         $remote_addr;
+proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-Host  $host;
+proxy_set_header Connection        "";
+
+proxy_connect_timeout 5s;
+proxy_send_timeout    30s;
+proxy_read_timeout    30s;
+
+# NEVER intercept upstream errors here.
+#
+# The intent of `on` was right — do not let an upstream error page leak internals —
+# but the effect was that the SERVER-level `error_page 404 /404.html;` in
+# viporder.com.vn.conf replaced the application's own JSON with the marketing page.
+# MEASURED on staging at 36caed7:
+#
+#   app   -> 404  application/json  {"error":{"code":"NOT_FOUND","message":"Không tìm thấy mã vận đơn này…"}}
+#   nginx -> 404  text/html         the branded 404 page
+#
+# `static/js/tracking.js` parses that body as JSON, so a customer who mistyped a
+# tracking code got a generic failure instead of the one message that tells them
+# what to do.
+#
+# This file is included by the API locations ONLY, which is why the setting lives
+# here rather than in each of them — one place, not two.
+#
+# The "never leak internals" intent is preserved by the APPLICATION: it returns
+# controlled, sanitised JSON and never a stack trace (tests/ covers this).
+proxy_intercept_errors off;
+proxy_buffering on;
+
+# ---------------------------------------------------------------------------
+# ONE SOURCE PER SECURITY HEADER ON THE PROXY PATH
+# ---------------------------------------------------------------------------
+# The APPLICATION sends its own copies of every security header
+# (backend/app/middleware.py, SecurityHeadersMiddleware). nginx `add_header`
+# ADDS to a proxied response rather than replacing it, so the two tiers STACK on
+# every /api/* response.
+#
+# MEASURED on /api/v1/health before this file hid anything, `curl -D-`:
+#
+#   x-content-type-options   x2
+#   x-frame-options          x2
+#   referrer-policy          x2
+#   permissions-policy       x2
+#   content-security-policy  x2   <- and they were DIFFERENT policies
+#   strict-transport-security x2  <- already hidden, in the site config
+#
+# The duplicate HSTS was fixed first and the other five were missed, because the
+# report said "HSTS" and the check looked for HSTS. Two CSPs is the worse half:
+# browsers INTERSECT multiple policies, so the effective /api/* policy was neither
+# the application's strict one nor nginx's marketing one (which carries
+# `'unsafe-inline'` and googletagmanager). Nobody chose that policy; it was the
+# intersection of two that each tier had chosen.
+#
+# Hiding the upstream's copies leaves the nginx snippet as the single source for
+# every one of the six. This file is included by the API locations ONLY (asserted
+# by tools/check_nginx_config.py), so the hide cannot leak onto a static path,
+# where there is no upstream copy to hide in the first place.
+#
+# Everything the application sends that nginx does NOT set is deliberately left
+# alone — `Cross-Origin-Resource-Policy` and `X-Request-ID` pass through as the
+# application's single source. The guard fails if this list ever hides a header
+# the snippet does not itself define, which would delete the only source.
+proxy_hide_header Strict-Transport-Security;
+proxy_hide_header X-Content-Type-Options;
+proxy_hide_header X-Frame-Options;
+proxy_hide_header Referrer-Policy;
+proxy_hide_header Permissions-Policy;
+# Content-Security-Policy IS DELIBERATELY *NOT* HIDDEN, and this is the one header
+# where de-duplication would make things WORSE.
+#
+# The other five headers carry the SAME value from both tiers, so keeping one copy
+# is correct. CSP is different: nginx sends the MARKETING policy (which needs
+# 'unsafe-inline' and the analytics/font hosts for the static site) while the
+# application sends a STRICT one (no 'unsafe-inline', no third parties).
+#
+# Browsers INTERSECT multiple CSPs — a resource must satisfy every policy — so the
+# two headers together yield the STRICTER of the two. Hiding the application's copy
+# would leave /api/* with only the marketing policy, i.e. a WEAKER effective policy
+# than before the de-duplication work. That regression was measured on staging and
+# is exactly what this comment prevents someone re-introducing.
+#
+# So: leave both. The intersection is the control.

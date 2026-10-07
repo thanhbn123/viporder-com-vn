@@ -1,0 +1,19 @@
+# robots.txt — https://viporder.com.vn/  (gate G06)
+#
+# This is the public marketing site. Everything published here is meant to be
+# crawled and indexed, so no path is disallowed.
+#
+# Serving requirements, already satisfied elsewhere in this repository:
+#   * tools/dev_server.py serves the repository root, so /robots.txt resolves.
+#   * deploy/nginx/viporder.com.vn.conf serves it from the regex location
+#     `^/(robots\.txt|sitemap\.xml|favicon\.ico)$`. (An earlier revision of this
+#     comment claimed a `location = /robots.txt` block; there is no such block.)
+#
+# The 404 page is NOT disallowed here. It carries `noindex`, which is the correct
+# control for an error page: `Disallow` would stop a crawler reading the noindex
+# and can leave the URL indexed without its content.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://viporder.com.vn/sitemap.xml
