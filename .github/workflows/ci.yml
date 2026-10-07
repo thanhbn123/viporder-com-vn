@@ -121,6 +121,26 @@ jobs:
     #
     # GitHub Actions không còn là cửa quyết định triển khai — xem
     # docs/DIRECT-DEPLOY.md. Nó vẫn là lưới an toàn cho mã vào develop/main.
+    #
+    # ⚠ ĐỌC TRƯỚC KHI BẬT LẠI, VÀ TRƯỚC KHI SỬA BRANCH PROTECTION
+    #
+    # Job này KHÔNG còn là required status check của `develop`. Nó đã bị gỡ khỏi
+    # danh sách ngày 07/10/2026, và việc gỡ là CỐ Ý.
+    #
+    # Lý do: dòng `if:` ngay dưới làm job không chạy trên sự kiện `pull_request`,
+    # nên nó báo `skipping` — và GitHub tính MỘT REQUIRED CHECK BỊ SKIP LÀ ĐÃ
+    # THOẢ. Đo được ngày 07/10: PR #79 có `Browser E2E` ở trạng thái `skipping`
+    # mà vẫn `mergeable: MERGEABLE`. Tức là suốt thời gian nó còn nằm trong danh
+    # sách required, nó NÊU TÊN MỘT CỬA KHÔNG THỂ ĐỎ: ai đọc cấu hình bảo vệ
+    # nhánh sẽ tin tầng trình duyệt đang được gác, trong khi không có gì gác cả.
+    # Một chốt canh không thể đỏ thì tệ hơn không có chốt canh, vì nó mua lòng
+    # tin mà không trả lại gì.
+    #
+    # ⚠ ĐÁNH ĐỔI, ghi ra để không ai vấp: gỡ khỏi required nghĩa là NẾU SAU NÀY
+    # BẬT LẠI job (xoá dòng `if:`), nó vẫn KHÔNG chặn merge cho tới khi có người
+    # thêm lại đúng chuỗi "Browser E2E (desktop + mobile)" vào required status
+    # checks của `develop` và `main`. Bật lại job mà quên bước đó = tưởng có gác
+    # mà không có. Làm hai việc đó CÙNG LÚC.
     # ---------------------------------------------------------------------
     if: github.event_name == 'workflow_dispatch'
     name: Browser E2E (desktop + mobile)
