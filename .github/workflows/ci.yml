@@ -44,7 +44,7 @@ jobs:
         with:
           ref: ${{ needs.head.outputs.sha }}
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Assert checked-out revision matches the verified revision
@@ -77,7 +77,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.head.outputs.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Site checks
@@ -150,7 +150,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.head.outputs.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v4
@@ -225,7 +225,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.head.outputs.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -272,7 +272,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.head.outputs.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -310,7 +310,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.head.outputs.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install ruff
@@ -353,7 +353,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.head.outputs.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install bandit
@@ -369,7 +369,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.head.outputs.sha }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install pip-audit
