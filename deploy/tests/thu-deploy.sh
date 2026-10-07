@@ -252,6 +252,39 @@ for path in $(grep -oE '"/static/[^"]+"' "$DEPLOY/verify.sh" | tr -d '"'); do
   if [ -e "$REPO${path}" ]; then ok "có thật: $path"; else bad "verify.sh đo $path nhưng cây KHÔNG có file đó"; fi
 done
 
+grp "11e. Mặt lint tại máy phải phủ ĐÚNG mặt lint của CI"
+# Chốt chéo deploy.conf ↔ ci.yml. Nếu CI thêm một chỗ lint mà deploy.conf không
+# theo, thì `staging.sh` sẽ báo đạt cho thứ CI sắp đánh đỏ — và ngược lại, lint
+# ở máy rộng hơn CI thì sinh dương tính giả. Cả hai chiều đều là lệch phạm vi.
+CI="$REPO/.github/workflows/ci.yml"
+CONF="$DEPLOY/deploy.conf"
+if [ -f "$CI" ] && [ -f "$CONF" ]; then
+  ci_tools=0; grep -q 'ruff check --config backend/pyproject.toml tools' "$CI" && ci_tools=1
+  cf_tools=0; grep -q 'ruff check --config backend/pyproject.toml tools' "$CONF" && cf_tools=1
+  if [ "$ci_tools" = "$cf_tools" ]; then
+    ok "lint tools/ khớp hai bên (ci=$ci_tools · deploy.conf=$cf_tools)"
+  else
+    bad "LỆCH: ci.yml lint tools=$ci_tools nhưng deploy.conf=$cf_tools"
+  fi
+  # Cấm chạy ruff trần ở gốc: không có [tool.ruff] ở gốc nên nó rơi về bộ luật
+  # mặc định của ruff, khác bộ luật dự án.
+  # Dùng chuỗi NHÁY ĐƠN cho mẫu grep: deploy.conf chứa literal "$PY", mà trong
+  # nháy đôi thì bash nở nó ra và script chết với "PY: unbound variable" — đã
+  # dính thật ở lượt chạy đầu của ca này.
+  # Neo bằng dấu nháy đóng, KHÔNG bằng `$`: mỗi phần tử của mảng kết thúc là
+  # `.'` chứ không phải hết dòng — neo `\.$` không khớp gì, và ca thử ngược đầu
+  # tiên đã KHÔNG đỏ vì đúng lỗi đó.
+  # Hai lần sai trước khi đúng, ghi ra để không sửa lại từ đầu:
+  #   · neo `\.$` KHÔNG khớp gì — mỗi phần tử mảng kết thúc bằng `.'`, không hết dòng
+  #   · bỏ lọc `cd backend` thì mẫu bắt luôn dòng HỢP LỆ `'cd backend && … ruff check .'`
+  # Dòng vi phạm là dòng gọi ruff với đường `.` mà KHÔNG đổi vào backend/.
+  if grep -E "[\\$]PY -m ruff (check|format --check) [.]'" "$CONF" | grep -qv 'cd backend'; then
+    bad "deploy.conf có lệnh ruff trần ở gốc repo ⇒ dùng bộ luật mặc định, không phải của dự án"
+  else
+    ok "deploy.conf không có lệnh ruff trần ở gốc repo"
+  fi
+fi
+
 grp "12. Chạy khô không được chạm máy chủ"
 if grep -q 'DEPLOY_DRY_RUN' "$DEPLOY/common.sh" \
    && awk '/^remote_sh\(\)/,/^}/' "$DEPLOY/common.sh" | grep -q 'DEPLOY_DRY_RUN'; then

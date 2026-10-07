@@ -67,17 +67,31 @@ minus Playwright (§8). Measured on this machine (Mac mini, 07/10/2026):
 | Check | Result |
 |---|---|
 | `ruff check .` / `ruff format --check .` **inside `backend/`** | clean, 65 files |
+| `ruff check --config backend/pyproject.toml tools` (+ `format --check`) | clean |
 | `tools/check_repo_hygiene.py`, `check_site.py`, `check_deploy_exposure.py`, `check_compose.py`, `check_nginx_config.py` | all pass |
 | `pytest -q` | 614 passed · 12 skipped |
 | `node --test tools/js/*.test.js` | 0 fail |
 
-> **`ruff` must run inside `backend/`, not at the repository root.** CI sets
-> `working-directory: backend` and the ruff configuration lives in
-> `backend/pyproject.toml`. Run `ruff check .` from the root instead and it lints
-> `tools/` **without that configuration**: measured 24 "errors" and 12 files
-> "needing reformatting" that CI has never seen — every one a false positive.
-> A check whose real scope differs from its assumed scope reports confidently
-> about the wrong thing.
+> **`ruff` is never run bare at the repository root.** There are exactly two
+> correct invocations, and `deploy/deploy.conf` runs both because CI runs both:
+>
+> ```bash
+> cd backend && ruff check .                          # config found by discovery
+> ruff check --config backend/pyproject.toml tools    # config named explicitly
+> ```
+>
+> Run `ruff check .` from the root and there is no `[tool.ruff]` for it to find, so
+> it falls back to **ruff's own default rule set**: measured 24 "errors" and 12
+> files "needing reformatting" that CI has never seen — every one a false positive.
+> A check whose real scope differs from its assumed scope reports confidently about
+> the wrong thing.
+>
+> The project closed the other half of this hole on the same day (PR #75): `tools/`
+> is executed by CI but was linted by nothing, because the backend steps are pinned
+> to `working-directory: backend`. `deploy.conf` follows that change, and test case
+> **11e** asserts the two lint surfaces stay equal — in **both** directions, since
+> linting more than CI produces false positives just as surely as linting less
+> produces false confidence.
 
 Docker is **not installed on this machine**, so nothing here has built an image or
 run the compose stack. That gap is old and recorded: `docs/PROJECT-STATUS.md`
