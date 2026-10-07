@@ -441,3 +441,83 @@ def test_secret_cache_is_bounded() -> None:
         assert f"password-number-{MAX_REMEMBERED_SECRETS + 9:04d}" in _current_secrets()
     finally:
         clear_secrets()
+
+
+# ---------------------------------------------------------------------------
+# ESCAPED ECHOES — the byte-scan above CANNOT see these, which is the point
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "password",
+    [
+        'Mat"khau-2026-x9',  # a double quote -> JSON-escaped as \"
+        "pa\\ss\\word",  # backslashes -> JSON-escaped as \\
+        "mậtkhẩu1",  # non-ASCII -> JSON may emit \uXXXX
+        "line\nbreak9",  # newline -> \n
+        "tab\tsecret9",  # tab -> \t
+        "plain-secret-123",  # the control: an ordinary password
+    ],
+    ids=["quote", "backslash", "vietnamese", "newline", "tab", "plain"],
+)
+def test_an_ESCAPED_echo_of_the_password_is_redacted(password: str) -> None:
+    """A FINDING FROM ADVERSARIAL REVIEW, and it was a real leak.
+
+    `_redacted_excerpt` used a plain `str.replace(secret, ...)`, but an upstream that
+    echoes the request emits the **escaped** form. Measured before the fix::
+
+        body   '{"error":"password pa\\"ss\\\\word rejected"}'
+        secret 'pa"ss\\word'
+        plain replace -> NOTHING redacted
+
+    So any password containing a quote, a backslash, a newline — or **any non-ASCII
+    character, i.e. most Vietnamese passwords** — was written to
+    `leads.last_error_message` and recoverable with one `json.loads`.
+
+    The byte-scan in the test above cannot catch it, because the stored bytes differ
+    from the plaintext. So this test does what an attacker would: it PARSES the
+    persisted text and looks for the secret inside.
+    """
+    import json
+
+    from app.providers.khaibao9610 import _redacted_excerpt
+
+    body = json.dumps({"error": f"invalid credentials for {password}"})
+    # The escaped form really is present, so this is not a vacuous test.
+    assert password != body, "the body must actually be an escaped echo"
+
+    stored = _redacted_excerpt(body, password)
+
+    # A VACUOUS VERSION OF THIS TEST SHIPPED FOR ONE COMMIT. It checked
+    # `json.dumps(json.loads(stored))` — but `json.dumps` RE-ESCAPES, so the
+    # plaintext was never visible to the assertion and the test passed even with the
+    # redaction removed. The negative control caught it.
+    #
+    # The honest check is what an attacker does: decode the stored text and read the
+    # DECODED string values.
+    def decoded_strings(obj: object):
+        if isinstance(obj, str):
+            yield obj
+        elif isinstance(obj, dict):
+            for value in obj.values():
+                yield from decoded_strings(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                yield from decoded_strings(value)
+
+    decoded = " | ".join(decoded_strings(json.loads(stored)))
+    assert password not in decoded, f"RECOVERABLE from the stored text: {stored!r}"
+
+
+def test_an_escaped_echo_does_not_survive_via_unicode_escape() -> None:
+    """The `\\uXXXX` spelling must be redacted as well as the raw character."""
+    import json
+
+    from app.providers.khaibao9610 import _redacted_excerpt
+
+    password = "mậtkhẩu1"
+    stored = _redacted_excerpt(
+        json.dumps({"error": f"password {password}"}, ensure_ascii=True), password
+    )
+    assert password not in stored
+    assert "\\u" not in stored, f"an unredacted escape sequence remains: {stored!r}"

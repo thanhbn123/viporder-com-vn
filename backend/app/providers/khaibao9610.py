@@ -88,19 +88,58 @@ def looks_like_duplicate(body: str) -> bool:
 DIAGNOSTIC_EXCERPT_CHARS = 400
 
 
+def _secret_variants(secret: str) -> set[str]:
+    """Every spelling a secret can take once it has been through JSON or unicode.
+
+    WHY THIS IS NOT JUST `str.replace`. An upstream that echoes the request emits the
+    ESCAPED form of the values, not the raw bytes. Measured:
+
+        body  '{"error":"password pa\\"ss\\\\word rejected"}'
+        secret 'pa"ss\\word'
+        plain replace -> NOTHING redacted
+
+    A password containing a quote, a backslash, a newline or **any non-ASCII
+    character** — which is most Vietnamese passwords — therefore survived redaction
+    and sat in `leads.last_error_message`, recoverable with one `json.loads`. The
+    byte-scan leakage test could not see it, because the stored bytes differ from the
+    plaintext.
+
+    So every escaped spelling is redacted too: JSON-escaped, unicode-escaped, and both
+    unicode normalisations.
+    """
+    import json as _json
+    import unicodedata
+
+    forms = {secret}
+    forms.add(_json.dumps(secret, ensure_ascii=False)[1:-1])  # JSON body escaping
+    forms.add(_json.dumps(secret, ensure_ascii=True)[1:-1])  # \uXXXX escaping
+    forms.add(secret.encode("unicode_escape").decode("ascii"))
+    for form in list(forms):
+        forms.add(unicodedata.normalize("NFC", form))
+        forms.add(unicodedata.normalize("NFD", form))
+    forms.discard("")
+    return forms
+
+
 def _redacted_excerpt(body: str, *secrets: str | None) -> str:
     """A short, REDACTED copy of an upstream body, safe to persist.
 
     Removing the secrets is not optional: an upstream error body can echo the
     request, and this text is written into the database and shown to operators.
-    Empty and whitespace-only bodies return an empty string rather than noise.
+    Redaction covers every escaped spelling — see `_secret_variants`.
+
+    Longest-first so a secret that contains another secret cannot leave a fragment
+    behind.
     """
     text = (body or "").strip()
     if not text:
         return ""
+    variants: set[str] = set()
     for secret in secrets:
         if secret:
-            text = text.replace(secret, "<REDACTED>")
+            variants |= _secret_variants(secret)
+    for variant in sorted(variants, key=len, reverse=True):
+        text = text.replace(variant, "<REDACTED>")
     if len(text) > DIAGNOSTIC_EXCERPT_CHARS:
         text = text[:DIAGNOSTIC_EXCERPT_CHARS] + "…<truncated>"
     return text
@@ -356,41 +395,81 @@ class ViporderFrontendProvider:
         "item",
     )
 
-    _CODE_KEYS = ("customer_code", "customerCode", "code", "ma_khach_hang", "ma_kh")
+    #: Keys that can ONLY mean a customer code. Anything found here is trusted.
+    _CODE_KEYS = ("customer_code", "customerCode", "ma_khach_hang", "ma_kh")
+
+    #: Keys that USUALLY mean a customer code but are also used for an envelope's own
+    #: status. `{"code": 200, "message": "success", "data": {...}}` is the most common
+    #: Laravel-shaped response, and taking that `200` as the customer's code is how a
+    #: customer is handed a number that signs in nowhere — while the real code inside
+    #: `data` is discarded. So a value here is accepted only when it does NOT look
+    #: like a status: a bare number is a status, not a customer.
+    _AMBIGUOUS_CODE_KEYS = ("code",)
     _ID_KEYS = ("customer_id", "customerId", "id", "user_id", "userId")
 
     @classmethod
     def _extract(cls, payload: object) -> tuple[str | None, str | None]:
         """Best-effort pull of (customer_id, customer_code) from a success body.
 
-        SEARCHES THROUGH WRAPPERS, TO A BOUNDED DEPTH. The previous version looked
-        at the top level plus exactly one layer of ``data``/``customer``/``result``,
-        which meant a response like::
+        SEARCHES THROUGH WRAPPERS, TO A BOUNDED DEPTH, IN TWO PASSES.
 
-            {"data": {"customer": {"code": "TT00123"}}}
+        Pass 1 looks only under keys that can ONLY mean a customer code
+        (``customer_code``, ``customerCode``, ``ma_khach_hang``, ``ma_kh``).
 
-        returned ``(None, None)`` — so a REAL customer code was discarded and the
-        registration was reported as unusable. That is the worst possible failure
-        for this function: it turns a success into an apparent contract problem.
+        Pass 2 falls back to the ambiguous ``code`` key — but only for values that do
+        not look like an envelope status.
 
-        Two things keep the wider search honest:
+        THE BUG THIS SHAPE FIXES. A response like::
 
-        * it descends only through :attr:`_WRAPPER_KEYS`, so an unrelated nested
-          ``id`` is not mistaken for the customer's;
-        * depth and node counts are capped, so a pathological body cannot turn this
-          into an unbounded walk.
+            {"code": 200, "message": "success", "data": {"customer_code": "TT00123"}}
 
-        A code and an id found in the SAME object are preferred, because they belong
-        together; failing that, the shallowest of each is taken.
+        used to return ``(None, "200")``: the envelope's own status number was taken
+        as the customer's code and the REAL code inside ``data`` was thrown away. The
+        customer was then told the registration succeeded and handed a code that
+        signs in nowhere, while the lead went ``REGISTERED`` — so the partial unique
+        index blocked that phone permanently and the retry route said "already
+        registered". A wrong code is far worse than no code, because no code is
+        truthful and the evidence is kept for an operator to read.
         """
         if not isinstance(payload, (dict, list)):
             return None, None
 
-        first_code: str | None = None
-        first_id: str | None = None
+        nodes = cls._walk(payload)
+
+        for picker in (cls._pick, cls._pick_ambiguous):
+            first_code: str | None = None
+            first_id: str | None = None
+            for node in nodes:
+                code = picker(
+                    node, cls._CODE_KEYS if picker is cls._pick else cls._AMBIGUOUS_CODE_KEYS
+                )
+                if code is None:
+                    continue
+                identifier = cls._pick(node, cls._ID_KEYS)
+                if identifier is not None:
+                    return identifier, code
+                if first_code is None:
+                    first_code, first_id = code, identifier
+            if first_code is not None:
+                return first_id, first_code
+
+        # No code anywhere. An identifier alone is still a usable success.
+        for node in nodes:
+            identifier = cls._pick(node, cls._ID_KEYS)
+            if identifier is not None:
+                return identifier, None
+        return None, None
+
+    @classmethod
+    def _walk(cls, payload: object) -> list[dict]:
+        """Breadth-first collection of candidate objects, bounded.
+
+        Descends only through named wrapper keys, so an unrelated nested ``id``
+        cannot be mistaken for the customer's.
+        """
+        nodes: list[dict] = []
         seen = 0
         queue: list[tuple[object, int]] = [(payload, 0)]
-
         while queue and seen < cls._MAX_NODES:
             node, depth = queue.pop(0)
             if isinstance(node, list):
@@ -401,24 +480,31 @@ class ViporderFrontendProvider:
             if not isinstance(node, dict):
                 continue
             seen += 1
-
-            code = cls._pick(node, cls._CODE_KEYS)
-            identifier = cls._pick(node, cls._ID_KEYS)
-            if code is not None and identifier is not None:
-                return identifier, code
-            if code is not None and first_code is None:
-                first_code = code
-            if identifier is not None and first_id is None:
-                first_id = identifier
-
+            nodes.append(node)
             if depth >= cls._MAX_DEPTH:
                 continue
             for key in cls._WRAPPER_KEYS:
                 nested = node.get(key)
                 if isinstance(nested, (dict, list)):
                     queue.append((nested, depth + 1))
+        return nodes
 
-        return first_id, first_code
+    @staticmethod
+    def _pick_ambiguous(source: dict, keys: tuple[str, ...]) -> str | None:
+        """Like `_pick`, but REFUSES a value that looks like an envelope status.
+
+        A bare number — `200`, `"0"`, `201` — is a status code, not a customer. So is
+        a digit-only string. A real customer code that happens to be all digits would
+        be refused here, and that is the deliberate direction: the result is
+        `UNUSABLE_RESPONSE`, the customer is told the truth, and the upstream body is
+        preserved for an operator. Handing over a wrong code is worse.
+        """
+        value = ViporderFrontendProvider._pick(source, keys)
+        if value is None:
+            return None
+        if value.isdigit():
+            return None
+        return value
 
     @staticmethod
     def _pick(source: dict, keys: tuple[str, ...]) -> str | None:
@@ -427,9 +513,10 @@ class ViporderFrontendProvider:
             if isinstance(value, bool):
                 continue
             if isinstance(value, int):
-                # A numeric id of 0 is a value; a numeric CODE of 0 is not, because
-                # no customer is called "0". Let the caller's key list decide: ids
-                # accept 0, codes do not.
+                # A numeric id of 0 is a value. A numeric `code` is handled by
+                # `_pick_ambiguous` and refused there; under the UNAMBIGUOUS keys a
+                # number is still accepted, because `customer_code: 12345` can only
+                # mean a customer.
                 if value == 0 and "code" in key.lower():
                     continue
                 return str(value)
