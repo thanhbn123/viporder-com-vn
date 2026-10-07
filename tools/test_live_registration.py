@@ -147,6 +147,12 @@ BROWSER_USER_AGENT = (
 
 READ_BACK_FLAG = "LIVE_REG_READ_BACK"
 
+#: A string under a key containing any of these is redacted BY KEY, whatever its
+#: value. Value-based redaction only covers secrets we already hold; a token the
+#: provider returns under a key `TOKEN_PATHS` does not list (Sanctum's
+#: `plainTextToken`, say) would otherwise reach the evidence file whole.
+SENSITIVE_KEY_PARTS = ("token", "password", "secret", "jwt", "authorization", "bearer")
+
 #: Where an earlier automation of the owner's found the login token (§4.1).
 TOKEN_PATHS = (("access_token",), ("token",), ("data", "access_token"), ("data", "token"))
 
@@ -179,7 +185,12 @@ def _sanitize(
     if depth > 6:
         return "<max depth>"
     if isinstance(value, dict):
-        return {k: _sanitize(v, secret, depth + 1, truncate=truncate) for k, v in value.items()}
+        return {
+            k: "<REDACTED:by-key>"
+            if isinstance(v, str) and any(part in str(k).lower() for part in SENSITIVE_KEY_PARTS)
+            else _sanitize(v, secret, depth + 1, truncate=truncate)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [_sanitize(v, secret, depth + 1, truncate=truncate) for v in value[:20]]
     if isinstance(value, str):

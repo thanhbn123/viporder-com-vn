@@ -559,3 +559,20 @@ def test_every_request_presents_the_backends_browser_user_agent(provider) -> Non
     _run(provider, LIVE_REG_READ_BACK="yes")
     assert _Provider.seen
     assert {r["ua"] for r in _Provider.seen} == {DEFAULT_BROWSER_USER_AGENT}
+
+
+def test_a_token_under_an_unlisted_key_is_still_redacted(provider, tmp_path) -> None:
+    """Value-based redaction only knows the token it extracted. A token under a key
+    the tool does not look for must still not reach the record — redacted by key —
+    and must not be guessed at: no profile request is made without a found token."""
+    sanctum_token = "42|" + "s" * 40
+    _Provider.login_body = json.dumps({"data": {"plainTextToken": sanctum_token}}).encode()
+
+    result = _run(provider, LIVE_REG_READ_BACK="yes", LIVE_REG_EVIDENCE_DIR=str(tmp_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [r["path"] for r in _Provider.seen] == ["/frontend/v1/register", "/frontend/v1/login"]
+    text = _evidence_files(tmp_path)[0].read_text(encoding="utf-8")
+    assert "plainTextToken" in text, "the key name is structure and must stay visible"
+    assert sanctum_token not in text
+    assert sanctum_token not in result.stdout + result.stderr
