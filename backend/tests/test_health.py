@@ -56,9 +56,11 @@ def test_health_reports_db_failure_as_503(make_harness, monkeypatch) -> None:
 
 
 def test_provider_health_helper() -> None:
-    assert provider_health("mock", False) == "ok"
-    assert provider_health("http", True) == "ok"
-    assert provider_health("http", False) == "disabled"
+    assert provider_health("mock", False, False) == "ok"
+    assert provider_health("http", True, False) == "ok"
+    assert provider_health("http", False, True) == "ok"  # writes only: still live
+    assert provider_health("http", True, True) == "ok"
+    assert provider_health("http", False, False) == "disabled"
 
 
 def test_capability_status_helper() -> None:
@@ -88,6 +90,61 @@ def test_health_shows_writes_disabled_when_only_reads_are_enabled(make_harness) 
         "tracking_reads": "live",
         "registration_writes": "disabled",
     }
+    # Reads alone are still "live": the provider IS being reached for real.
+    assert provider["status"] == "ok", provider
+
+
+def test_health_reports_ok_when_only_registration_writes_are_live(make_harness) -> None:
+    """The writes-only configuration — the inverse of the incident, and the hole.
+
+    ``KHAIBAO9610_ENABLE_REAL_REGISTRATION=yes`` with
+    ``KHAIBAO9610_ENABLE_REAL_CALLS=no`` is the ONE configuration in which this
+    application creates real customer accounts on the provider's production API
+    while making no tracking calls at all. Before this test, ``status`` was
+    derived from the READ switch alone, so this exact configuration reported:
+
+        {"mode":"http","status":"disabled",
+         "capabilities":{"tracking_reads":"disabled","registration_writes":"live"}}
+
+    The sibling field said ``live``; the field a monitor reads said ``disabled``.
+    Both are asserted here, so the two can never disagree silently again: this
+    test fails if ``status`` is derived from either switch alone, and it fails if
+    it is hard-coded to ``ok``.
+
+    There was a reads-only test and no writes-only one; the untested half is the
+    half that was wrong.
+    """
+    from app.providers.mock import MockRegistrationProvider
+
+    harness = make_harness(
+        provider=MockRegistrationProvider(),
+        khaibao9610_mode="http",
+        khaibao9610_enable_real_calls=False,
+        khaibao9610_enable_real_registration=True,
+    )
+    provider = harness.client.get("/api/v1/health").json()["checks"]["provider"]
+    assert provider == {
+        "mode": "http",
+        "status": "ok",
+        "capabilities": {
+            "tracking_reads": "disabled",
+            "registration_writes": "live",
+        },
+    }, provider
+
+
+def test_health_reports_disabled_only_when_neither_capability_is_live(make_harness) -> None:
+    """The other direction: "ok" must not be unconditional."""
+    from app.providers.mock import MockRegistrationProvider
+
+    harness = make_harness(
+        provider=MockRegistrationProvider(),
+        khaibao9610_mode="http",
+        khaibao9610_enable_real_calls=False,
+        khaibao9610_enable_real_registration=False,
+    )
+    provider = harness.client.get("/api/v1/health").json()["checks"]["provider"]
+    assert provider["status"] == "disabled", provider
 
 
 def test_health_is_not_rate_limited(make_harness) -> None:

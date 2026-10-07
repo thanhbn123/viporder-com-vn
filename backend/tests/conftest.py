@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import Connection, create_engine, text
 
 # Importing `app.main` builds a module-level app with the ambient environment.
 # Point that at a throwaway location BEFORE the import so merely importing the
@@ -175,15 +175,72 @@ def client(harness: Harness) -> TestClient:
 # G14 — which database did this run ACTUALLY use?
 # ---------------------------------------------------------------------------
 
+#: The PostgreSQL-only module, and what this session collected / executed from it.
+#: Used by the exit guard at the bottom of this file.
+_PG_MODULE = "tests/test_postgres.py"
+_pg_collected: set[str] = set()
+_pg_executed: set[str] = set()
 
-def pytest_report_header(config: pytest.Config) -> list[str]:
-    """Print the engine every run, so no result is ambiguous about its backend.
+#: Sweep findings, printed with the engine banner.
+_SWEEP_NOTES: list[str] = []
 
-    WHY THIS EXISTS. A previous verification of this project reported a green
+#: How many of those notes the banner already printed. Anything appended after
+#: the banner (a failed drop, the PostgreSQL guard) is printed in the terminal
+#: summary instead — otherwise it would be written to a channel nobody reads.
+_NOTES_PRINTED = 0
+
+#: How old (seconds) a leftover ``t_*`` schema must be before it is swept.
+#: Six hours: a live run's schema is seconds old, so a concurrent run is never a
+#: candidate. Overridable so the sweep itself can be measured — see
+#: ``_sweep_stale_schemas``.
+STALE_SCHEMA_SECONDS = 6 * 60 * 60
+
+
+def _suite_engine() -> str:
+    """The engine the HARNESS will use for the default suite.
+
+    ONE SOURCE, and it is the same decision ``_isolated_url`` makes. This is why
+    it is a function rather than an inline expression: the banner used to derive
+    the answer from ``DATABASE_URL``, which is wrong in BOTH directions. With
+    ``DATABASE_URL=<postgres>`` and no ``TEST_DATABASE_URL`` the banner claimed
+    "postgresql" for a run in which every harness test built SQLite.
+    """
+    return "postgresql" if _is_postgres(os.environ.get("TEST_DATABASE_URL", "")) else "sqlite"
+
+
+def _redact_url(url: str) -> str:
+    """Hide the password in a printed URL. A DSN is a credential."""
+    if "://" not in url or "@" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    creds, host = rest.rsplit("@", 1)
+    if ":" not in creds:
+        return url
+    return f"{scheme}://{creds.split(':', 1)[0]}:***@{host}"
+
+
+def pytest_report_collectionfinish(config: pytest.Config, items: list[pytest.Item]) -> str:
+    """Print the engine for EVERY run, including the ``-q`` runs.
+
+    WHY NOT ``pytest_report_header``. The banner used to be a report header, and
+    ``-q`` SUPPRESSES report headers — while ``-q`` is how every documented
+    command and every CI job invokes pytest. MEASURED:
+
+        TEST_DATABASE_URL=<pg> pytest tests/test_engine_identity.py
+          -> banner printed, and it said "default suite engine = sqlite"  (FALSE)
+
+        TEST_DATABASE_URL=<pg> pytest tests/test_engine_identity.py -q
+          -> no banner at all
+
+    So the one thing the banner exists for — no result is ambiguous about its
+    engine — was absent from every run that produces a result. Output from
+    ``pytest_report_collectionfinish`` survives ``-q`` (measured), and it is
+    printed BEFORE the tests, which is where a header belongs.
+
+    WHY IT EXISTS AT ALL. A previous verification of this project reported a green
     "SQLite" run while ``TEST_DATABASE_URL`` — or ``DATABASE_URL`` — was still
     exported in the shell, so **both runs were PostgreSQL** and the default path
     was never measured. The command's *name* said SQLite; the engine did not.
-
     ``os.environ.setdefault`` below is the mechanism that let it happen: an
     inherited ``DATABASE_URL`` wins silently over the intended default. The fix is
     not to remember to ``env -u`` things — it is to make the engine impossible to
@@ -194,17 +251,147 @@ def pytest_report_header(config: pytest.Config) -> list[str]:
     lines = [
         "",
         "database engines for this run:",
-        f"    DATABASE_URL       = {ambient or '<unset>'}",
-        f"    TEST_DATABASE_URL  = {test_url or '<unset>'}",
-        f"    default suite engine = {_scheme(ambient) if ambient else 'sqlite'}",
+        f"    DATABASE_URL         = {_redact_url(ambient) or '<unset>'}",
+        f"    TEST_DATABASE_URL    = {_redact_url(test_url) or '<unset>'}",
+        f"    default suite engine = {_suite_engine()}"
+        f"  <- what `harness`/`make_settings` actually build",
         f"    PostgreSQL-only tests = {'RUN' if _is_postgres(test_url) else 'SKIPPED'}",
     ]
     if _is_postgres(ambient) and not _is_postgres(test_url):
         lines.append(
-            "    *** WARNING: DATABASE_URL points at PostgreSQL but TEST_DATABASE_URL "
-            "is unset. The default suite will use PostgreSQL, NOT SQLite. ***"
+            "    *** WARNING: DATABASE_URL points at PostgreSQL but TEST_DATABASE_URL is "
+            "unset. The harness suite below still builds SQLite (see `_isolated_url`), "
+            "but `app.main`'s module-level app was built against PostgreSQL at import. "
+            "`test_engine_identity.py` fails this run on purpose. ***"
         )
-    return lines
+    lines.extend(_SWEEP_NOTES)
+    global _NOTES_PRINTED
+    _NOTES_PRINTED = len(_SWEEP_NOTES)
+    return "\n".join(lines)
+
+
+def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pytest.Config) -> None:
+    """Print notes that only exist AFTER the run (a failed drop, the guard).
+
+    The banner is printed before collection, so anything appended to
+    ``_SWEEP_NOTES`` later has no other channel. ``write_line`` survives ``-q``.
+    """
+    for note in _SWEEP_NOTES[_NOTES_PRINTED:]:
+        terminalreporter.write_line(note)
+
+
+def pytest_collection_modifyitems(
+    session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    for item in items:
+        if _PG_MODULE in item.nodeid.replace("\\", "/"):
+            _pg_collected.add(item.nodeid)
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    if report.when == "call" and _PG_MODULE in report.nodeid.replace("\\", "/"):
+        _pg_executed.add(report.nodeid)
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Collect schemas orphaned by a previous run before this one starts."""
+    test_url = os.environ.get("TEST_DATABASE_URL", "").strip()
+    if not _is_postgres(test_url):
+        return  # the SQLite run must not touch a server at all
+    try:
+        _sweep_stale_schemas(test_url)
+    except Exception as exc:  # noqa: BLE001 - a broken sweep must not break the run
+        # Logged, never swallowed: a sweep that silently stops working is exactly
+        # the failure this file already has one instance of (`except: pass`).
+        _SWEEP_NOTES.append(
+            f"    schema sweep: FAILED ({type(exc).__name__}: {exc}) — "
+            f"orphaned t_* schemas were NOT collected"
+        )
+
+
+def _schema_age_seconds(conn: Connection, name: str) -> float | None:
+    """Age of a schema, from the newest relation file inside it.
+
+    ``pg_stat_file`` reads the file's ``modification`` time. This needs no
+    bookkeeping inside the schema, so it also dates schemas created before this
+    sweep existed. Returns ``None`` when the schema cannot be dated — an EMPTY
+    schema, or a server where the caller may not read file metadata. Undatable
+    schemas are reported and left alone: guessing is how a live schema gets
+    dropped.
+    """
+    age = conn.execute(
+        text(
+            "SELECT extract(epoch FROM now() - max("
+            "  (pg_stat_file(pg_relation_filepath(c.oid::regclass))).modification)) "
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = :name AND c.relkind IN ('r', 'i', 'S')"
+        ),
+        {"name": name},
+    ).scalar()
+    return None if age is None else float(age)
+
+
+def _sweep_stale_schemas(test_url: str) -> None:
+    """Drop ``t_*`` schemas orphaned by a session that was KILLED.
+
+    WHY. ``pytest_sessionfinish`` drops this session's schemas, but ``kill -9``
+    never runs it. MEASURED: **52** leftover ``t_*`` schemas after one aborted
+    run; 0 after a clean run. Each one holds ~50 tables of catalogue bloat in a
+    database that is shared, and until now nothing ever collected them.
+
+    AGE-BASED, because a CONCURRENT run must not be damaged and age is the only
+    evidence that separates an orphan from a live schema: a live one was written
+    to seconds ago, an orphan hours ago. Threshold ``STALE_SCHEMA_SECONDS``
+    (6 h), overridable through ``VIPORDER_TEST_SCHEMA_STALE_SECONDS`` so the
+    sweep can be measured and negative-controlled without waiting six hours.
+    """
+    threshold = float(os.environ.get("VIPORDER_TEST_SCHEMA_STALE_SECONDS", STALE_SCHEMA_SECONDS))
+    engine = create_engine(test_url)
+    dropped: list[str] = []
+    kept: list[str] = []
+    undatable: list[str] = []
+    failures: list[str] = []
+    try:
+        with engine.connect() as conn:
+            names = [
+                row[0]
+                for row in conn.execute(
+                    text(r"SELECT nspname FROM pg_namespace WHERE nspname LIKE 't\_%' ORDER BY 1")
+                )
+            ]
+            for name in names:
+                if any(schema == name for _, schema in _SCHEMAS_TO_DROP):
+                    continue  # ours, created this session (unreachable, but cheap)
+                try:
+                    age = _schema_age_seconds(conn, name)
+                except Exception as exc:  # noqa: BLE001
+                    undatable.append(f"{name} (cannot read file age: {type(exc).__name__})")
+                    continue
+                if age is None:
+                    undatable.append(f"{name} (empty — no relation to date it by)")
+                    continue
+                if age < threshold:
+                    kept.append(name)
+                    continue
+                try:
+                    conn.execute(text(f'DROP SCHEMA IF EXISTS "{name}" CASCADE'))
+                    conn.commit()
+                    dropped.append(name)
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(f"{name} ({type(exc).__name__}: {exc})")
+    finally:
+        engine.dispose()
+
+    _SWEEP_NOTES.append(
+        f"    stale t_* schema sweep: dropped {len(dropped)}, kept {len(kept)} "
+        f"younger than {threshold:g}s, undatable {len(undatable)}, failed {len(failures)}"
+    )
+    if dropped:
+        _SWEEP_NOTES.append(f"      dropped: {', '.join(dropped)}")
+    if undatable:
+        _SWEEP_NOTES.append(f"      NOT swept (needs a human): {', '.join(undatable)}")
+    if failures:
+        _SWEEP_NOTES.append(f"      DROP FAILED: {', '.join(failures)}")
 
 
 def _isolated_url(tmp_path: Path) -> str:
@@ -223,8 +410,9 @@ def _isolated_url(tmp_path: Path) -> str:
     secretly PostgreSQL.
     """
     test_url = os.environ.get("TEST_DATABASE_URL", "").strip()
-    if not _is_postgres(test_url):
+    if _suite_engine() != "postgresql":
         return f"sqlite:///{tmp_path / (uuid.uuid4().hex + '.db')}"
+    assert _is_postgres(test_url)  # the two answers come from the same place
     schema = "t_" + uuid.uuid4().hex[:16]
     _create_schema(test_url, schema)
     _SCHEMAS_TO_DROP.append((test_url, schema))
@@ -252,15 +440,51 @@ def _create_schema(test_url: str, schema: str) -> None:
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Drop the schemas this run created, so the test database does not grow."""
+    """Drop this run's schemas, and refuse to let a PostgreSQL run prove nothing."""
     for test_url, schema in _SCHEMAS_TO_DROP:
         try:
             engine = create_engine(test_url)
             with engine.begin() as conn:
                 conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
             engine.dispose()
-        except Exception:  # noqa: BLE001 - cleanup must never fail the run
-            pass
+        except Exception as exc:  # noqa: BLE001 - cleanup must not abort the run
+            # LOGGED, not swallowed. `except Exception: pass` here hid a failed
+            # drop for as long as this code existed, and a failed drop is exactly
+            # the leak the sweep at session start exists to clean up.
+            _SWEEP_NOTES.append(f"    schema drop FAILED for {schema}: {type(exc).__name__}: {exc}")
+    _guard_postgres_tests_ran(session)
+
+
+def _guard_postgres_tests_ran(session: pytest.Session) -> None:
+    """A session that SELECTED the PostgreSQL module must EXECUTE it.
+
+    The second half of the fix for a green PostgreSQL job whose assertions never
+    ran. ``pg_url`` now fails loudly instead of skipping, which covers an
+    unreachable server; this covers the rest — a future ``pytest.skip`` inside a
+    test, a fixture that errors, or anything else that turns a collected
+    PostgreSQL test into a non-result. MEASURED before the fix, with an
+    unreachable URL: ``1 passed, 6 skipped``, **exit code 0**.
+
+    Scoped to "collected but not executed", so it does not fire for a run that
+    legitimately selects other files (CI runs ``test_concurrency.py`` with the
+    same ``TEST_DATABASE_URL``) and does not fire on the SQLite run, where these
+    tests are skipped by design and ``TEST_DATABASE_URL`` is unset.
+    """
+    if not _is_postgres(os.environ.get("TEST_DATABASE_URL", "")):
+        return
+    missing = sorted(_pg_collected - _pg_executed)
+    if not missing:
+        return
+    _SWEEP_NOTES.append(
+        f"\nPOSTGRESQL GUARD: TEST_DATABASE_URL is set and {len(_pg_collected)} "
+        f"PostgreSQL test(s) were collected, but {len(missing)} never executed:"
+    )
+    for nodeid in missing:
+        _SWEEP_NOTES.append(f"    {nodeid}")
+    _SWEEP_NOTES.append(
+        "The engine-proof job must execute its assertions. This session is reported as a FAILURE."
+    )
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def _scheme(url: str) -> str:
