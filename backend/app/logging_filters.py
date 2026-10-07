@@ -146,11 +146,15 @@ def scrub_value(value: object, *, key: str | None = None) -> object:
 class PasswordRedactionFilter(logging.Filter):
     """Scrubs log records before any handler formats them.
 
-    Records that carry ``%``-arguments are rendered once, scrubbed, and then
-    frozen (``args`` set to ``()``). That matters: rewriting the template
-    ``"password=%s"`` to ``"password=<redacted>"`` while leaving the argument in
-    place makes ``%``-formatting raise, and a logging error handler is a
-    surprisingly good way to leak the very value you were hiding.
+    Records that carry ``%``-arguments have every argument scrubbed. The record is
+    then rendered once and, **only if that rendering changed**, frozen (``msg`` set
+    to the redacted text and ``args`` to ``()``). The freeze matters when it fires:
+    rewriting the template ``"password=%s"`` to ``"password=<redacted>"`` while
+    leaving the argument in place makes ``%``-formatting raise, and a logging error
+    handler is a surprisingly good way to leak the very value you were hiding.
+
+    Freezing a record that had nothing to hide is not free either: it destroys any
+    formatter that reads ``record.args``, uvicorn's access formatter among them.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -203,13 +207,37 @@ def scrub_record(record: logging.LogRecord) -> None:
         else:
             record.args = scrub_value(record.args, key=None)  # type: ignore[assignment]
 
-        # Render once, scrub, freeze.
+        # Render once and scrub. FREEZE ONLY IF THE RENDERING ACTUALLY CHANGED.
+        #
+        # Freezing unconditionally is what the first version did, and it silently
+        # destroyed uvicorn's access log. uvicorn logs
+        # ``'%s - "%s %s HTTP/%s" %d'`` with five arguments and its own
+        # ``AccessFormatter`` then unpacks ``record.args`` into exactly five names.
+        # With ``args`` frozen to ``()`` that unpack raises
+        # ``ValueError: not enough values to unpack (expected 5, got 0)``, the line
+        # is lost, and a traceback is printed in its place. Measured on staging
+        # 2026-10-07: 238 of them in one container's log, and NO access line at all
+        # — which removes the first layer §12.2 tells an operator to measure from.
+        #
+        # Freezing is only ever needed when scrubbing rewrote the TEMPLATE, because
+        # then the ``%`` placeholders no longer line up with the arguments. The
+        # arguments themselves were already scrubbed one by one above, so when the
+        # rendering is unchanged there is nothing to hide and nothing to break:
+        # leave ``msg`` and ``args`` alone and let any formatter read them.
         try:
             rendered = record.getMessage()
         except Exception:  # noqa: BLE001 - never break logging over a bad format
-            rendered = str(record.msg)
-        record.msg = scrub_text(rendered)
-        record.args = ()
+            # Formatting is already broken; freeze so no handler retries it.
+            record.msg = scrub_text(str(record.msg))
+            record.args = ()
+            return
+        scrubbed = scrub_text(rendered)
+        if scrubbed != rendered:
+            # Something was visible only AFTER interpolation — `password=` in the
+            # template with its value in the arguments is the exact case. Keep the
+            # redacted text and drop the arguments it no longer matches.
+            record.msg = scrubbed
+            record.args = ()
         return
 
     if isinstance(record.msg, str):

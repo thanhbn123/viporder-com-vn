@@ -521,3 +521,89 @@ def test_an_escaped_echo_does_not_survive_via_unicode_escape() -> None:
     )
     assert password not in stored
     assert "\\u" not in stored, f"an unredacted escape sequence remains: {stored!r}"
+
+
+# ---------------------------------------------------------------------------
+# Freezing a record that had nothing to hide destroys the access log.
+#
+# The redaction used to render every ``%``-argument record once and then freeze
+# it (``msg`` = rendered text, ``args`` = ``()``). uvicorn logs its access line
+# as ``'%s - "%s %s HTTP/%s" %d'`` with five arguments and its own
+# ``AccessFormatter`` unpacks ``record.args`` into exactly five names, so the
+# freeze made that unpack raise and the line was replaced by a traceback.
+# Measured on staging 2026-10-07: 238 such tracebacks in one container log and
+# not a single access line — which removes the outermost layer §12.2 of the
+# project rules tells an operator to measure first.
+#
+# These two tests pin both halves: the access line must survive, and a record
+# that really does carry a secret must still be frozen and redacted.
+# ---------------------------------------------------------------------------
+
+
+def _emit(logger_name: str, formatter: logging.Formatter, template: str, *args: object):
+    """Log one record through `formatter` and return (output, stderr)."""
+    out, err = io.StringIO(), io.StringIO()
+    handler = logging.StreamHandler(out)
+    handler.setFormatter(formatter)
+    logger = logging.getLogger(logger_name)
+    previous, logger.handlers = logger.handlers, [handler]
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+    saved_stderr, sys.stderr = sys.stderr, err
+    try:
+        logger.info(template, *args)
+    finally:
+        sys.stderr = saved_stderr
+        logger.handlers = previous
+    return out.getvalue().strip(), err.getvalue()
+
+
+def test_uvicorn_access_line_survives_redaction() -> None:
+    """The record factory must not break a formatter that reads `record.args`."""
+    from uvicorn.logging import AccessFormatter
+
+    from app.logging_filters import install_record_factory
+
+    install_record_factory()
+    written, errors = _emit(
+        "tests.uvicorn.access",
+        AccessFormatter("%(message)s"),
+        '%s - "%s %s HTTP/%s" %d',
+        "127.0.0.1:1",
+        "GET",
+        "/api/v1/health",
+        "1.1",
+        200,
+    )
+    assert "not enough values to unpack" not in errors, (
+        "the access record was frozen and uvicorn's formatter could not read it"
+    )
+    assert errors == "", f"logging raised while formatting the access line: {errors}"
+    assert '"GET /api/v1/health HTTP/1.1" 200' in written
+    assert written != "", "the access line was lost entirely"
+
+
+def test_a_record_that_DOES_carry_a_secret_is_still_frozen_and_redacted() -> None:
+    """The other half: when scrubbing changes the rendering, the freeze must fire.
+
+    `password=` lives in the template and its value in the arguments, so the leak
+    is visible only after interpolation. The rendered line must be redacted and
+    the arguments dropped, because the rewritten template no longer matches them.
+    """
+    from app.logging_filters import REDACTED, install_record_factory, register_secret
+
+    install_record_factory()
+    secret = "Mật-khẩu-Rất-Dài-Không-Trùng-91"
+    register_secret(secret)
+    try:
+        written, errors = _emit(
+            "tests.redaction.frozen",
+            logging.Formatter("%(message)s"),
+            "forwarding password=%s to the provider",
+            secret,
+        )
+    finally:
+        clear_secrets()
+    assert secret not in written, "the password survived into the log line"
+    assert REDACTED in written
+    assert errors == "", f"logging raised: {errors}"
