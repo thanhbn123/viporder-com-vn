@@ -19,6 +19,7 @@ Development only. Never run this in production.
 from __future__ import annotations
 
 import argparse
+import os  # NEGATIVE CONTROL (N-2): intentionally unused — must make ruff fail
 import sys
 import urllib.error
 import urllib.request
