@@ -105,6 +105,24 @@ jobs:
         run: python tools/check_nginx_config.py
 
   browser-e2e:
+    # ---------------------------------------------------------------------
+    # CHUYỂN SANG CHẠY TAY (07/10/2026). Job tốn nhất của workflow này:
+    # `npm ci` + `npx playwright install --with-deps chromium` tải cả trình
+    # duyệt và thư viện hệ thống cho MỖI lượt chạy.
+    #
+    # Nó KHÔNG bị xoá, và độ phủ không bị bỏ — nó chuyển chỗ:
+    #   · tại máy:   npm run test:e2e  (cùng một bộ spec, cùng playwright.config.js)
+    #   · sau deploy: deploy/verify.sh  — đo trên bản ĐANG CHẠY, kể cả chốt
+    #     "thứ không publish phải 404", thứ CI không đo được
+    #   · từ Internet: deploy/post-deploy-check.sh
+    #
+    # Chạy lại trên GitHub: tab Actions → CI → Run workflow.
+    # Bật lại vĩnh viễn: xoá dòng `if:` ngay dưới.
+    #
+    # GitHub Actions không còn là cửa quyết định triển khai — xem
+    # docs/DIRECT-DEPLOY.md. Nó vẫn là lưới an toàn cho mã vào develop/main.
+    # ---------------------------------------------------------------------
+    if: github.event_name == 'workflow_dispatch'
     name: Browser E2E (desktop + mobile)
     runs-on: ubuntu-latest
     needs: head
