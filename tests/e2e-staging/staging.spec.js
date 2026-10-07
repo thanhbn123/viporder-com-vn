@@ -11,6 +11,47 @@ const LOGIN = "https://khachhang.viporder.com.vn";
 const WAREHOUSE = "KY4001103376087-2-4-%7Cs";
 const SEALING = "A1918106";
 
+/* What "really served" has to mean, per asset.
+ *
+ * WHY THIS TABLE EXISTS. The check here used to be `status === 200` and
+ * `body.length > 50`, and that is satisfied by a host that answers **200 +
+ * index.html for every path**. Negative control: a local server returning
+ * index.html for everything made it PASS while robots, sitemap, CSS and JS were
+ * plainly not served — the four assets it names, "really served", all being the
+ * same HTML page. A green check that a broken server also passes is not
+ * evidence, so each asset now names the CONTENT-TYPE it must come back with and
+ * a MARKER that only that file contains.
+ *
+ * `text/html` is refused explicitly for all four: that single assertion is what
+ * makes the everything-is-HTML server fail.
+ */
+const ASSETS = [
+  {
+    path: "/robots.txt",
+    type: /^text\/plain\b/,
+    marker: "User-agent:",
+    what: "robots.txt",
+  },
+  {
+    path: "/sitemap.xml",
+    type: /\bxml\b/,
+    marker: "<urlset",
+    what: "sitemap.xml",
+  },
+  {
+    path: "/static/css/style.css",
+    type: /^text\/css\b/,
+    marker: "--surface-2:",
+    what: "the stylesheet",
+  },
+  {
+    path: "/static/js/app.js",
+    type: /javascript\b/,
+    marker: "VIPORDER",
+    what: "the page script",
+  },
+];
+
 test.describe("staging: public pages", () => {
   test("homepage renders with a real title and one h1", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -22,10 +63,23 @@ test.describe("staging: public pages", () => {
     // Through page.goto, NOT page.request: the APIRequestContext is a separate
     // HTTP stack that ignores Chrome's --host-resolver-rules, so `viporder.com.vn`
     // resolved by real DNS and these checks hit a different server entirely.
-    for (const p of ["/robots.txt", "/sitemap.xml", "/static/css/style.css", "/static/js/app.js"]) {
-      const res = await page.goto(p, { waitUntil: "domcontentloaded" });
-      expect(res.status(), p).toBe(200);
-      expect((await res.body()).length, p).toBeGreaterThan(50);
+    for (const asset of ASSETS) {
+      const res = await page.goto(asset.path, { waitUntil: "domcontentloaded" });
+      expect(res.status(), asset.path).toBe(200);
+
+      const contentType = (res.headers()["content-type"] || "").toLowerCase();
+      expect(contentType, `${asset.path}: content-type is not ${asset.what}`).toMatch(
+        asset.type,
+      );
+      expect(contentType, `${asset.path}: served the HTML page instead`).not.toContain(
+        "text/html",
+      );
+
+      const body = await res.text();
+      expect(body.length, `${asset.path}: body too short to be ${asset.what}`).toBeGreaterThan(
+        50,
+      );
+      expect(body, `${asset.path}: body is not ${asset.what}`).toContain(asset.marker);
     }
   });
 });
