@@ -48,8 +48,20 @@ DESC_MIN, DESC_MAX = 50, 160
 ERROR_PAGE_NAMES = {"404.html", "410.html", "500.html"}
 
 VOID_TAGS = {
-    "area", "base", "br", "col", "embed", "hr", "img", "input",
-    "link", "meta", "param", "source", "track", "wbr",
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
 }
 
 SKIP_ID_CHECK = {"#"}  # placeholder links are rejected separately
@@ -59,8 +71,12 @@ SKIP_ID_CHECK = {"#"}  # placeholder links are rejected separately
 # Anything else — application/ld+json, application/json, text/template — is
 # DATA, is never executed, and must not be treated as an inline-script risk.
 JS_SCRIPT_TYPES = {
-    "", "module", "text/javascript", "application/javascript",
-    "text/ecmascript", "application/ecmascript",
+    "",
+    "module",
+    "text/javascript",
+    "application/javascript",
+    "text/ecmascript",
+    "application/ecmascript",
 }
 DATA_SCRIPT_TYPES = {"application/ld+json", "application/json"}
 
@@ -113,8 +129,8 @@ class Doc(HTMLParser):
         self.tags: list[tuple[str, dict[str, str | None]]] = []
         self.ids: list[str] = []
         self.anchor_hrefs: list[str] = []
-        self.links: list[str] = []          # <link href>
-        self.scripts: list[str] = []        # <script src>
+        self.links: list[str] = []  # <link href>
+        self.scripts: list[str] = []  # <script src>
         self.images: list[tuple[str | None, str | None]] = []
         self.inputs: list[dict[str, str | None]] = []
         self.meta: dict[str, str] = {}
@@ -126,7 +142,7 @@ class Doc(HTMLParser):
         self._in_title = False
         self._title_buf: list[str] = []
         self._tag_counts: dict[str, int] = {}
-        self.jsonld_blocks: list[str] = []   # content of application/ld+json
+        self.jsonld_blocks: list[str] = []  # content of application/ld+json
         self._jsonld_buf: list[str] | None = None
 
     # -- helpers
@@ -201,18 +217,6 @@ class Doc(HTMLParser):
                 del self._stack[i:]
                 break
 
-    def handle_endtag(self, tag):
-        if tag == "script" and self._jsonld_buf is not None:
-            self.jsonld_blocks.append("".join(self._jsonld_buf))
-            self._jsonld_buf = None
-        if tag == "title":
-            self._in_title = False
-            self.title = "".join(self._title_buf).strip()
-        for i in range(len(self._stack) - 1, -1, -1):
-            if self._stack[i] == tag:
-                del self._stack[i:]
-                break
-
     def handle_data(self, data):
         if self._in_title:
             self._title_buf.append(data)
@@ -223,6 +227,7 @@ class Doc(HTMLParser):
 # ---------------------------------------------------------------------------
 # Individual checks
 # ---------------------------------------------------------------------------
+
 
 def check_document(doc: Doc, page: Path, f: Findings) -> None:
     where = page.name
@@ -261,7 +266,10 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
     if not doc.title:
         f.error(where, "missing or empty <title>")
     elif not (TITLE_MIN <= len(doc.title) <= TITLE_MAX):
-        f.warn(where, f"<title> length {len(doc.title)} outside {TITLE_MIN}-{TITLE_MAX}: {doc.title!r}")
+        f.warn(
+            where,
+            f"<title> length {len(doc.title)} outside {TITLE_MIN}-{TITLE_MAX}: {doc.title!r}",
+        )
 
     desc = doc.meta.get("description", "")
     if desc and not (DESC_MIN <= len(desc) <= DESC_MAX):
@@ -287,10 +295,7 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
             f.error(where, f"canonical points at {host!r}, expected {CANONICAL_HOST!r}")
 
     # Inline event handlers (CSP-hostile)
-    inline = [
-        t for t, a in doc.tags
-        if any(k.startswith("on") for k in a)
-    ]
+    inline = [t for t, a in doc.tags if any(k.startswith("on") for k in a)]
     if inline:
         f.error(where, f"inline event handler attributes present on: {sorted(set(inline))}")
 
@@ -300,12 +305,15 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
     # and must not be flagged — flagging them would push people to move
     # structured data out of the page, which is worse for SEO, not better.
     inline_js = [
-        a for t, a in doc.tags
+        a
+        for t, a in doc.tags
         if t == "script" and not a.get("src") and is_executable_script_type(a.get("type"))
     ]
     if inline_js:
-        f.error(where, f"{len(inline_js)} inline executable <script> block(s) "
-                       f"without src (CSP-hostile)")
+        f.error(
+            where,
+            f"{len(inline_js)} inline executable <script> block(s) without src (CSP-hostile)",
+        )
 
     # Structured data must actually parse. A malformed JSON-LD block is worse
     # than none: search engines silently ignore it while the page still looks
@@ -327,8 +335,11 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
         for item in items:
             if not isinstance(item, dict) or "@context" not in item:
                 f.warn(where, f"JSON-LD block #{idx + 1} has an entry without @context")
-        f.warn(where, f"JSON-LD block #{idx + 1} present ({len(items)} entr(ies)) — "
-                      f"verify every property is true, not aspirational")
+        f.warn(
+            where,
+            f"JSON-LD block #{idx + 1} present ({len(items)} entr(ies)) — "
+            f"verify every property is true, not aspirational",
+        )
 
 
 def check_anchors_and_links(doc: Doc, page: Path, f: Findings) -> None:
@@ -365,8 +376,7 @@ def check_anchors_and_links(doc: Doc, page: Path, f: Findings) -> None:
 def check_customer_portal(doc: Doc, page: Path, f: Findings) -> None:
     """BUSINESS RULE: every existing-customer entry point goes to the portal."""
     where = page.name
-    portal_links = [h for h in doc.anchor_hrefs
-                    if urlparse(h).netloc == CUSTOMER_PORTAL_HOST]
+    portal_links = [h for h in doc.anchor_hrefs if urlparse(h).netloc == CUSTOMER_PORTAL_HOST]
 
     # Any login-ish label must resolve to the portal host.
     login_words = ("đăng nhập", "dang nhap", "kiểm tra đơn", "kiem tra don")
@@ -379,7 +389,10 @@ def check_customer_portal(doc: Doc, page: Path, f: Findings) -> None:
         if not is_login:
             continue
         if urlparse(href).netloc != CUSTOMER_PORTAL_HOST:
-            f.error(where, f"login control points at {href!r}, expected {CUSTOMER_PORTAL_HOST}")
+            f.error(
+                where,
+                f"login control points at {href!r}, expected {CUSTOMER_PORTAL_HOST}",
+            )
 
     if not portal_links:
         f.error(where, f"no link to the customer portal {CUSTOMER_PORTAL_HOST} found")
@@ -400,7 +413,10 @@ def check_assets(doc: Doc, page: Path, f: Findings) -> None:
             continue  # external CDN, not our asset
         path = ROOT / ref.lstrip("/")
         if not path.is_file():
-            f.error(where, f"referenced asset does not exist: {ref!r} -> {path.relative_to(ROOT)}")
+            f.error(
+                where,
+                f"referenced asset does not exist: {ref!r} -> {path.relative_to(ROOT)}",
+            )
 
 
 def check_accessibility(doc: Doc, page: Path, f: Findings) -> None:
@@ -415,7 +431,10 @@ def check_accessibility(doc: Doc, page: Path, f: Findings) -> None:
         if (inp.get("type") or "").lower() == "password":
             ac = (inp.get("autocomplete") or "").lower()
             if ac not in ("new-password", "current-password"):
-                f.error(where, "password input needs autocomplete='new-password' or 'current-password'")
+                f.error(
+                    where,
+                    "password input needs autocomplete='new-password' or 'current-password'",
+                )
 
     # Every form control must be labelled: wrapped in a <label>, referenced by
     # label[for], or carrying an ARIA label. Unlabelled inputs are an
@@ -430,8 +449,11 @@ def check_accessibility(doc: Doc, page: Path, f: Findings) -> None:
         referenced = bool(inp.get("id")) and inp["id"] in label_ids
         aria = inp.get("aria-label") or inp.get("aria-labelledby")
         if not (wrapped or referenced or aria):
-            f.error(where, f"form control {inp.get('name') or inp.get('id') or kind!r} "
-                           f"has no associated label")
+            f.error(
+                where,
+                f"form control {inp.get('name') or inp.get('id') or kind!r} "
+                f"has no associated label",
+            )
 
 
 def check_secrets(page: Path, f: Findings) -> None:
@@ -452,9 +474,11 @@ def check_secrets(page: Path, f: Findings) -> None:
 # Runner
 # ---------------------------------------------------------------------------
 
+
 def pages_to_check() -> list[Path]:
-    return sorted(p for p in ROOT.rglob("*.html")
-                  if ".git" not in p.parts and "node_modules" not in p.parts)
+    return sorted(
+        p for p in ROOT.rglob("*.html") if ".git" not in p.parts and "node_modules" not in p.parts
+    )
 
 
 def main() -> int:
@@ -475,8 +499,10 @@ def main() -> int:
         check_assets(doc, page, f)
         check_accessibility(doc, page, f)
         check_secrets(page, f)
-        print(f"  checked {page.relative_to(ROOT)}  "
-              f"(tags={len(doc.tags)} links={len(doc.anchor_hrefs)} ids={len(doc.ids)})")
+        print(
+            f"  checked {page.relative_to(ROOT)}  "
+            f"(tags={len(doc.tags)} links={len(doc.anchor_hrefs)} ids={len(doc.ids)})"
+        )
 
     check_sitemap_excludes_error_pages(f)
 
@@ -487,8 +513,9 @@ def main() -> int:
         print(f"ERROR {e}")
 
     print()
-    print(f"site-checks: {len(pages)} page(s), "
-          f"{len(f.errors)} error(s), {len(f.warnings)} warning(s)")
+    print(
+        f"site-checks: {len(pages)} page(s), {len(f.errors)} error(s), {len(f.warnings)} warning(s)"
+    )
     return 1 if f.errors else 0
 
 

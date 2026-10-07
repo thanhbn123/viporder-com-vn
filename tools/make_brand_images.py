@@ -35,7 +35,7 @@ try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:  # pragma: no cover - developer convenience
     print("Pillow is required:  pip install Pillow", file=sys.stderr)
-    raise SystemExit(2)
+    raise SystemExit(2) from None
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "static" / "img"
@@ -68,9 +68,7 @@ def load_font(size: int) -> ImageFont.FreeTypeFont:
             font = ImageFont.truetype(path, size)
             if font_has_glyphs(font):
                 return font
-    raise SystemExit(
-        "No usable font found. Install one of:\n  " + "\n  ".join(FONT_CANDIDATES)
-    )
+    raise SystemExit("No usable font found. Install one of:\n  " + "\n  ".join(FONT_CANDIDATES))
 
 
 def font_has_glyphs(font: ImageFont.FreeTypeFont) -> bool:
@@ -78,7 +76,7 @@ def font_has_glyphs(font: ImageFont.FreeTypeFont) -> bool:
     probe = "Vận chuyển ậễộớụỹđĐ"
     try:
         mask = font.getmask(probe)
-    except Exception:
+    except Exception:  # noqa: BLE001 - any Pillow failure here means "reject this font"
         return False
     return mask.size[0] > 0
 
@@ -106,14 +104,14 @@ def make_og() -> Path:
     # Red accent block holding the VIP mark.
     pad = 88
     box = 190
-    draw.rounded_rectangle(
-        [pad, pad, pad + box, pad + box], radius=38, fill=RED
-    )
+    draw.rounded_rectangle([pad, pad, pad + box, pad + box], radius=38, fill=RED)
     mark_font = load_font(78)
     tw, th = text_size(draw, "VIP", mark_font)
     draw.text(
         (pad + (box - tw) / 2, pad + (box - th) / 2 - 10),
-        "VIP", font=mark_font, fill=WHITE,
+        "VIP",
+        font=mark_font,
+        fill=WHITE,
     )
 
     # Wordmark.
@@ -129,7 +127,8 @@ def make_og() -> Path:
     dw, dh = text_size(draw, DOMAIN, dom_font)
     draw.line(
         [(W - pad - dw, H - pad - dh - 34), (W - pad, H - pad - dh - 34)],
-        fill=RED, width=6,
+        fill=RED,
+        width=6,
     )
     draw.text((W - pad - dw, H - pad - dh), DOMAIN, font=dom_font, fill=WHITE)
 
@@ -146,7 +145,10 @@ def make_icon(size: int, name: str, text: str, font_ratio: float) -> Path:
     draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=RED)
     # Subtle depth without relying on a gradient at tiny sizes.
     draw.rounded_rectangle(
-        [0, 0, size - 1, size - 1], radius=radius, outline=RED_DARK, width=max(size // 32, 1)
+        [0, 0, size - 1, size - 1],
+        radius=radius,
+        outline=RED_DARK,
+        width=max(size // 32, 1),
     )
     font = load_font(max(round(size * font_ratio), 6))
     tw, th = text_size(draw, text, font)

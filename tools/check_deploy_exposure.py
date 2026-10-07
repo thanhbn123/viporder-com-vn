@@ -53,9 +53,22 @@ PUBLISHED = {"index.html", "404.html", "robots.txt", "sitemap.xml", "static"}
 
 #: Names that must never appear in the manifest, however they are spelled.
 FORBIDDEN = {
-    "backend", "deploy", "tools", "docs", "tests", "var", "node_modules",
-    ".git", ".env", ".venv", "package.json", "package-lock.json",
-    "playwright.config.js", "test-results", "playwright-report", "README.md",
+    "backend",
+    "deploy",
+    "tools",
+    "docs",
+    "tests",
+    "var",
+    "node_modules",
+    ".git",
+    ".env",
+    ".venv",
+    "package.json",
+    "package-lock.json",
+    "playwright.config.js",
+    "test-results",
+    "playwright-report",
+    "README.md",
 }
 
 #: Local URLs the pages reference, so the manifest can be checked for omissions.
@@ -75,7 +88,15 @@ ASSET_RE = re.compile(
 
 #: Schemes/hrefs that are not files in this repository.
 _NOT_LOCAL_PREFIXES = (
-    "http:", "https:", "//", "mailto:", "tel:", "data:", "javascript:", "#", "/api/",
+    "http:",
+    "https:",
+    "//",
+    "mailto:",
+    "tel:",
+    "data:",
+    "javascript:",
+    "#",
+    "/api/",
 )
 
 
@@ -131,8 +152,7 @@ def main() -> int:
         top = e.split("/")[0]
         if top in FORBIDDEN:
             errors.append(
-                f"'{e}' is in the publish list but must never be published "
-                f"(top-level '{top}')"
+                f"'{e}' is in the publish list but must never be published (top-level '{top}')"
             )
         elif top not in PUBLISHED:
             errors.append(

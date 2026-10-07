@@ -283,6 +283,29 @@ jobs:
       - name: ruff format --check
         working-directory: backend
         run: ruff format --check .
+      # -----------------------------------------------------------------------
+      # tools/ is EXECUTED by this workflow (five repo guards + the live-POST
+      # tool) but nothing linted it: the backend steps above are pinned to
+      # `working-directory: backend`. These steps close that hole.
+      #
+      # THEY PASS `--config backend/pyproject.toml` ON PURPOSE. There is no
+      # `[tool.ruff]` at the repository root, so running ruff from here would
+      # fall back to ruff's OWN DEFAULT rule set — a set this project never
+      # chose. That default is both broader and narrower than ours at once:
+      # broader, because it fires ~19 extra findings (RUF100, EXE001, BLE001)
+      # and formats at line-length 88 instead of our 100; narrower, because it
+      # let B904 through, a rule our `select = [..., "B", ...]` does catch.
+      # One repository, one rule set — tools/ is held to exactly the standard
+      # backend/ is.
+      #
+      # The job name above is kept EXACTLY as the required status check in
+      # branch protection; putting the tools/ steps in this job is what makes a
+      # tools/ lint error actually block the pull request.
+      # -----------------------------------------------------------------------
+      - name: ruff check (tools)
+        run: ruff check --config backend/pyproject.toml tools
+      - name: ruff format --check (tools)
+        run: ruff format --check --config backend/pyproject.toml tools
 
   backend-security:
     name: Backend security (bandit)

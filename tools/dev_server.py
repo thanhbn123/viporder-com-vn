@@ -29,8 +29,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 HOP_BY_HOP = {
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+    "content-length",
 }
 
 
@@ -73,9 +81,9 @@ class DevHandler(SimpleHTTPRequestHandler):
             # The front end must see a real failure, not an empty 200.
             message = (
                 '{"error":{"code":"BACKEND_UNREACHABLE",'
-                '"message":"Dev proxy could not reach the backend at %s: %s"}}'
-                % (self.api_base, exc)
-            ).encode("utf-8")
+                f'"message":"Dev proxy could not reach the backend at {self.api_base}: {exc}"'
+                "}}"
+            ).encode()
             self.send_response(502)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(message)))
@@ -93,7 +101,7 @@ class DevHandler(SimpleHTTPRequestHandler):
         if method != "HEAD":
             self.wfile.write(payload)
 
-    def do_GET(self):        # noqa: N802 - stdlib signature
+    def do_GET(self):  # noqa: N802 - stdlib signature
         if self._is_api():
             return self._proxy("GET")
         return super().do_GET()
@@ -128,22 +136,22 @@ class DevHandler(SimpleHTTPRequestHandler):
                 return
         return super().send_error(code, message, explain)
 
-    def do_HEAD(self):       # noqa: N802
+    def do_HEAD(self):  # noqa: N802
         if self._is_api():
             return self._proxy("HEAD")
         return super().do_HEAD()
 
-    def do_POST(self):       # noqa: N802
+    def do_POST(self):  # noqa: N802
         if self._is_api():
             return self._proxy("POST")
         self.send_error(405, "POST is only proxied under /api")
 
-    def do_PUT(self):        # noqa: N802
+    def do_PUT(self):  # noqa: N802
         if self._is_api():
             return self._proxy("PUT")
         self.send_error(405)
 
-    def do_DELETE(self):     # noqa: N802
+    def do_DELETE(self):  # noqa: N802
         if self._is_api():
             return self._proxy("DELETE")
         self.send_error(405)
@@ -160,15 +168,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--bind", default="127.0.0.1")
-    parser.add_argument("--api", default="http://127.0.0.1:8000",
-                        help="backend base URL to proxy /api to")
+    parser.add_argument(
+        "--api",
+        default="http://127.0.0.1:8000",
+        help="backend base URL to proxy /api to",
+    )
     args = parser.parse_args()
 
     DevHandler.api_base = args.api
     handler = partial(DevHandler)
 
     httpd = ThreadingHTTPServer((args.bind, args.port), handler)
-    print(f"VIPORDER dev server")
+    print("VIPORDER dev server")
     print(f"  site  : http://{args.bind}:{args.port}/   (root: {ROOT})")
     print(f"  /api  : -> {args.api}")
     print("  Ctrl-C to stop")

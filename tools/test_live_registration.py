@@ -58,7 +58,14 @@ DEFAULT_BASE = "https://apiviporder.com/frontend/v1"
 
 #: Field names the provider's contract requires, in order. Pinned so a rename
 #: here cannot silently change the wire format.
-PROVIDER_FIELDS = ("name", "phone", "email", "password", "confirmPassword", "acceptTerms")
+PROVIDER_FIELDS = (
+    "name",
+    "phone",
+    "email",
+    "password",
+    "confirmPassword",
+    "acceptTerms",
+)
 
 
 class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
@@ -75,7 +82,11 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         raise urllib.error.HTTPError(
-            req.full_url, code, f"refusing to follow a redirect to {newurl}", headers, fp
+            req.full_url,
+            code,
+            f"refusing to follow a redirect to {newurl}",
+            headers,
+            fp,
         )
 
 
@@ -199,7 +210,11 @@ def main() -> int:
     try:
         opener = urllib.request.build_opener(_RefuseRedirects())
         with opener.open(req, timeout=30) as resp:  # noqa: S310
-            status, ctype, raw = resp.status, resp.headers.get("Content-Type", ""), resp.read()
+            status, ctype, raw = (
+                resp.status,
+                resp.headers.get("Content-Type", ""),
+                resp.read(),
+            )
     except urllib.error.HTTPError as exc:
         # A 30x lands here because `_RefuseRedirects` raised rather than followed it.
         # Say so plainly: an operator must understand this is a RESULT, and that

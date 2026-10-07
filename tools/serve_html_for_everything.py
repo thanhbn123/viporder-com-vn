@@ -79,7 +79,10 @@ class EverythingIsHtml(BaseHTTPRequestHandler):
         self._respond(with_body=False)
 
     def log_message(self, fmt: str, *args: object) -> None:
-        print(f"  html-for-everything: {self.path} -> 200 {self._content_type()}", flush=True)
+        print(
+            f"  html-for-everything: {self.path} -> 200 {self._content_type()}",
+            flush=True,
+        )
 
 
 def main() -> int:

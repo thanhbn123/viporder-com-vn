@@ -62,7 +62,6 @@ def strip_comments(line: str) -> str:
     return "".join(out)
 
 
-
 def strip_comments_block(text: str) -> str:
     """strip_comments() applied line by line.
 
@@ -72,6 +71,7 @@ def strip_comments_block(text: str) -> str:
     the real defect and reported two false ones.
     """
     return "\n".join(strip_comments(line) for line in text.split("\n"))
+
 
 def blocks(text: str) -> list[tuple[str, str, int]]:
     """Return (kind, body, start_line) for each top-level `location` block."""
@@ -96,7 +96,6 @@ def blocks(text: str) -> list[tuple[str, str, int]]:
         else:
             i += 1
     return found
-
 
 
 def main() -> int:
@@ -185,8 +184,7 @@ def main() -> int:
     else:
         ptxt = strip_comments_block(params.read_text(encoding="utf-8"))
         intercept = [
-            ln.strip() for ln in ptxt.split("\n")
-            if ln.strip().startswith("proxy_intercept_errors")
+            ln.strip() for ln in ptxt.split("\n") if ln.strip().startswith("proxy_intercept_errors")
         ]
         if not intercept:
             errors.append(
@@ -202,14 +200,14 @@ def main() -> int:
                 f"those bodies as JSON. It must be `off;`."
             )
         else:
-            notes.append(
-                f"{params.name}: {intercept[-1]} — API error bodies pass through (ok)"
-            )
+            notes.append(f"{params.name}: {intercept[-1]} — API error bodies pass through (ok)")
 
         # The rule above is only sound while the file is API-only.
         includers = [
-            f.name for f in NGINX_DIR.glob("*.conf")
-            if f"include /etc/nginx/{params.name}" in strip_comments_block(f.read_text(encoding="utf-8"))
+            f.name
+            for f in NGINX_DIR.glob("*.conf")
+            if f"include /etc/nginx/{params.name}"
+            in strip_comments_block(f.read_text(encoding="utf-8"))
         ]
         if not includers:
             errors.append(
@@ -300,9 +298,7 @@ def main() -> int:
         #     `proxy_hide_header` and `proxy_intercept_errors` only apply where
         #     this file is included, so a new /api location without the include
         #     silently reintroduces both defects.
-        proxying = [
-            (kind, line) for kind, body, line in locs if "proxy_pass" in body.lower()
-        ]
+        proxying = [(kind, line) for kind, body, line in locs if "proxy_pass" in body.lower()]
         if not proxying:
             errors.append(
                 f"{SITE_CONF.name}: no location proxies — parser broken, or the API "
@@ -325,10 +321,11 @@ def main() -> int:
         print(f"ERROR {err}")
 
     print()
-    print(f"nginx-config: {len(locs)} location block(s), "
-          f"{len(errors)} error(s)")
-    print("scope: add_header/include placement in deploy/nginx/*.conf only — "
-          "this does NOT validate nginx syntax; run `nginx -t` for that.")
+    print(f"nginx-config: {len(locs)} location block(s), {len(errors)} error(s)")
+    print(
+        "scope: add_header/include placement in deploy/nginx/*.conf only — "
+        "this does NOT validate nginx syntax; run `nginx -t` for that."
+    )
     return 1 if errors else 0
 
 

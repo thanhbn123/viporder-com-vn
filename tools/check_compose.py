@@ -101,7 +101,7 @@ def main() -> int:
                 errors.append(
                     f"{conf.name} includes {target}, but the compose nginx service "
                     f"does not mount it. nginx will exit at startup with "
-                    f"`[emerg] open() \"{target}\" failed`."
+                    f'`[emerg] open() "{target}" failed`.'
                 )
 
     # -- 2. the web root must not expose the repository ----------------------
