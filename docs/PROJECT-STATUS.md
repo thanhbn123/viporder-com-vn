@@ -2,12 +2,26 @@
 
 **Repository:** `thanhbn123/viporder-com-vn`
 **Owner:** thanhbn123
-**Last updated:** 2026-10-02
+**Last updated:** 2026-10-07 (re-measured; every number below is annotated with the
+command that produced it and the date it was taken)
 
 This document records **measured** state, not intended state. Every SHA and
 status label here was read from the remote with `git` / `gh api`, or produced by
 a command whose output is quoted. A label is only ever one of `PASS`, `FAIL`,
 `BLOCKED` or `NOT STARTED`.
+
+> **Re-measured 2026-10-07.** This document said "Last updated: 2026-10-02" while
+> the tree had moved 100+ commits past its numbers. Three claims were measurably
+> false and are corrected in place rather than deleted, because a status document
+> that silently rewrites itself cannot be dated:
+>
+> | claim | was | measured 2026-10-07 |
+> |---|---|---|
+> | G10 jobs / required checks | 10 jobs, 11 checks | **12 required checks** (`gh api .../branches/develop/protection`) |
+> | G09 backend tests | 390 | **607 passed, 12 skipped** SQLite / **616 passed, 3 skipped** PostgreSQL |
+> | G09 browser tests | 67 | **75** (`npx playwright test --list`) |
+> | G04 provider contract | "contract not supplied" | supplied and **one live POST made** on 2026-10-07, answered 201; the response schema is still unknown |
+> | G12 staging | "Nothing deployed … Docker was never executed" | **staging deployed and verified** (compose stack on the staging host) |
 
 ---
 
@@ -26,7 +40,7 @@ Two customer paths:
 
 ---
 
-## 2. Measured baseline (2026-10-01)
+## 2. Measured baseline (2026-10-01 — historical)
 
 | Item | Value |
 |---|---|
@@ -38,6 +52,24 @@ Two customer paths:
 | Tracked tree on `develop` | `README.md` `.gitignore` `index.html` `static/css/style.css` `static/js/app.js` |
 
 Owner-supplied SHAs **matched the remote exactly**.
+
+### 2.1 Re-measured baseline (2026-10-07)
+
+| Item | Value | Command |
+|---|---|---|
+| `main` | `c0cbe28` — **untouched throughout** | `git rev-parse --short origin/main` |
+| `develop` | `deeab14` | `git rev-parse --short origin/develop` |
+| Merged pull requests | `60` | `gh pr list --state merged --limit 500 --json number -q length` |
+| Required status checks | **12** | `gh api repos/thanhbn123/viporder-com-vn/branches/develop/protection` |
+| `pytest -q` (SQLite) | `607 passed, 12 skipped` | `env -u DATABASE_URL -u TEST_DATABASE_URL python -m pytest -q` |
+| `pytest -q` (PostgreSQL 16) | `616 passed, 3 skipped` | `TEST_DATABASE_URL=... python -m pytest -q` |
+| `npx playwright test --list` | **75 tests in 7 files** | `npx playwright test --list` |
+| `node --test "tools/js/*.test.js"` | **119 passed** | `node --test "tools/js/*.test.js"` |
+| Repo guards | 5 tools, 0 errors each | `check_repo_hygiene`, `check_site`, `check_deploy_exposure`, `check_compose`, `check_nginx_config` |
+
+The 2026-10-01 table above is kept as history: it is the baseline G00 was signed off
+against, and overwriting it would erase the starting point. Where the two disagree,
+**2.1 is the current state.**
 
 ### Drift found and corrected at G00
 
@@ -62,16 +94,16 @@ redundancy (SHA retained above for recovery).
 | **G01** | Homepage | **PASS** (pre-existing) | merged via PR #1; verified sound, **not rewritten** |
 | **G02** | Registration + lead core | **PASS** | PR #11 → `df9b84ea`; replay CR PR #13 → `4d026def`. Live: exact browser payload → **201**; provider down → **202** `PENDING` with the lead **retained**; duplicate → **409** leaking nothing; **replay of a 409 returns 409 with a byte-identical body** |
 | **G03** | Data / lead store | **PASS, PostgreSQL now executed** | PR #19, PR #24. Repository interface, Alembic `0001`–`0005`, `request_fingerprint`, consent columns, and an **in-flight phone claim** that makes "one attempt per phone at a time" a database invariant — so two concurrent registrations cannot both call the provider. The partial unique index is **proven on real PostgreSQL 16**, in CI: a second `REGISTERED` row for one phone is refused while a `PENDING` one is allowed |
-| **G04** | KHAIBAO9610 integration contract | **BLOCKED_EXTERNAL** | adapter + MOCK shipped; contract not supplied — **issue #4**. `docs/KHAIBAO9610-INTEGRATION.md` |
+| **G04** | KHAIBAO9610 integration contract | **BLOCKED_EXTERNAL (narrowed)** | adapter + MOCK shipped. The contract **was supplied** and is measured: endpoints, field names, both tracking envelopes, both 404 bodies and the bare-list 401 (`docs/KHAIBAO9610-INTEGRATION.md` §4.6–§4.9). **One owner-authorised live registration `POST` was made on 2026-10-07 and answered `201`** (§10.6); the provider's raw response body was not captured, so the success schema and five other facts remain unknown — **issue #4**. This row said "contract not supplied" beside a document that records the supplied contract and the live POST |
 | **G05** | Marketing / analytics | **PASS** | PR #10. All 7 events + `viporder_lead_pending`; UTM captured server-side. **No PII in any payload** — and this is now MACHINE-CHECKED (`tools/js/no-pii-in-analytics.test.js`) rather than verified by reading, which is what this row previously claimed and was not true of. The property is structural: `analytics.js` never names a customer field, so an event cannot carry one. The check is a source tripwire, so it cannot see a value passed in under a neutral name, and it does not read the two third-party loaders' own code. Tracking **dormant** |
 | **G06** | SEO / public website | **PASS** | OG/Twitter, static JSON-LD, `sitemap.xml`, `robots.txt`, favicon + OG image (1200×630), branded **404** served with a real 404 status and 6/6 headers (PR #21). JSON-LD is parsed by CI |
 | **G07** | UX / conversion | **PASS (measured, not seen)** | Two primary actions, accessible mobile nav, success/pending/error states. **Rendered in a real browser** — desktop and a Pixel 7 profile — in CI on every pull request (`tests/e2e/`, gate **G12A**), with WCAG AA contrast computed from the rendered colours and a readable-size floor. **No pixel has ever been LOOKED at**: the reviewer had no image input, so legibility is proven and appearance is not. |
 | **G08** | Security | **PASS, with named residuals** | `docs/SECURITY.md`. Four real defects were found by adversarial review and fixed: password in exception tracebacks; a cross-customer data leak via a reused idempotency key; nginx dropping **all** security headers from the homepage (0/6 → 6/6); and `--workers 2` doubling the in-process rate limit while the app-level proxy setting implied a control it did not provide |
-| **G09** | Testing | **PASS** | **390** backend tests (378 run without a database, 12 skip) plus **67 browser tests**. The backend suite includes 7 PostgreSQL schema tests and 5 concurrency tests; the browser suite covers the three pieces of page logic that decide what is SENT, what is CLASSIFIED and what the customer is TOLD. Plus 3 CI-enforced repo tools. Negative controls run for the site checker, the nginx guard, the deploy check, and by mutation for the backend's own tests |
-| **G10** | CI | **PASS** | `.github/workflows/ci.yml` — **10 jobs producing 11 required checks** (the Python matrix is two), all pinned to the PR **head SHA** and all required before merge. Includes a PostgreSQL service and a negative control for the destructive-test guard |
+| **G09** | Testing | **PASS** | Measured 2026-10-07: **607 passed, 12 skipped** on SQLite and **616 passed, 3 skipped** on PostgreSQL 16, plus **75** browser tests (`npx playwright test --list`) and **119** JS tests (`node --test "tools/js/*.test.js"`). The backend suite includes 7 PostgreSQL schema tests and 5 concurrency tests; the browser suite covers the three pieces of page logic that decide what is SENT, what is CLASSIFIED and what the customer is TOLD. Plus 5 CI-enforced repo tools. Negative controls run for the site checker, the nginx guard, the deploy check, the repo-hygiene scanner, the staging asset check, and by mutation for the backend's own tests. This row said **390** backend tests and **67** browser tests, both measured two rounds earlier |
+| **G10** | CI | **PASS** | `.github/workflows/ci.yml` — **12 required checks** (`gh api repos/thanhbn123/viporder-com-vn/branches/develop/protection`; the Python matrix is two of them), all pinned to the PR **head SHA** and all required before merge. Includes a PostgreSQL service and a negative control for the destructive-test guard. This row said "10 jobs producing 11 required checks" |
 | **G11** | Documentation | **PASS** | `docs/` — architecture, flow, integration, deployment, security, go-live |
-| **G12** | Staging | **PASS (config only)** | PR #6, plus CR PR #15 (`--workers 1`, pinned `--forwarded-allow-ips`, upstream made deployment-specific). **Nothing deployed** — no VPS or DNS access. **Docker was never executed** |
-| **G13** | Release | **BLOCKED_EXTERNAL** | release PR (`develop` → `main`) opened as a **candidate only**, awaiting owner authorization. Staging acceptance cannot be performed without infrastructure, and KHAIBAO9610 is MOCK |
+| **G12** | Staging | **PASS (deployed and verified)** | PR #6, plus CR PR #15 (`--workers 1`, pinned `--forwarded-allow-ips`, upstream made deployment-specific). **Deployed as the compose stack on the staging host** and verified 2026-10-07: `curl -D-` header counts, the staging browser suite, the source-exposure probe, and the two live tracking `GET`s. `registration_writes` stays **DISABLED** there. This row said "Nothing deployed — no VPS or DNS access. Docker was never executed"; the containerised path has now been executed, in staging only |
+| **G13** | Release | **BLOCKED_EXTERNAL** | release PR (`develop` → `main`) opened as a **candidate only**, awaiting owner authorization. Staging acceptance has now been performed (G12); KHAIBAO9610 registration is still MOCK, and the provider's response schema is still unknown |
 
 Statuses in this table are updated by the gate that changes them. If a row and a
 PR disagree, **the PR is wrong** — re-measure. A gate is `PASS` only when the
@@ -148,7 +180,12 @@ does **not** trust `systemctl status`):
 A `PASS` in this document is only valid together with the command output that
 produced it.
 
-### Measurements actually taken (01/10/2026)
+### Measurements actually taken (01/10/2026 — HISTORICAL)
+
+**These are the 2026-10-01 numbers, kept as the record of that round.** They are
+not the current state — see **§2.1** for the re-measured figures. They are left
+standing because the point of this section is what was measured on that date, and
+replacing them would make the document unable to show that anything moved.
 
 | Measurement | Result |
 |---|---|

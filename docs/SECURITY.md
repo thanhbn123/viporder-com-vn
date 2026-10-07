@@ -5,6 +5,20 @@
 
 > Values in the examples below are placeholders. Real tokens, lead IDs and
 > customer codes are never reproduced in this repository.
+>
+> **Erratum, 2026-10-07.** Two statements below were overtaken by changes after
+> `4d026def`, and are kept (this document is revision-pinned) with the correction
+> here rather than silently rewritten:
+>
+> * the provider's opt-in became **two switches** — reads
+>   (`KHAIBAO9610_ENABLE_REAL_CALLS`) and writes
+>   (`KHAIBAO9610_ENABLE_REAL_REGISTRATION`) — so §7's quoted refusal message
+>   ("Set `KHAIBAO9610_ENABLE_REAL_CALLS=yes` together with
+>   `KHAIBAO9610_MODE=http` to make real registrations") is the OLD guard;
+> * the sentence "No live call has ever been made" (below, in the limits list) was
+>   true at this revision and is **false** now: one owner-authorised live
+>   registration `POST` was made on 2026-10-07 and answered `201`. The record is
+>   `docs/KHAIBAO9610-INTEGRATION.md` §10.6.
 
 This document describes the security mechanisms that exist at that revision, and
 — with equal weight — their limits. Every non-obvious claim carries a `file:line`

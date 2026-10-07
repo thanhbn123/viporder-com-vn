@@ -1,5 +1,43 @@
 # FINAL ACCEPTANCE — VIPORDER.COM.VN
 
+> # ⚠ HISTORICAL — THIS IS NOT THE CURRENT STATE
+>
+> Everything from here to §11 was measured at **2026-10-03 00:00 +0700**, at the
+> code candidate **`d43a506`**. It is kept as the record of that acceptance round;
+> it is **not** a description of `develop` today, and its own rule says so:
+>
+> > *"If the tip ever contains a code, test or deploy change beyond the documents
+> > listed, this document is stale and must be re-measured."*
+>
+> The tip does. Since `d43a506` the tree has changed in `backend/`, `static/`,
+> `deploy/nginx/`, `tools/`, `tests/` and `docs/` — so §1's SHAs and PR count, §2's
+> test totals, §3's rehearsal total and §7's registration statement are all out of
+> date, and **§9's "no live registration POST has ever been made" is false**: one
+> owner-authorised POST was made on 2026-10-07 and answered 201
+> (`docs/KHAIBAO9610-INTEGRATION.md` §10.6). The false sentence is corrected in
+> place below **and** the record is kept, because a dated document that quietly
+> rewrites itself is worse than one that admits which parts moved.
+>
+> **Current measured state: §0 below.** Re-measured 2026-10-07.
+
+## 0. Current state — re-measured 2026-10-07 (supersedes §1–§11 where they differ)
+
+| | |
+|---|---|
+| `main` | `c0cbe28` — still untouched, never merged into |
+| `develop` (tip at measurement) | `deeab14` |
+| Merged pull requests | `60` (measured with `gh pr list --state merged --limit 500`) |
+| Required status checks | **12** (`gh api .../branches/develop/protection`) |
+| `pytest -q` (SQLite) | `607 passed, 12 skipped` |
+| `pytest -q` with `TEST_DATABASE_URL` (PostgreSQL 16) | `616 passed, 3 skipped` |
+| `tools/local_rehearsal.sh` | `52 passed, 0 failed, 0 skipped (6 of them new: one per security header on the API path)` |
+| Live registration POSTs ever made | **1** — 2026-10-07 05:53:38 UTC, owner-authorised, answered **201**; the response body was not captured, so the success schema is still unknown (§10.6 of the KHAIBAO9610 document) |
+| Provider switches | **two** capabilities: `KHAIBAO9610_ENABLE_REAL_CALLS` (reads) and `KHAIBAO9610_ENABLE_REAL_REGISTRATION` (writes). `/health`'s `checks.provider.status` is `ok` when either is live |
+
+**Still true, unchanged by the above:** the numbering in §5–§6 (deployment
+security, secret scan), the browser statement in §2 (Chromium only), and §10's
+owner steps — except that a staging host now exists and staging has been verified.
+
 **This document is the acceptance package.** It states what was measured, on what
 revision, by what method — and what is still not true.
 
@@ -89,8 +127,18 @@ SQLite. That is fixed, and these numbers are what the fix produced.
   suite will actually use, and whether the PostgreSQL-only tests will run — **on
   every run**, with a warning when `DATABASE_URL` points at PostgreSQL while
   `TEST_DATABASE_URL` is unset.
+  **Corrected 2026-10-07:** "on every run" was not true as written. The line was a
+  `pytest_report_header`, which `-q` SUPPRESSES — and `-q` is how every documented
+  and CI command invokes pytest — and it derived the "default suite engine" from
+  `DATABASE_URL` rather than from `TEST_DATABASE_URL`, so it could name an engine
+  the suite did not use. Both are fixed: the banner is emitted by
+  `pytest_report_collectionfinish`, which survives `-q` (measured), and its engine
+  line and `_isolated_url` now call one function, `_suite_engine()`.
 * `test_engine_identity.py` asks the **connection** what it is rather than trusting
-  the configured URL, and fails if a run declaring SQLite is PostgreSQL.
+  the configured URL, and fails if a run declaring SQLite is PostgreSQL. Three more
+  tests assert the BANNER itself — that it says `sqlite` when the harness builds
+  SQLite even with a PostgreSQL `DATABASE_URL` set, that it says `postgresql` when
+  it does, and that it never prints a DSN password.
 * The shared harness now isolates on **either** engine: SQLite gets a throwaway
   file, PostgreSQL gets a unique `search_path` schema created before `create_all`
   and dropped at session end.
@@ -227,12 +275,21 @@ Prerequisites before enabling it are recorded in `docs/SECURITY.md` §5.2.
 **The two envelopes differ:** `warehouse-imports` returns a **bare object**;
 `package-sealings` returns **`{"data": {...}}`**.
 
-**Live registration POST: NOT EXECUTED.** No safe test identity has been supplied,
-and creating an uncontrolled customer account on the provider's production system is
-not a decision this side can make. `tools/test_live_registration.py` is
-**READY_FOR_ONE_SHOT_TEST**: one POST per invocation, no retry, password never
-printed, refuses unless the flag, a complete identity and a non-marketing base URL
-are all present. All four refusal paths executed; none sent anything.
+**Live registration POST: NOT EXECUTED *at the time of this measurement*.** No safe
+test identity has been supplied, and creating an uncontrolled customer account on the
+provider's production system is not a decision this side can make.
+`tools/test_live_registration.py` is **READY_FOR_ONE_SHOT_TEST**: one POST per
+invocation, no retry, password never printed, refuses unless the flag, a complete
+identity and a non-marketing base URL are all present. All four refusal paths
+executed; none sent anything.
+
+**LATER — 2026-10-07 05:53:38 UTC:** the owner authorised the test, an identity was
+supplied, and the tool was used **once**. The provider answered **201**. The raw
+response body was not captured, so the success schema is still unknown and this
+section's list of unknowns is otherwise unchanged. Record:
+`docs/KHAIBAO9610-INTEGRATION.md` §10.6. The paragraph above is left as written
+because it was true when it was written; the sentence in §9 that generalised it into
+"never" was not, once this happened.
 
 **Issue #4 narrowed from 12 unknowns to 6.** Remaining: exact success response
 (and whether it returns the customer code), duplicate response, validation-error
@@ -278,11 +335,24 @@ Stated plainly, because a green CI run does not make these true:
 
 1. **Nothing is deployed.** No staging host, no production deploy, no DNS change,
    no contact with the live Apache host.
+   *Later, 2026-10-07:* a **staging** host exists and is deployed and verified (see
+   §0). "No production deploy, no DNS change, no contact with the live Apache host"
+   is still true.
 2. **No live registration POST has ever been made.** `MOCK` is not working
-   registration.
+   registration. — **FALSE since 2026-10-07 05:53:38 UTC.** Exactly one
+   owner-authorised POST has been made, and it was accepted with 201; the second
+   half stands: `MOCK` is still not working registration, and the provider's
+   response mapping is still unobserved. Record:
+   `docs/KHAIBAO9610-INTEGRATION.md` §10.6.
 3. **Docker has never been executed.** Every container statement is
    configuration-derived.
+   *Later, 2026-10-07:* the staging host runs the **compose** stack, so the
+   containerised path has now been executed — in staging, not in the local
+   rehearsal and not in production.
 4. **Staging has never been verified**, because staging does not exist.
+   *Later, 2026-10-07:* staging exists and has been verified (`curl -D-`, the
+   staging browser suite, and the two live tracking `GET`s). What is still
+   unverified is a **production** cutover.
 5. **The real provider contract is incomplete** — six items, issue #4.
 6. **Only Chromium is supported.** No Firefox, no WebKit.
 7. **More than one uvicorn worker is untested**; `--workers 1` is pinned because the
