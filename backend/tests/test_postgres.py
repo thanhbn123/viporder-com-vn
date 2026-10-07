@@ -19,9 +19,11 @@ production database actually has to get right **cannot** be verified on SQLite:
 Before this file existed, all three were documented as "never executed on
 PostgreSQL". That was an honest gap, and this closes it.
 
-These tests are **skipped** unless ``TEST_DATABASE_URL`` points at a PostgreSQL
-server, so the default SQLite run is completely unaffected. CI sets it and runs a
-``postgres:16`` service. Locally:
+These tests are **skipped** when ``TEST_DATABASE_URL`` is unset, so the default
+SQLite run is completely unaffected. When it IS set, the run must actually happen:
+an unreachable server is a **failure**, not a skip — see ``pg_url`` and the
+session guard in ``conftest.py``. CI sets it and runs a ``postgres:16`` service.
+Locally:
 
     TEST_DATABASE_URL=postgresql+psycopg://user@127.0.0.1:5432/db \\
         python -m pytest tests/test_postgres.py -v
@@ -70,8 +72,29 @@ def _run_alembic(url: str, *args: str) -> subprocess.CompletedProcess:
 
 @pytest.fixture(scope="module")
 def pg_url() -> str:
+    """The URL to test against — or a LOUD FAILURE, never a skip.
+
+    WHY THIS IS `fail` AND NOT `skip`. ``TEST_DATABASE_URL`` being unset is the
+    normal, expected SQLite run, and the module-level ``skipif`` above handles it
+    cleanly. But once it IS set, somebody has explicitly asked for PostgreSQL —
+    and an unreachable server used to produce:
+
+        MEASURED with an unreachable URL:
+        1 passed, 6 skipped — EXIT CODE 0
+
+    That is a GREEN engine-proof job in which none of the engine-specific
+    assertions ran. It is the same class of defect as the green "SQLite" run that
+    was secretly PostgreSQL, in the other direction: the run says PostgreSQL, the
+    evidence says nothing happened, and CI reports success. A job whose entire
+    purpose is to execute these seven tests must not pass by executing one of
+    them. ``conftest.py`` carries the second half of this guard: a session that
+    collects the PostgreSQL module and does not execute it fails at exit.
+    """
     if not URL.startswith("postgresql"):
-        pytest.skip(f"TEST_DATABASE_URL is not a PostgreSQL URL: {URL!r}")
+        pytest.fail(
+            f"TEST_DATABASE_URL is set but is not a PostgreSQL URL: {URL!r} — "
+            f"refusing to report a green PostgreSQL run that never touched PostgreSQL"
+        )
     name = URL.rsplit("/", 1)[-1].split("?")[0].lower()
     if not name or any(h in name for h in _FORBIDDEN_HINTS):
         pytest.fail(
@@ -82,8 +105,13 @@ def pg_url() -> str:
     try:
         with engine.connect() as conn:
             conn.execute(sa.text("SELECT 1"))
-    except Exception as exc:  # pragma: no cover - environment problem
-        pytest.skip(f"cannot reach PostgreSQL at TEST_DATABASE_URL: {exc}")
+    except Exception as exc:
+        pytest.fail(
+            f"TEST_DATABASE_URL is set but PostgreSQL is unreachable ({exc}). "
+            f"This is a FAILURE, not a skip: skipping here produced a green job in "
+            f"which every PostgreSQL assertion was silently never executed. Start "
+            f"the server, or unset TEST_DATABASE_URL to run the SQLite suite."
+        )
     finally:
         engine.dispose()
     return URL

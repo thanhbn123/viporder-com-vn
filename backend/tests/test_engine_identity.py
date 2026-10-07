@@ -16,6 +16,7 @@ import os
 import pytest
 from sqlalchemy import text
 
+from tests import conftest
 from tests.conftest import _is_postgres, _scheme
 
 
@@ -62,3 +63,62 @@ def test_the_url_scheme_is_one_the_application_supports() -> None:
                 "postgresql",
                 "postgresql+psycopg",
             ), f"{var}={url!r} has an unsupported scheme"
+
+
+# ---------------------------------------------------------------------------
+# G14 — the ENGINE BANNER is part of the evidence, so it is tested too
+# ---------------------------------------------------------------------------
+
+
+def _banner() -> str:
+    """The banner exactly as a run emits it. `config` is unused by the hook."""
+    return conftest.pytest_report_collectionfinish(None, [])  # type: ignore[arg-type]
+
+
+def test_the_banner_reports_sqlite_when_the_harness_builds_sqlite(monkeypatch) -> None:
+    """The banner is WRONG in both directions if it reads DATABASE_URL.
+
+    MEASURED before the fix: with ``DATABASE_URL=<postgres>`` and
+    ``TEST_DATABASE_URL`` unset, the banner said "default suite engine =
+    postgresql" while every `harness` test in that run built SQLite — and
+    ``-q``, which is how every documented and CI run is invoked, suppressed the
+    banner entirely. This test fails if the banner goes back to reading the
+    ambient URL, and it fails if the banner stops being emitted at all.
+    """
+    monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u@127.0.0.1:5432/db")
+
+    assert conftest._suite_engine() == "sqlite"
+    banner = _banner()
+    assert "default suite engine = sqlite" in banner, banner
+    assert "PostgreSQL-only tests = SKIPPED" in banner, banner
+    # The ambient URL is still REPORTED — it is real, and it is what the
+    # module-level app was built from; it just must not be called the suite engine.
+    assert "DATABASE_URL         = postgresql+psycopg://u@127.0.0.1:5432/db" in banner, banner
+    assert "WARNING" in banner, banner
+
+
+def test_the_banner_reports_postgresql_when_the_harness_builds_postgresql(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_DATABASE_URL", "postgresql+psycopg://u@127.0.0.1:5432/viporder_test")
+    assert conftest._suite_engine() == "postgresql"
+    banner = _banner()
+    assert "default suite engine = postgresql" in banner, banner
+    assert "PostgreSQL-only tests = RUN" in banner, banner
+
+
+def test_the_banner_never_prints_a_password() -> None:
+    """A DSN is a credential, and the banner is printed into CI logs."""
+    url = "postgresql+psycopg://viporder:hunter2-not-a-real-secret@127.0.0.1:5432/db"
+    assert conftest._redact_url(url) == ("postgresql+psycopg://viporder:***@127.0.0.1:5432/db")
+    # Also through the real banner path.
+    import os as _os
+
+    original = _os.environ.get("TEST_DATABASE_URL")
+    _os.environ["TEST_DATABASE_URL"] = url
+    try:
+        assert "hunter2-not-a-real-secret" not in _banner()
+    finally:
+        if original is None:
+            _os.environ.pop("TEST_DATABASE_URL", None)
+        else:
+            _os.environ["TEST_DATABASE_URL"] = original

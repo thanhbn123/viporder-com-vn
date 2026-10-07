@@ -13,11 +13,29 @@ from fastapi.responses import JSONResponse
 router = APIRouter(tags=["health"])
 
 
-def provider_health(mode: str, real_calls_enabled: bool) -> str:
-    """Overall provider status. True when EITHER capability is live."""
+def provider_health(mode: str, real_calls_enabled: bool, real_registration_enabled: bool) -> str:
+    """Overall provider status: ``ok`` when EITHER capability is live.
+
+    WHY **BOTH** ARGUMENTS. The two capabilities were once one switch; they were
+    split (see ``khaibao9610_enable_real_registration`` in ``app/config.py``) so
+    that live tracking reads could be enabled WITHOUT arming live registration
+    writes. This field, however, kept reading only the READ switch — so the one
+    configuration that arms customer creation reported ``disabled`` on the field
+    named for exactly that purpose, while a sibling field said ``live``.
+    MEASURED before the fix, from ``GET /api/v1/health``:
+
+        mode=http, ENABLE_REAL_CALLS=no, ENABLE_REAL_REGISTRATION=yes
+        -> {"mode":"http","status":"disabled",
+            "capabilities":{"tracking_reads":"disabled","registration_writes":"live"}}
+
+    A monitor that reads ``status`` — the obvious field, and the one the docs
+    point at — got a false all-clear on a site that was creating real customer
+    accounts on the provider's production API. Either capability live means the
+    provider is live.
+    """
     if mode == "mock":
         return "ok"
-    return "ok" if real_calls_enabled else "disabled"
+    return "ok" if (real_calls_enabled or real_registration_enabled) else "disabled"
 
 
 def capability_status(mode: str, enabled: bool) -> str:
@@ -42,7 +60,11 @@ def health(request: Request) -> JSONResponse:
             "database": "ok" if database_ok else "error",
             "provider": {
                 "mode": mode,
-                "status": provider_health(mode, settings.khaibao9610_enable_real_calls),
+                "status": provider_health(
+                    mode,
+                    settings.khaibao9610_enable_real_calls,
+                    settings.khaibao9610_enable_real_registration,
+                ),
                 # Reported SEPARATELY. An operator must be able to see whether
                 # customer creation is live without reading the env file — the two
                 # capabilities used to share one switch, and that is what let a
