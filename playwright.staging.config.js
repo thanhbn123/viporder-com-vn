@@ -6,18 +6,28 @@
  * gate depend on a staging server that does not exist in CI. This config drives the
  * SAME specs against a real deployment instead.
  *
- * USAGE:
- *   STAGING_URL=https://160.22.170.20:18443 \
- *   STAGING_HTTPS=1 npx playwright test -c playwright.staging.config.js
+ * USAGE — use the HOSTNAME, never the bare IP:
+ *   STAGING_URL=https://viporder.com.vn:18443 \
+ *   STAGING_HTTPS=1 \
+ *   STAGING_HOST=viporder.com.vn \
+ *   STAGING_IP=160.22.170.20 \
+ *   npx playwright test -c playwright.staging.config.js
  *
- * The staging host serves the production `server_name`, so requests carry
- * `Host: viporder.com.vn`; the certificate is self-signed for
- * `staging.viporder.com.vn`, so verification is skipped HERE AND NOWHERE ELSE.
+ * WHY THE HOSTNAME. `--host-resolver-rules` below maps the NAME to the staging
+ * IP, and the staging vhost matches on `server_name`. With the bare IP as the
+ * base URL the browser reaches the DEFAULT vhost instead, which 301s away —
+ * MEASURED: `STAGING_URL=https://160.22.170.20:18443` makes all 16 staging tests
+ * fail, which reads as a broken deployment and is a broken command line. (The
+ * value is also in the certificate: it is self-signed for
+ * `staging.viporder.com.vn`, so verification is skipped HERE AND NOWHERE ELSE.)
+ *
+ * `tests/e2e-staging/README.md` has always had the correct form; this comment
+ * did not, and the comment is what gets copied.
  */
 const { defineConfig, devices } = require("@playwright/test");
 
 const BASE = process.env.STAGING_URL;
-if (!BASE) throw new Error("STAGING_URL is required, e.g. https://160.22.170.20:18443");
+if (!BASE) throw new Error("STAGING_URL is required, e.g. https://viporder.com.vn:18443");
 
 module.exports = defineConfig({
   testDir: "./tests/e2e-staging",
