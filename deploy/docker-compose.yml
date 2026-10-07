@@ -62,6 +62,27 @@ services:
       # KHAIBAO9610_ENABLE_REAL_CALLS=yes — see docs/KHAIBAO9610-INTEGRATION.md
       KHAIBAO9610_MODE: ${KHAIBAO9610_MODE:-mock}
       KHAIBAO9610_ENABLE_REAL_CALLS: ${KHAIBAO9610_ENABLE_REAL_CALLS:-no}
+      # SEPARATE write switch. It was added to config.py and to the systemd env
+      # example but NOT here, so under compose the container never saw it and the
+      # capability was unreachable — `registration_writes` stayed `disabled` with
+      # `.env` set to `yes`. A setting nobody wires into the deployment is invisible
+      # until someone tries to use it.
+      KHAIBAO9610_ENABLE_REAL_REGISTRATION: ${KHAIBAO9610_ENABLE_REAL_REGISTRATION:-no}
+      # The remaining provider settings, so compose can express everything
+      # `Settings` can. They previously fell back to their defaults, which meant a
+      # deployment could not point the adapter at a different base URL, change the
+      # timeout, or adjust the paths — invisible until someone needed to.
+      #
+      # Defaults are repeated here rather than inlined from config.py because a
+      # compose file cannot import Python; a test asserts compose passes every
+      # provider setting, so a NEW setting cannot be forgotten silently.
+      KHAIBAO9610_BASE_URL: ${KHAIBAO9610_BASE_URL:-https://apiviporder.com/frontend/v1}
+      KHAIBAO9610_TIMEOUT_SECONDS: ${KHAIBAO9610_TIMEOUT_SECONDS:-10.0}
+      KHAIBAO9610_USER_AGENT: ${KHAIBAO9610_USER_AGENT:-Mozilla/5.0 (compatible; VIPORDER/1.0)}
+      KHAIBAO9610_REGISTER_PATH: ${KHAIBAO9610_REGISTER_PATH:-/register}
+      KHAIBAO9610_WAREHOUSE_IMPORT_PATH: ${KHAIBAO9610_WAREHOUSE_IMPORT_PATH:-/warehouse-imports/{keyword}}
+      KHAIBAO9610_PACKAGE_SEALING_PATH: ${KHAIBAO9610_PACKAGE_SEALING_PATH:-/package-sealings/{keyword}}
+      KHAIBAO9610_MAX_RESPONSE_BYTES: ${KHAIBAO9610_MAX_RESPONSE_BYTES:-2097152}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
     # NOT published to the host. Only the nginx service reaches this, over the
     # private compose network. Publishing it would expose an application that
