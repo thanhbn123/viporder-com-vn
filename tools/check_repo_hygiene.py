@@ -70,11 +70,39 @@ PLACEHOLDER_VALUES = {
     "xxx", "todo", "example", "placeholder", "none", "null",
 }
 
-TEXT_SUFFIXES = {
-    ".py", ".js", ".mjs", ".cjs", ".ts", ".html", ".css", ".json", ".yml",
-    ".yaml", ".toml", ".ini", ".cfg", ".md", ".txt", ".sh", ".env", ".example",
-    ".sql", ".conf",
-}
+#: Names that mean "this file is a key" even when the CONTENT scan cannot read
+#: it (a DER/PKCS#12 blob is binary, so sniffing alone would skip it). Kept
+#: specific on purpose: `...password...` was tried and matched
+#: `backend/tests/test_password_leakage.py`, and a guard that cries wolf gets
+#: switched off.
+KEY_ISH_BASENAMES = re.compile(
+    r"(^|/)(id_rsa|id_dsa|id_ecdsa|id_ed25519|deploy[_-]?key|private[_-]?key"
+    r"|secret[_-]?key|signing[_-]?key|service[_-]?account)(\.[a-z0-9]+)?$",
+    re.IGNORECASE,
+)
+
+#: A file is TEXT if it decodes as UTF-8 and contains no NUL byte. This replaced
+#: a suffix allow-list.
+#:
+#: WHY THE ALLOW-LIST WAS THE BUG. The content scan ran only for files whose
+#: suffix was in `TEXT_SUFFIXES`, so the gate skipped exactly the inputs it exists
+#: to catch: a tracked file named `deploy_key` holding a PEM private key was NOT
+#: scanned (MEASURED: exit 0), while the same bytes in `notes.txt` were
+#: (MEASURED: exit 1). An allow-list fails OPEN on every name nobody thought of,
+#: and "private key block" is in this tool's own docstring.
+_NUL_BYTES = b"\x00"
+SNIFF_BYTES = 8192
+
+
+def looks_like_text(data: bytes) -> bool:
+    """Sniff the CONTENT — the file's name is not evidence about its bytes."""
+    if _NUL_BYTES in data[:SNIFF_BYTES]:
+        return False
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def tracked_files() -> list[str]:
@@ -100,6 +128,9 @@ def main() -> int:
 
     print(f"repo-hygiene: inspecting {len(files)} tracked file(s)")
 
+    scanned = 0
+    skipped_binary = 0
+
     for rel in files:
         path = ROOT / rel
 
@@ -108,6 +139,9 @@ def main() -> int:
             if re.search(pat, rel):
                 errors.append(f"{rel}: forbidden ({why})")
                 break
+        # 1b. key-ish names, whatever the content turns out to be
+        if KEY_ISH_BASENAMES.search(rel):
+            errors.append(f"{rel}: forbidden (name says key material)")
 
         if not path.is_file():
             continue
@@ -117,15 +151,19 @@ def main() -> int:
         if size > MAX_FILE_BYTES:
             errors.append(f"{rel}: {size / 1024 / 1024:.2f} MiB exceeds "
                           f"{MAX_FILE_BYTES / 1024 / 1024:.0f} MiB limit")
+            continue  # already a finding; do not read a huge file into memory
 
-        # 3. content scan for text files
-        if path.suffix.lower() not in TEXT_SUFFIXES and path.name not in (".env.example",):
-            continue
+        # 3. content scan — SNIFFED, not gated by the file name
         try:
-            text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            warnings.append(f"{rel}: unreadable as UTF-8 text, skipped content scan")
+            data = path.read_bytes()
+        except OSError as exc:
+            warnings.append(f"{rel}: unreadable ({exc}), skipped content scan")
             continue
+        if not looks_like_text(data):
+            skipped_binary += 1
+            continue
+        scanned += 1
+        text = data.decode("utf-8")
 
         for pat, why in SECRET_PATTERNS:
             for m in re.finditer(pat, text):
@@ -134,6 +172,8 @@ def main() -> int:
                 line = text[: m.start()].count("\n") + 1
                 errors.append(f"{rel}:{line}: possible {why}")
 
+    print(f"  content-scanned {scanned} file(s); "
+          f"skipped {skipped_binary} binary file(s)")
     for w in warnings:
         print(f"WARN  {w}")
     for e in errors:
@@ -142,8 +182,9 @@ def main() -> int:
     print()
     print(f"repo-hygiene: {len(files)} file(s) checked, "
           f"{len(errors)} error(s), {len(warnings)} warning(s)")
-    print("scope: tracked-path patterns, file size > 1 MiB, and secret-shaped "
-          "strings in text files only — binary content is NOT scanned.")
+    print("scope: tracked-path patterns, key-ish basenames, file size > 1 MiB, and "
+          "secret-shaped strings in every tracked file whose CONTENT sniffs as text "
+          "(UTF-8, no NUL byte) — binary content is NOT scanned.")
     return 1 if errors else 0
 
 

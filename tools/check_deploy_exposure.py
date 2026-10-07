@@ -30,9 +30,11 @@ This tool checks that list, so it cannot rot the same way:
   1. every entry exists;
   2. every entry is something this project intends to publish;
   3. nothing sensitive is named;
-  4. every LOCAL asset the pages reference is covered — a list that omits a file
-     the site needs produces a broken site, which is the failure mode an allow
-     list introduces and the reason check 4 exists.
+  4. every LOCAL asset the pages reference **exists** and is covered — a list that
+     omits a file the site needs produces a broken site, which is the failure mode
+     an allow list introduces and the reason check 4 exists. Existence is checked
+     too, because a directory entry covers files that are not there: a reference
+     to a file that does not exist was silently "covered" before.
 
 It does NOT run rsync and does NOT validate nginx syntax.
 """
@@ -57,8 +59,24 @@ FORBIDDEN = {
 }
 
 #: Local URLs the pages reference, so the manifest can be checked for omissions.
-#: Matches src="/..." and href="/..." that are not external.
-ASSET_RE = re.compile(r'(?:src|href)="(/[^"]+)"')
+#:
+#: WHY ALL THREE ATTRIBUTE FORMS. HTML allows `src="x"`, `src='x'` and `src=x`,
+#: and the first version of this regex matched only the double-quoted form — so
+#: `<script src='/missing.js'>` was invisible to it. MEASURED: single-quoted ->
+#: exit 0, double-quoted -> exit 1. A guard that a small, valid edit switches off
+#: is not a guard.
+#:
+#: The URL itself is captured from whichever group matched. `[^\s"'=<>`]+` is the
+#: unquoted form per the HTML spec's rules on unquoted attribute values.
+ASSET_RE = re.compile(
+    r"""(?:src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))""",
+    re.IGNORECASE,
+)
+
+#: Schemes/hrefs that are not files in this repository.
+_NOT_LOCAL_PREFIXES = (
+    "http:", "https:", "//", "mailto:", "tel:", "data:", "javascript:", "#", "/api/",
+)
 
 
 def _entries() -> list[str]:
@@ -73,18 +91,30 @@ def _entries() -> list[str]:
     return out
 
 
-def _local_assets() -> set[str]:
-    """Every local path the shipped pages reference, as repo-relative names."""
-    found: set[str] = set()
+def _local_asset_refs() -> list[tuple[str, str]]:
+    """(page, path) for every local path the shipped pages reference."""
+    found: list[tuple[str, str]] = []
     for page in ("index.html", "404.html"):
         p = ROOT / page
         if not p.exists():
             continue
-        for url in ASSET_RE.findall(p.read_text(encoding="utf-8")):
-            if url.startswith("//") or url.startswith("/api/"):
+        for groups in ASSET_RE.findall(p.read_text(encoding="utf-8")):
+            url = next((g for g in groups if g), "")
+            if not url or url.startswith(_NOT_LOCAL_PREFIXES):
                 continue
-            found.add(url.lstrip("/"))
+            # A query string or fragment is not part of the file name.
+            path = url.split("#", 1)[0].split("?", 1)[0]
+            if not path.startswith("/"):
+                continue  # relative — resolved by the server, not by this list
+            if path == "/":
+                continue  # the homepage, which is index.html — published by name
+            found.append((page, path.lstrip("/")))
     return found
+
+
+def _local_assets() -> set[str]:
+    """Every local path the shipped pages reference, as repo-relative names."""
+    return {asset for _, asset in _local_asset_refs()}
 
 
 def main() -> int:
@@ -113,7 +143,22 @@ def main() -> int:
         elif not (ROOT / e).exists():
             errors.append(f"'{e}' is in the publish list but does not exist")
 
-    # Every local asset the pages reference must be covered by an entry.
+    # 4a. Every local asset a page references must EXIST in the repository.
+    #
+    # WHY BOTH HALVES. 4b asks "does the publish list cover it", and a manifest
+    # directory entry covers everything under it — so `<img src="/static/img/
+    # nope.png">` was covered by the `static` entry and the guard exited 0 for a
+    # file that does not exist. MEASURED before this check: exit 0. The deployed
+    # site would have 404'd, and the tool whose job is "the site it needs is
+    # there" said nothing.
+    for page, asset in _local_asset_refs():
+        if not (ROOT / asset).exists():
+            errors.append(
+                f"{page} references /{asset}, which does not exist in the repository — "
+                f"the deployed site would 404 on a file the page needs"
+            )
+
+    # 4b. Every local asset the pages reference must be covered by an entry.
     covered = set()
     for e in entries:
         covered.add(e)
@@ -140,9 +185,10 @@ def main() -> int:
     print(f"deploy-exposure: {len(entries)} entr(ies), {len(errors)} error(s)")
     print(
         "scope: the rsync publish list in deploy/published-files.txt against the "
-        "repository tree and the pages' own local asset references — this does NOT "
-        "run rsync, does NOT read the docs' shell commands, and does NOT validate "
-        "nginx syntax (use `nginx -t`)."
+        "repository tree and the pages' own local asset references (src/href in "
+        "double-quoted, single-quoted and unquoted form) — this does NOT run rsync, "
+        "does NOT read the docs' shell commands, does NOT parse JS-built URLs, and "
+        "does NOT validate nginx syntax (use `nginx -t`)."
     )
     return 1 if errors else 0
 

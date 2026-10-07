@@ -32,9 +32,40 @@ npx playwright test -c playwright.staging.config.js
 
 ## What it asserts
 
-Public pages render · robots/sitemap/CSS/JS are really served · **no non-public
-repository path is served** · a valid warehouse code shows a customer-facing result ·
-a valid sealing code does the same (its **mode must be selected** — the form
-defaults to warehouse) · a **wrong** code shows the specific Vietnamese message and
-the result region stays hidden · the login CTA points at the customer portal · the
-registration form refuses an empty submit.
+Public pages render · robots/sitemap/CSS/JS are really served — **content-type
+and a marker string per asset, not just `status === 200`** · **no non-public
+repository path is served** · a valid warehouse code shows a customer-facing
+result · a valid sealing code does the same (its **mode must be selected** — the
+form defaults to warehouse) · a **wrong** code shows the specific Vietnamese
+message and the result region stays hidden · the login CTA points at the customer
+portal · the registration form refuses an empty submit.
+
+## Proving this suite can fail — the negative control
+
+"Robots, sitemap, CSS and JS are really served" once asserted only
+`status === 200` and `body.length > 50`. A host that answers **200 + index.html
+for every path** satisfies that, so the check passed while none of the four
+assets was served. Both halves of the fixed check are therefore shown to be
+load-bearing:
+
+```bash
+# control 1 — HTML and text/html for every path -> the content-type assert fails
+python3 tools/serve_html_for_everything.py --port 8231 &
+STAGING_URL=http://127.0.0.1:8231 \
+  npx playwright test -c playwright.staging.config.js -g "robots, sitemap"
+
+# control 2 — the real content-type per extension, still index.html as the body
+#             -> the MARKER assert fails
+python3 tools/serve_html_for_everything.py --port 8232 --spoof-types &
+STAGING_URL=http://127.0.0.1:8232 \
+  npx playwright test -c playwright.staging.config.js -g "robots, sitemap"
+
+# positive control — the same check against a server that serves the real files
+python3 -m http.server 8233 --bind 127.0.0.1 &
+STAGING_URL=http://127.0.0.1:8233 \
+  npx playwright test -c playwright.staging.config.js -g "robots, sitemap"
+```
+
+MEASURED: control 1 -> `2 failed` (`content-type is not robots.txt`); control 2 ->
+`2 failed` (`body is not robots.txt`, the content-type assert having passed);
+positive control -> `2 passed`.
