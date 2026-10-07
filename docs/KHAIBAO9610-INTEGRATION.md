@@ -1639,6 +1639,68 @@ schema · rate limit · timeout expectation · whether production needs auth or 
 allowlist. One call answers one question, and this one answered "the call works and
 the code does not arrive".
 
+## 10.7 WHERE THE CUSTOMER CODE LIVES — read-only probe, 2026-10-07
+
+**SOURCE: OUR OWN READ-ONLY PROBE. No POST was sent. No write of any kind.**
+**Method:** `GET` and `OPTIONS` only. An `OPTIONS` reply of `405` carrying an `Allow:`
+header proves a route exists without invoking it.
+
+### What was measured
+
+| Endpoint | Real method(s) | Evidence |
+|---|---|---|
+| `POST /frontend/v1/register` | POST | the owner-authorized call of 2026-10-07 |
+| `POST /frontend/v1/auth/register` | POST | `405` + `Allow: POST` |
+| **`POST /login`** | POST | `405` + `Allow: POST` |
+| `POST /auth/refresh` | POST | `405` + `Allow: POST` |
+| `POST /auth/logout` | POST | `405` + `Allow: POST` |
+| **`GET /auth/profile`** | GET, HEAD | `401` `{"error":"Unauthenticated."}` |
+
+`/frontend/v1/auth/profile` answers `401` with a JSON body, so it exists, it is
+authenticated, and the provider returns JSON errors as `{"error": "..."}`.
+
+### What this means
+
+The provider runs a **token-authenticated API in the Laravel Sanctum shape**:
+`POST /login` yields a token, and **`GET /auth/profile` is where the customer record —
+and therefore the customer code — actually lives.**
+
+Our measured register response carries **six keys and no token**:
+
+```
+['external_customer_code','external_customer_id','lead_id',
+ 'login_url','message','registration_status']      token present: NO
+```
+
+So the strongest available explanation of the 2026-10-07 result is:
+
+> **`/register` does not return a customer code at all.** The code is obtained from
+> `/auth/profile` after logging in — and because `/register` returns no token, the
+> current flow has no way to make that call.
+
+This is consistent with everything measured: HTTP 201, `REGISTERED`, and
+`external_customer_code` null. It is **not proof** — the only way to confirm the
+register body's full schema is one more authorized POST.
+
+### Provenance and limits, stated plainly
+
+* **Measured:** the existence and method of each route above; the `401` shape; the six
+  keys in our own register response.
+* **NOT measured:** the body of `POST /login`; the body of `GET /auth/profile`; whether
+  `/register` returns a token under some other key; whether `/auth/register` differs
+  from `/register`.
+* **Not attempted, deliberately:** no login, no registration, no write. The `/login`
+  route was proved to exist by its `405`, never by calling it. Obtaining a token would
+  require credentials we do not hold — the 2026-10-07 password was generated in-process
+  and never stored, by design.
+
+### Consequence for the next authorized call
+
+If a new POST is authorized, the register call should be followed by
+`POST /login` with the same phone and password and then `GET /auth/profile`, so the
+code is read from where it actually lives. The redacted-diagnostic capture added in
+PR #65 will preserve whatever `/register` really returns either way.
+
 ## 11. What is not verified
 
 Stated plainly, because a document that lists only what is known is the one that
