@@ -189,19 +189,39 @@ else
   ok "HSTS without includeSubDomains (as decided)"
 fi
 
-# HSTS on the API path. nginx `add_header` ADDS to a proxied response rather than
-# replacing it, so if the application also emits the header the client receives
-# TWO — and it only takes one carrying `includeSubDomains` to bind every subdomain
-# for a year. This is host-scoped, not path-scoped: an API response can pin the
-# marketing apex. Measured here because the static check only ever looked at "/".
-API_HSTS=$(curl -sk -D - -o /dev/null -m 10 -H "Host: viporder.com.vn" "$H/api/v1/health" \
-  | tr -d '\r' | grep -ci "strict-transport-security")
-if [ "$API_HSTS" = "1" ]; then
-  ok "API path sends exactly one HSTS header"
-elif [ "$API_HSTS" = "0" ]; then
-  bad "API path sends NO HSTS header"
+# EVERY security header on the API path, not just HSTS.
+#
+# nginx `add_header` ADDS to a proxied response rather than replacing it, and the
+# application sets its own copies of all six, so the two tiers STACK. The HSTS
+# duplicate was found and fixed first, and the other five were left stacking —
+# because the report said "HSTS" and the check looked for HSTS. MEASURED on
+# /api/v1/health before this loop existed, with `curl -D-`:
+#
+#   x-content-type-options x2 · x-frame-options x2 · referrer-policy x2
+#   permissions-policy x2 · content-security-policy x2 · strict-transport-security x2
+#
+# Two CSPs is the worse half: browsers intersect multiple policies, so the
+# effective /api/* policy was the intersection of the application's strict one
+# and nginx's marketing one (which carries 'unsafe-inline' and googletagmanager) —
+# a policy neither tier chose. This is host- and path-scoped bookkeeping that no
+# static config check can prove: only a response can.
+#
+# `grep -ci "^NAME:"` counts HEADER LINES, which is the number of copies sent.
+API_HDRS=$(curl -sk -D - -o /dev/null -m 10 -H "Host: viporder.com.vn" "$H/api/v1/health" | tr -d '\r')
+for h in "Strict-Transport-Security" "X-Content-Type-Options" "X-Frame-Options" "Referrer-Policy" "Permissions-Policy" "Content-Security-Policy"; do
+  N=$(echo "$API_HDRS" | grep -ci "^$h:")
+  if [ "$N" = "1" ]; then
+    ok "API path sends exactly one $h"
+  elif [ "$N" = "0" ]; then
+    bad "API path sends NO $h"
+  else
+    bad "API path sends $N $h headers (must be exactly 1) — the tiers are stacking"
+  fi
+done
+if [ "$(echo "$API_HDRS" | grep -ci "^Content-Security-Policy:")" = "1" ]; then
+  ok "API path CSP comes from ONE source, so no browser intersection"
 else
-  bad "API path sends $API_HSTS HSTS headers (must be exactly 1)"
+  bad "API path CSP comes from more than one source — browsers intersect them"
 fi
 if curl -sk -D - -o /dev/null -m 10 -H "Host: viporder.com.vn" "$H/api/v1/health" \
      | tr -d '\r' | grep -i "strict-transport-security" | grep -qi "includeSubDomains"; then
