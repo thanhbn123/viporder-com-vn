@@ -50,7 +50,7 @@ class DevHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
     # -- logging ------------------------------------------------------------
-    def log_message(self, fmt, *args):  # stdlib signature
+    def log_message(self, fmt, *args):  # noqa: A003 - stdlib signature
         sys.stderr.write("  %s\n" % (fmt % args))
 
     # -- routing ------------------------------------------------------------
@@ -101,7 +101,7 @@ class DevHandler(SimpleHTTPRequestHandler):
         if method != "HEAD":
             self.wfile.write(payload)
 
-    def do_GET(self):  # stdlib signature
+    def do_GET(self):  # noqa: N802 - stdlib signature
         if self._is_api():
             return self._proxy("GET")
         return super().do_GET()
@@ -136,22 +136,22 @@ class DevHandler(SimpleHTTPRequestHandler):
                 return
         return super().send_error(code, message, explain)
 
-    def do_HEAD(self):  # stdlib signature
+    def do_HEAD(self):  # noqa: N802
         if self._is_api():
             return self._proxy("HEAD")
         return super().do_HEAD()
 
-    def do_POST(self):  # stdlib signature
+    def do_POST(self):  # noqa: N802
         if self._is_api():
             return self._proxy("POST")
         self.send_error(405, "POST is only proxied under /api")
 
-    def do_PUT(self):  # stdlib signature
+    def do_PUT(self):  # noqa: N802
         if self._is_api():
             return self._proxy("PUT")
         self.send_error(405)
 
-    def do_DELETE(self):  # stdlib signature
+    def do_DELETE(self):  # noqa: N802
         if self._is_api():
             return self._proxy("DELETE")
         self.send_error(405)

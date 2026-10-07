@@ -35,7 +35,7 @@ try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:  # pragma: no cover - developer convenience
     print("Pillow is required:  pip install Pillow", file=sys.stderr)
-    raise SystemExit(2)
+    raise SystemExit(2) from None
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "static" / "img"
@@ -68,9 +68,7 @@ def load_font(size: int) -> ImageFont.FreeTypeFont:
             font = ImageFont.truetype(path, size)
             if font_has_glyphs(font):
                 return font
-    raise SystemExit(
-        "No usable font found. Install one of:\n  " + "\n  ".join(FONT_CANDIDATES)
-    )
+    raise SystemExit("No usable font found. Install one of:\n  " + "\n  ".join(FONT_CANDIDATES))
 
 
 def font_has_glyphs(font: ImageFont.FreeTypeFont) -> bool:
@@ -78,9 +76,7 @@ def font_has_glyphs(font: ImageFont.FreeTypeFont) -> bool:
     probe = "Vận chuyển ậễộớụỹđĐ"
     try:
         mask = font.getmask(probe)
-    except (OSError, ValueError):
-        # Pillow raises OSError/ValueError for a font it cannot render with;
-        # rejecting that font is the whole purpose of this probe.
+    except Exception:  # noqa: BLE001 - any Pillow failure here means "reject this font"
         return False
     return mask.size[0] > 0
 
@@ -156,9 +152,7 @@ def make_icon(size: int, name: str, text: str, font_ratio: float) -> Path:
     )
     font = load_font(max(round(size * font_ratio), 6))
     tw, th = text_size(draw, text, font)
-    draw.text(
-        ((size - tw) / 2, (size - th) / 2 - size * 0.06), text, font=font, fill=WHITE
-    )
+    draw.text(((size - tw) / 2, (size - th) / 2 - size * 0.06), text, font=font, fill=WHITE)
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / name
     img.save(path, "PNG", optimize=True)
@@ -175,9 +169,7 @@ def main() -> int:
     for path in written:
         size = path.stat().st_size
         with Image.open(path) as im:
-            print(
-                f"  {path.relative_to(ROOT)}  {im.size[0]}x{im.size[1]}  {size:,} bytes"
-            )
+            print(f"  {path.relative_to(ROOT)}  {im.size[0]}x{im.size[1]}  {size:,} bytes")
     print(f"\nwrote {len(written)} asset(s) to {OUT.relative_to(ROOT)}")
     return 0
 

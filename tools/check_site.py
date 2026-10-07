@@ -106,9 +106,7 @@ def check_sitemap_excludes_error_pages(f: Findings) -> None:
     text = sitemap.read_text(encoding="utf-8")
     for name in sorted(ERROR_PAGE_NAMES):
         if name in text:
-            f.error(
-                "sitemap.xml", f"error page {name!r} must not be listed in the sitemap"
-            )
+            f.error("sitemap.xml", f"error page {name!r} must not be listed in the sitemap")
 
 
 class Findings:
@@ -275,9 +273,7 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
 
     desc = doc.meta.get("description", "")
     if desc and not (DESC_MIN <= len(desc) <= DESC_MAX):
-        f.warn(
-            where, f"meta description length {len(desc)} outside {DESC_MIN}-{DESC_MAX}"
-        )
+        f.warn(where, f"meta description length {len(desc)} outside {DESC_MIN}-{DESC_MAX}")
 
     # Canonical
     canonical = None
@@ -301,9 +297,7 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
     # Inline event handlers (CSP-hostile)
     inline = [t for t, a in doc.tags if any(k.startswith("on") for k in a)]
     if inline:
-        f.error(
-            where, f"inline event handler attributes present on: {sorted(set(inline))}"
-        )
+        f.error(where, f"inline event handler attributes present on: {sorted(set(inline))}")
 
     # Inline <script> bodies (CSP-hostile).
     # A <script> element is only "executable" when it has no `src` AND its type
@@ -313,15 +307,12 @@ def check_document(doc: Doc, page: Path, f: Findings) -> None:
     inline_js = [
         a
         for t, a in doc.tags
-        if t == "script"
-        and not a.get("src")
-        and is_executable_script_type(a.get("type"))
+        if t == "script" and not a.get("src") and is_executable_script_type(a.get("type"))
     ]
     if inline_js:
         f.error(
             where,
-            f"{len(inline_js)} inline executable <script> block(s) "
-            f"without src (CSP-hostile)",
+            f"{len(inline_js)} inline executable <script> block(s) without src (CSP-hostile)",
         )
 
     # Structured data must actually parse. A malformed JSON-LD block is worse
@@ -385,9 +376,7 @@ def check_anchors_and_links(doc: Doc, page: Path, f: Findings) -> None:
 def check_customer_portal(doc: Doc, page: Path, f: Findings) -> None:
     """BUSINESS RULE: every existing-customer entry point goes to the portal."""
     where = page.name
-    portal_links = [
-        h for h in doc.anchor_hrefs if urlparse(h).netloc == CUSTOMER_PORTAL_HOST
-    ]
+    portal_links = [h for h in doc.anchor_hrefs if urlparse(h).netloc == CUSTOMER_PORTAL_HOST]
 
     # Any login-ish label must resolve to the portal host.
     login_words = ("đăng nhập", "dang nhap", "kiểm tra đơn", "kiem tra don")
@@ -488,9 +477,7 @@ def check_secrets(page: Path, f: Findings) -> None:
 
 def pages_to_check() -> list[Path]:
     return sorted(
-        p
-        for p in ROOT.rglob("*.html")
-        if ".git" not in p.parts and "node_modules" not in p.parts
+        p for p in ROOT.rglob("*.html") if ".git" not in p.parts and "node_modules" not in p.parts
     )
 
 
@@ -527,8 +514,7 @@ def main() -> int:
 
     print()
     print(
-        f"site-checks: {len(pages)} page(s), "
-        f"{len(f.errors)} error(s), {len(f.warnings)} warning(s)"
+        f"site-checks: {len(pages)} page(s), {len(f.errors)} error(s), {len(f.warnings)} warning(s)"
     )
     return 1 if f.errors else 0
 

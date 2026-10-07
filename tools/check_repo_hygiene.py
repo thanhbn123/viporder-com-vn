@@ -188,9 +188,7 @@ def main() -> int:
                 line = text[: m.start()].count("\n") + 1
                 errors.append(f"{rel}:{line}: possible {why}")
 
-    print(
-        f"  content-scanned {scanned} file(s); skipped {skipped_binary} binary file(s)"
-    )
+    print(f"  content-scanned {scanned} file(s); skipped {skipped_binary} binary file(s)")
     for w in warnings:
         print(f"WARN  {w}")
     for e in errors:

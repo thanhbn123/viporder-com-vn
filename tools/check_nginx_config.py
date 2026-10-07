@@ -180,15 +180,11 @@ def main() -> int:
     #    is worse than none because it reads as protection.
     params = NGINX_DIR / "proxy_params_viporder"
     if not params.exists():
-        errors.append(
-            f"{params.name}: missing — the API proxy params are not in the tree"
-        )
+        errors.append(f"{params.name}: missing — the API proxy params are not in the tree")
     else:
         ptxt = strip_comments_block(params.read_text(encoding="utf-8"))
         intercept = [
-            ln.strip()
-            for ln in ptxt.split("\n")
-            if ln.strip().startswith("proxy_intercept_errors")
+            ln.strip() for ln in ptxt.split("\n") if ln.strip().startswith("proxy_intercept_errors")
         ]
         if not intercept:
             errors.append(
@@ -204,9 +200,7 @@ def main() -> int:
                 f"those bodies as JSON. It must be `off;`."
             )
         else:
-            notes.append(
-                f"{params.name}: {intercept[-1]} — API error bodies pass through (ok)"
-            )
+            notes.append(f"{params.name}: {intercept[-1]} — API error bodies pass through (ok)")
 
         # The rule above is only sound while the file is API-only.
         includers = [
@@ -249,9 +243,7 @@ def main() -> int:
         }
         hidden = {
             h.lower()
-            for h in re.findall(
-                r"^\s*proxy_hide_header\s+([A-Za-z-]+)", ptxt, re.MULTILINE
-            )
+            for h in re.findall(r"^\s*proxy_hide_header\s+([A-Za-z-]+)", ptxt, re.MULTILINE)
         }
         # Content-Security-Policy IS A DELIBERATE EXCEPTION, and it is the one header
         # where de-duplicating makes things WORSE.
@@ -306,9 +298,7 @@ def main() -> int:
         #     `proxy_hide_header` and `proxy_intercept_errors` only apply where
         #     this file is included, so a new /api location without the include
         #     silently reintroduces both defects.
-        proxying = [
-            (kind, line) for kind, body, line in locs if "proxy_pass" in body.lower()
-        ]
+        proxying = [(kind, line) for kind, body, line in locs if "proxy_pass" in body.lower()]
         if not proxying:
             errors.append(
                 f"{SITE_CONF.name}: no location proxies — parser broken, or the API "
@@ -323,9 +313,7 @@ def main() -> int:
                     f"bodies both come back for this location"
                 )
             else:
-                notes.append(
-                    f"line {line}: {kind} — proxies and includes {params.name} (ok)"
-                )
+                notes.append(f"line {line}: {kind} — proxies and includes {params.name} (ok)")
 
     for note in notes:
         print(f"  {note}")

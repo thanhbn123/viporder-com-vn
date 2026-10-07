@@ -72,10 +72,10 @@ class EverythingIsHtml(BaseHTTPRequestHandler):
         if with_body:
             self.wfile.write(body)
 
-    def do_GET(self) -> None:  # BaseHTTPRequestHandler's API
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's API
         self._respond(with_body=True)
 
-    def do_HEAD(self) -> None:  # BaseHTTPRequestHandler's API
+    def do_HEAD(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's API
         self._respond(with_body=False)
 
     def log_message(self, fmt: str, *args: object) -> None:

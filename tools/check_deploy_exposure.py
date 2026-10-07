@@ -152,8 +152,7 @@ def main() -> int:
         top = e.split("/")[0]
         if top in FORBIDDEN:
             errors.append(
-                f"'{e}' is in the publish list but must never be published "
-                f"(top-level '{top}')"
+                f"'{e}' is in the publish list but must never be published (top-level '{top}')"
             )
         elif top not in PUBLISHED:
             errors.append(
