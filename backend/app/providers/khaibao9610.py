@@ -330,32 +330,119 @@ class ViporderFrontendProvider:
         if self._owns_client:
             self._client.close()
 
-    @staticmethod
-    def _extract(payload: object) -> tuple[str | None, str | None]:
-        """Best-effort pull of (customer_id, customer_code) from a success body."""
-        candidates: list[dict] = []
-        if isinstance(payload, dict):
-            candidates.append(payload)
-            for key in ("data", "customer", "result"):
-                nested = payload.get(key)
-                if isinstance(nested, dict):
-                    candidates.append(nested)
-        for source in candidates:
-            code = None
-            for key in ("customer_code", "customerCode", "code", "ma_khach_hang"):
-                value = source.get(key)
-                if isinstance(value, (str, int)) and str(value).strip():
-                    code = str(value).strip()
-                    break
-            identifier = None
-            for key in ("customer_id", "customerId", "id", "user_id"):
-                value = source.get(key)
-                if isinstance(value, (str, int)) and str(value).strip():
-                    identifier = str(value).strip()
-                    break
-            if code or identifier:
+    #: Keys an upstream wraps its payload in. The search descends through THESE and
+    #: nothing else, so a nested `id` belonging to a product or a status object
+    #: cannot be mistaken for the customer's.
+    _WRAPPER_KEYS = (
+        "data",
+        "result",
+        "payload",
+        "body",
+        "response",
+        "customer",
+        "customer_info",
+        "customer_data",
+        "user",
+        "user_info",
+        "account",
+        # Singular, payload-bearing wrappers common to Laravel-style APIs.
+        # Deliberately NOT `meta` (pagination), nor plural collection keys
+        # (`items`, `rows`) — taking element zero of a collection is how a WRONG
+        # code gets shown to a customer, and a wrong code is worse than no code:
+        # no code is truthful and the evidence is now kept for the operator.
+        "attributes",
+        "record",
+        "entry",
+        "item",
+    )
+
+    _CODE_KEYS = ("customer_code", "customerCode", "code", "ma_khach_hang", "ma_kh")
+    _ID_KEYS = ("customer_id", "customerId", "id", "user_id", "userId")
+
+    @classmethod
+    def _extract(cls, payload: object) -> tuple[str | None, str | None]:
+        """Best-effort pull of (customer_id, customer_code) from a success body.
+
+        SEARCHES THROUGH WRAPPERS, TO A BOUNDED DEPTH. The previous version looked
+        at the top level plus exactly one layer of ``data``/``customer``/``result``,
+        which meant a response like::
+
+            {"data": {"customer": {"code": "TT00123"}}}
+
+        returned ``(None, None)`` — so a REAL customer code was discarded and the
+        registration was reported as unusable. That is the worst possible failure
+        for this function: it turns a success into an apparent contract problem.
+
+        Two things keep the wider search honest:
+
+        * it descends only through :attr:`_WRAPPER_KEYS`, so an unrelated nested
+          ``id`` is not mistaken for the customer's;
+        * depth and node counts are capped, so a pathological body cannot turn this
+          into an unbounded walk.
+
+        A code and an id found in the SAME object are preferred, because they belong
+        together; failing that, the shallowest of each is taken.
+        """
+        if not isinstance(payload, (dict, list)):
+            return None, None
+
+        first_code: str | None = None
+        first_id: str | None = None
+        seen = 0
+        queue: list[tuple[object, int]] = [(payload, 0)]
+
+        while queue and seen < cls._MAX_NODES:
+            node, depth = queue.pop(0)
+            if isinstance(node, list):
+                for item in node[:20]:
+                    if isinstance(item, (dict, list)):
+                        queue.append((item, depth))
+                continue
+            if not isinstance(node, dict):
+                continue
+            seen += 1
+
+            code = cls._pick(node, cls._CODE_KEYS)
+            identifier = cls._pick(node, cls._ID_KEYS)
+            if code is not None and identifier is not None:
                 return identifier, code
-        return None, None
+            if code is not None and first_code is None:
+                first_code = code
+            if identifier is not None and first_id is None:
+                first_id = identifier
+
+            if depth >= cls._MAX_DEPTH:
+                continue
+            for key in cls._WRAPPER_KEYS:
+                nested = node.get(key)
+                if isinstance(nested, (dict, list)):
+                    queue.append((nested, depth + 1))
+
+        return first_id, first_code
+
+    @staticmethod
+    def _pick(source: dict, keys: tuple[str, ...]) -> str | None:
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                # A numeric id of 0 is a value; a numeric CODE of 0 is not, because
+                # no customer is called "0". Let the caller's key list decide: ids
+                # accept 0, codes do not.
+                if value == 0 and "code" in key.lower():
+                    continue
+                return str(value)
+            if isinstance(value, str):
+                text = value.strip()
+                if text:
+                    return text
+        return None
+
+    #: Bounds for the search. Wide enough for any sane envelope, small enough that
+    #: a hostile or malformed body cannot make this expensive.
+    _MAX_DEPTH = 4
+    _MAX_NODES = 60
 
     # -- tracking contract ---------------------------------------------------
     #
