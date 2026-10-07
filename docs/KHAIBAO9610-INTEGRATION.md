@@ -16,19 +16,27 @@
 >
 > What the supply does **not** settle:
 >
-> * **No live registration `POST` has ever been made.** The registration half of
->   this integration is unproven (§11). `KHAIBAO9610_MODE=mock` is still the
->   shipped default in every configuration file (`backend/app/config.py:107`,
->   `deploy/env.production.example:80`, `.env.example:33`), and the live adapter
->   still refuses to exist unless both switches are set
->   (`backend/app/providers/khaibao9610.py:105-116`).
+> * **Exactly ONE live registration `POST` has been made** — the owner-authorised
+>   one-shot test of **2026-10-07 05:53:38 UTC**, accepted with **201** (§10.6).
+>   It is not a working integration: the provider's raw response body was not
+>   captured, so no customer code has ever been observed, and a second `POST`
+>   needs new owner authorisation. `KHAIBAO9610_MODE=mock` is still the shipped
+>   default in every configuration file (`backend/app/config.py:107`,
+>   `deploy/env.production.example:80`, `.env.example:33`). The live adapter
+>   refuses to exist unless the mode is `http` **and at least one** of the two
+>   capability switches is set
+>   (`backend/app/providers/khaibao9610.py:183-190`).
 > * **Six provider facts remain UNKNOWN** — the registration success, duplicate
 >   and validation response schemas, the rate limit, the provider's expected
 >   timeouts, and whether production requires authentication or an IP allowlist.
 >   They are listed in §4.9, and every parser is defensive because of them.
-> * **Live tracking cannot be switched on by itself.** The two lookups are
->   methods on the same live adapter that registers, so enabling them enables
->   real registration writes too (§7).
+> * **Live tracking CAN now be switched on by itself**, because the read and
+>   write switches are separate: `KHAIBAO9610_MODE=http` with
+>   `KHAIBAO9610_ENABLE_REAL_CALLS=yes` and
+>   `KHAIBAO9610_ENABLE_REAL_REGISTRATION=no` reaches the two lookups and refuses
+>   `register()` at the call site (§7). This sentence said the opposite until the
+>   two capabilities were split, and it is corrected rather than deleted: the
+>   shared switch is exactly what let a tracking test create a real account.
 >
 > `https://apiviporder.com/frontend/v1` is **owner-supplied and authoritative**
 > as of 2026-10-02 (`backend/app/config.py:39,108`;
@@ -1343,14 +1351,27 @@ live adapter when the mode is exactly `http`
 settings, so a typo fails at startup instead of silently selecting something
 else (`backend/app/config.py:107`).
 
-**One adapter, both halves — there is no tracking-only switch.** The two lookups
-are methods on the *same* live adapter that registers
-(`backend/app/providers/khaibao9610.py:339,346,356`), and the factory has exactly
-one mode that selects it (`backend/app/providers/factory.py:28-34`). Setting the
-two switches therefore arms **real registration writes at the same time as live
-tracking**; there is no way to enable one without the other. In the default
-`mock` mode the configured provider implements no tracking method at all, which
-is why a valid keyword answers **503** rather than going silent
+**One adapter, two separately gated halves — there IS a tracking-only switch.**
+The two lookups and `register()` are methods on the *same* live adapter
+(`backend/app/providers/khaibao9610.py:556,570,588` — measured 2026-10-07), and
+the factory has exactly one mode that selects it
+(`backend/app/providers/factory.py:28-34`) — but the capabilities are gated
+independently inside it: `find_warehouse_import` and `find_package_sealing` refuse
+unless `KHAIBAO9610_ENABLE_REAL_CALLS=yes`, and `register()` refuses unless
+`KHAIBAO9610_ENABLE_REAL_REGISTRATION=yes`. Setting only the read switch therefore
+reaches the provider for tracking and **cannot** create a customer.
+
+This paragraph used to say the opposite — "there is no tracking-only switch ...
+Setting the two switches therefore arms real registration writes at the same time
+as live tracking; there is no way to enable one without the other" — which was
+true of the one-switch design and is exactly the property that let a tracking test
+create a real account. It is corrected rather than deleted for that reason.
+`/api/v1/health` reports both capabilities separately
+(`checks.provider.capabilities.tracking_reads` and `.registration_writes`) so this
+is checkable from outside, without reading an env file.
+
+In the default `mock` mode the configured provider implements no tracking method
+at all, which is why a valid keyword answers **503** rather than going silent
 (`backend/app/providers/mock.py:82`;
 `backend/app/routers/tracking.py:150-158`).
 
@@ -1360,31 +1381,40 @@ makes "we started sending real customer data to a provider endpoint" a thing
 someone had to *mean* (`backend/app/config.py:7-10`;
 `deploy/env.production.example:82-85`).
 
-**No live registration call has ever been made through this adapter.** Nothing in
-this repository has ever reached a registration endpoint of the provider: the
-shipped mode is `mock` in every configuration file (`backend/app/config.py:107`,
-`deploy/env.production.example:80`, `.env.example:31-33`), the real-call switch
-defaults to off (`backend/app/config.py:110`) and is `no` in the production
-template (`deploy/env.production.example:86`). The provider's own test file
-reaches it only through a stub HTTP transport, never the network
-(`backend/tests/test_khaibao9610_provider.py:48-52`;
-`backend/tests/test_tracking.py:162-174`), and `docs/SECURITY.md:857-859` records
-the registration half independently: *"No live call has ever been made, so none
-of the mapping … has been observed against the real upstream."*
+**Exactly one live registration call HAS been made through this adapter** — the
+owner-authorised one-shot test of **2026-10-07 05:53:38 UTC** (§10.6), which sent
+one `POST` to the provider's `/register` through the application and was accepted
+with **201**. This paragraph said "no live registration call has ever been made"
+until that test happened; it is corrected rather than deleted, because it is also
+the reason the shipped default is still `mock`.
 
-That statement is about **registration**, and the distinction is now
-load-bearing. Read-only `GET`s *were* made against the live service on 2026-10-02
-during reconnaissance (§4.7) — but no `POST` was, and the two tracking lookups
-have still never been exercised through this backend against the live service
+What the one call does **not** establish is the response mapping: the provider's
+raw body was not captured and `_extract` found no customer code, so the success,
+duplicate and validation schemas are still UNKNOWN (§4.9). The shipped mode is
+still `mock` in every configuration file (`backend/app/config.py:107`,
+`deploy/env.production.example:80`, `.env.example:31-33`); the read switch
+defaults to off (`backend/app/config.py:110`) and so does the write switch
+(`backend/app/config.py:122`), and both are `no` in the production template
+(`deploy/env.production.example:86`). The provider's own test file reaches it
+only through a stub HTTP transport, never the network
+(`backend/tests/test_khaibao9610_provider.py:48-52`;
+`backend/tests/test_tracking.py:162-174`), and `docs/SECURITY.md:894` records the
+state at the revision it documents — before that test existed — as *"No live call
+has ever been made, so none of the mapping … has been observed against the real
+upstream."*
+
+Registering and tracking are different capabilities with different switches, and
+the distinction is load-bearing. Read-only `GET`s *were* made against the live
+service on 2026-10-02 during reconnaissance (§4.7); the two tracking lookups have
+still never been exercised **through this backend** against the live service
 (§11).
 
-Scope of the "never registered" statement, stated plainly: it rests on (a) the
-shipped configuration in this repository, (b) the absence of any recorded live
-registration call, and (c) that independent note in `docs/SECURITY.md`. It is
-**not** a claim about what a running server's environment contains — verifying
-that means reading the environment on that server, out of band. Do not report
-"never called" as a measured fact about a deployment on the strength of this
-document alone.
+Scope of the "never registered" claim, stated plainly: it was true up to
+2026-10-07 05:53 UTC and is **false** now. The record of live registrations is
+exactly one `POST`, and it is not a claim about what a running server's
+environment contains — verifying that means reading the environment on that
+server, out of band. Do not report "never called" as a measured fact about a
+deployment on the strength of this document alone.
 
 ---
 
@@ -1614,12 +1644,17 @@ the code does not arrive".
 Stated plainly, because a document that lists only what is known is the one that
 gets trusted past its evidence.
 
-* **No live registration `POST` has ever been made.** Registration against the
-  real API is unproven. Nothing in this repository has observed that endpoint's
-  success, duplicate, validation or auth responses; the adapter's response
-  handling is defensive for exactly that reason
+* **The registration contract is still unproven, after exactly ONE live `POST`.**
+  The owner-authorised one-shot test of 2026-10-07 (§10.6) was accepted with
+  **201**, so the endpoint, the field names and 2xx handling are observed. What is
+  NOT observed is the response MAPPING: the raw body was not captured and no
+  customer code was found, so the success schema (and the duplicate, validation
+  and auth responses, which were never exercised at all) remain unknown. The
+  adapter's response handling is defensive for exactly that reason
   (`backend/app/providers/khaibao9610.py:1-12,356-452`), and the mock's
-  responses are ours, not theirs (§8).
+  responses are ours, not theirs (§8). This paragraph said "no live registration
+  `POST` has ever been made" until that test happened; keeping a false banner in
+  a list whose whole purpose is honesty is worse than the gap it describes.
 * **The live `GET`s were read-only reconnaissance, on 2026-10-02.** The two
   envelopes, the two 404 bodies, the full-code keyword and the 401 on the bare
   list are **measured facts of that moment** (§4.7), not a contract and not a
@@ -1627,12 +1662,14 @@ gets trusted past its evidence.
   from the keyword endpoint is treated as a contract change (502) rather than as
   "the code does not exist" (`backend/app/tracking.py:20-25`;
   `backend/app/providers/khaibao9610.py:246-255`).
-* **Tracking cannot be exercised against the live API from this backend** without
-  enabling real registration writes: the lookups are methods on the same live
-  adapter (§7; `backend/app/providers/khaibao9610.py:339,346,356`). Both 200
-  paths have been exercised only against `httpx.MockTransport` and a fake
-  provider (`backend/tests/test_tracking.py:1-6,162-174`), never against the
-  service.
+* **Tracking has not been exercised against the live API from this backend.** It
+  CAN be — `MODE=http` + `ENABLE_REAL_CALLS=yes` + `ENABLE_REAL_REGISTRATION=no`
+  is a supported configuration and `register()` refuses in it — but the two
+  lookups have only ever been exercised against `httpx.MockTransport` and a fake
+  provider (`backend/tests/test_tracking.py:1-6,162-174`). This paragraph said the
+  lookups could not be enabled "without enabling real registration writes", which
+  was true before the switches were split and is false now
+  (`backend/app/providers/khaibao9610.py:556,570,588` — measured 2026-10-07).
 * **The six UNKNOWN provider facts of §4.9**: the registration success schema,
   the duplicate-registration response, the validation-error response, the rate
   limit, the provider's expected timeouts, and whether production requires

@@ -22,14 +22,23 @@ A parser that assumes one shape fails on the other. These two methods return the
 raw parsed body and do not unwrap anything: unwrapping is a normalisation
 concern, and putting it here is exactly how the two shapes get conflated.
 
-Reaching a real customer system requires BOTH switches:
+Reaching a real customer system requires ``KHAIBAO9610_MODE=http`` **plus at
+least one of the two capability switches** — they are separate on purpose:
 
-* ``KHAIBAO9610_MODE=http``
-* ``KHAIBAO9610_ENABLE_REAL_CALLS=yes``
+* ``KHAIBAO9610_ENABLE_REAL_CALLS=yes`` — live tracking lookups (reads)
+* ``KHAIBAO9610_ENABLE_REAL_REGISTRATION=yes`` — live customer registration (writes)
 
-Missing either one raises :class:`ProviderConfigurationError` at construction
-time. Refusing loudly is the point: a half-configured live adapter that
-"mostly works" is how test data ends up in production.
+With both disabled, construction raises :class:`ProviderConfigurationError`.
+With ONE enabled, the adapter exists and the OTHER capability refuses at the call
+site (``track()`` checks the read switch, ``register()`` the write switch), so
+live tracking can be turned on without arming live registration. That split is
+not decoration: while the two capabilities shared one switch, enabling tracking
+for acceptance also enabled registration writes, and an acceptance test created
+an account on the provider's production API. See
+``khaibao9610_enable_real_registration`` in ``app/config.py``.
+
+Refusing loudly is still the point: a half-configured live adapter that "mostly
+works" is how test data ends up in production.
 
 SECURITY: the registration request body contains a plaintext password and its
 confirmation. This module never logs either, never logs the body, and never

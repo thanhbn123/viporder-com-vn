@@ -22,8 +22,11 @@ contract **has not been supplied**, so:
 
 * no guessed endpoint is a live default;
 * the live adapter (`app/providers/khaibao9610.py`) is labelled a **candidate,
-  unverified** contract and refuses to be constructed unless **both**
-  `KHAIBAO9610_MODE=http` **and** `KHAIBAO9610_ENABLE_REAL_CALLS=yes` are set.
+  unverified** contract and refuses to be constructed unless
+  `KHAIBAO9610_MODE=http` and **at least one of the two capability switches** is
+  set — `KHAIBAO9610_ENABLE_REAL_CALLS` (tracking reads) or
+  `KHAIBAO9610_ENABLE_REAL_REGISTRATION` (registration writes). One capability
+  live does not arm the other.
 
 ---
 
@@ -250,9 +253,10 @@ customer's own paperwork. Both routes answer with the **same** contract; only
 | `503` | `PROVIDER_UNAVAILABLE` | timeout, transport failure, upstream `429`, **or the live adapter is not configured** |
 
 `503` is also what the default (mock) configuration returns: the live adapter is
-only constructed when `KHAIBAO9610_MODE=http` **and**
-`KHAIBAO9610_ENABLE_REAL_CALLS=yes`, so out of the box there is nobody to ask.
-Saying so is the honest answer; fabricating a provider would not be.
+only constructed when `KHAIBAO9610_MODE=http` **and** at least one capability
+switch is on — and with only `KHAIBAO9610_ENABLE_REAL_REGISTRATION=yes`, tracking
+is still disabled, so there is nobody to ask. Saying so is the honest answer;
+fabricating a provider would not be.
 
 #### The two envelopes differ
 
@@ -345,7 +349,8 @@ An empty environment variable means "unset" and the default applies.
 | `KHAIBAO9610_MODE` | `mock` | `mock` or `http` |
 | `KHAIBAO9610_BASE_URL` | `https://apiviporder.com/frontend/v1` | candidate, unverified |
 | `KHAIBAO9610_TIMEOUT_SECONDS` | `10` | allowed 1..30 |
-| `KHAIBAO9610_ENABLE_REAL_CALLS` | `no` | second key required for live traffic |
+| `KHAIBAO9610_ENABLE_REAL_CALLS` | `no` | READ switch: live tracking lookups |
+| `KHAIBAO9610_ENABLE_REAL_REGISTRATION` | `no` | WRITE switch: live customer registration. **Separate from the read switch on purpose** — see below |
 | `KHAIBAO9610_USER_AGENT` | browser UA | Cloudflare rejects non-browser clients (Error 1010) |
 | `MOCK_PROVIDER_BEHAVIOUR` | `success` | `success`/`duplicate`/`invalid`/`unavailable`/`timeout`/`error` |
 | `ADMIN_API_TOKEN` | *(empty)* | empty disables the admin route (404) |
@@ -369,15 +374,42 @@ KHAIBAO9610_MODE=mock .venv/bin/uvicorn app.main:app
 #   ...0003 -> timeout     ...0004 -> error      anything else -> success
 MOCK_PROVIDER_BEHAVIOUR=success .venv/bin/uvicorn app.main:app
 
-# Live traffic — TWO keys, both required, or the adapter refuses to build.
+# Live TRAFFIC — mode + at least one capability switch, or the adapter refuses
+# to build. The two capabilities are separate:
+#   ENABLE_REAL_CALLS        -> live tracking lookups (reads)
+#   ENABLE_REAL_REGISTRATION -> live customer registration (writes)
 KHAIBAO9610_MODE=http \
 KHAIBAO9610_ENABLE_REAL_CALLS=yes \
 .venv/bin/uvicorn app.main:app
+
+# Reads only. This is a real, supported configuration and the SAFE one for
+# acceptance work: tracking hits the provider, register() refuses.
+KHAIBAO9610_MODE=http \
+KHAIBAO9610_ENABLE_REAL_CALLS=yes \
+KHAIBAO9610_ENABLE_REAL_REGISTRATION=no \
+.venv/bin/uvicorn app.main:app
+
+# Writes only. The one configuration that creates real customer accounts while
+# making no tracking calls. /health reports `provider.status = ok` here, and
+# `capabilities.registration_writes = live` — check it before and after.
+KHAIBAO9610_MODE=http \
+KHAIBAO9610_ENABLE_REAL_REGISTRATION=yes \
+.venv/bin/uvicorn app.main:app
 ```
 
-Nothing else switches to live. In particular, setting only
-`KHAIBAO9610_ENABLE_REAL_CALLS=yes` while the mode stays `mock` changes nothing,
-and setting only the mode raises a configuration error at startup.
+`KHAIBAO9610_MODE=http` plus at least one capability switch is what makes the
+adapter live. Setting `KHAIBAO9610_MODE=mock` keeps everything in-process whatever
+the switches say, and setting the mode alone (both switches off) raises a
+configuration error at startup.
+
+**The two capabilities are separate, and that is a safety property, not a
+preference.** `KHAIBAO9610_ENABLE_REAL_CALLS` gates the tracking lookups;
+`KHAIBAO9610_ENABLE_REAL_REGISTRATION` gates `register()`. They were one switch
+until live tracking and live registration could not be told apart, and an
+acceptance test that was authorised to make read-only `GET`s created a real
+customer account on the provider's production API. `GET /api/v1/health` reports
+both, and its summary `checks.provider.status` is `ok` when **either** is live —
+reads-only is live, and so is writes-only.
 
 ---
 

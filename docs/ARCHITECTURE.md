@@ -517,8 +517,12 @@ there to prove that a provider which blows up cannot destroy the lead
 
 **`ViporderFrontendProvider`** is the live HTTP adapter and is labelled in its own
 module header as a **candidate, unverified** contract
-(`backend/app/providers/khaibao9610.py:1-9`). Reaching it requires both switches;
-the guard is in `__init__` (`khaibao9610.py:91-115`). Its request-body shape
+(`backend/app/providers/khaibao9610.py:1-9`). Reaching it requires
+`KHAIBAO9610_MODE=http` **and at least one of two capability switches** — reads
+(`KHAIBAO9610_ENABLE_REAL_CALLS`) and writes
+(`KHAIBAO9610_ENABLE_REAL_REGISTRATION`) are separate on purpose, so live tracking
+can be enabled without arming live registration; the guard is in `__init__`
+(`khaibao9610.py:183-190`). Its request-body shape
 (`name`, `phone`, `email`, `password`, `confirmPassword`, `acceptTerms`) is
 documented at `khaibao9610.py:20-27` and asserted on the wire in
 `backend/tests/test_khaibao9610_provider.py:246-255`.
