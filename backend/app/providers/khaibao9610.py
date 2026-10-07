@@ -428,6 +428,18 @@ class ViporderFrontendProvider:
         Pass 2 falls back to the ambiguous ``code`` key — but only for values that do
         not look like an envelope status.
 
+        THE CODE AND THE ID ARE FOUND SEPARATELY, THEN PAIRED. A code and an id that
+        arrived together in ONE object belong together and win outright. But an id can
+        legitimately sit in a SIBLING wrapper — the shape::
+
+            {"data": {"customer_code": "TT1"}, "customer": {"customer_id": "9"}}
+
+        used to return ``(None, "TT1")``: the code was found on node A (which held no
+        id) and the loop moved on, while the real id on node B was never even looked
+        at because node B held no code. So the id scan is now INDEPENDENT of the code
+        scan and the two results are joined. A ``customer_id`` that is present in the
+        body is no longer silently dropped.
+
         THE BUG THIS SHAPE FIXES. A response like::
 
             {"code": 200, "message": "success", "data": {"customer_code": "TT00123"}}
@@ -446,28 +458,42 @@ class ViporderFrontendProvider:
         nodes = cls._walk(payload)
 
         for picker in (cls._pick, cls._pick_ambiguous):
+            code_keys = cls._CODE_KEYS if picker is cls._pick else cls._AMBIGUOUS_CODE_KEYS
             first_code: str | None = None
-            first_id: str | None = None
             for node in nodes:
-                code = picker(
-                    node, cls._CODE_KEYS if picker is cls._pick else cls._AMBIGUOUS_CODE_KEYS
-                )
+                code = picker(node, code_keys)
                 if code is None:
                     continue
                 identifier = cls._pick(node, cls._ID_KEYS)
                 if identifier is not None:
+                    # A code and an id that arrived TOGETHER belong together.
                     return identifier, code
                 if first_code is None:
-                    first_code, first_id = code, identifier
+                    first_code = code
             if first_code is not None:
-                return first_id, first_code
+                # The code arrived without an id beside it. Scan the ids
+                # INDEPENDENTLY so a real customer_id sitting in a sibling wrapper
+                # is paired with it instead of being dropped.
+                return cls._first_id(nodes), first_code
 
         # No code anywhere. An identifier alone is still a usable success.
+        return cls._first_id(nodes), None
+
+    @classmethod
+    def _first_id(cls, nodes: list[dict]) -> str | None:
+        """The shallowest customer id among ``nodes``, independent of any code.
+
+        Kept separate from the code scan on purpose: the id can arrive in a DIFFERENT
+        wrapper than the code, and tying the two scans together silently dropped a
+        real ``customer_id``. The keys searched are the same ``_ID_KEYS`` used when a
+        code and an id do arrive together, so a value that was never accepted as an id
+        beside a code is still not accepted here.
+        """
         for node in nodes:
             identifier = cls._pick(node, cls._ID_KEYS)
             if identifier is not None:
-                return identifier, None
-        return None, None
+                return identifier
+        return None
 
     @classmethod
     def _walk(cls, payload: object) -> list[dict]:

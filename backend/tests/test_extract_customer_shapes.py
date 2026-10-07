@@ -95,6 +95,67 @@ def test_the_shallowest_object_holding_BOTH_wins() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The id can live in a DIFFERENT wrapper than the code (N-3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (
+            {"data": {"customer_code": "TT1"}, "customer": {"customer_id": "9"}},
+            ("9", "TT1"),
+        ),
+        (
+            {"customer_code": "TT1", "customer_data": {"user_id": "10"}},
+            ("10", "TT1"),
+        ),
+        (
+            {"result": {"customer_code": "TT1"}, "account": {"customerId": "11"}},
+            ("11", "TT1"),
+        ),
+        (
+            {"code": "LONELY", "customer": {"customer_id": "12"}},
+            ("12", "LONELY"),
+        ),
+        (
+            {"data": {"code": "TT1"}, "customer": {"customer_id": "13"}},
+            ("13", "TT1"),
+        ),
+    ],
+    ids=[
+        "data-code_customer-customer_id",
+        "top-code_customer_data-user_id",
+        "result-code_account-camel-id",
+        "ambiguous-top-code_customer-customer_id",
+        "ambiguous-data-code_customer-customer_id",
+    ],
+)
+def test_an_id_in_a_SIBLING_wrapper_is_paired_with_the_code(
+    body: object, expected: tuple[str, str]
+) -> None:
+    """The id scan is INDEPENDENT of the code scan, then the two are joined.
+
+    A code on one node and a real ``customer_id`` on a SIBLING node used to return
+    ``(None, code)``: the id was never looked at, because its node held no code. The
+    id that really was present in the body was silently dropped — this pins that it
+    is now paired with the code instead.
+    """
+    assert extract(body) == expected, f"{body!r} -> {extract(body)!r}"
+
+
+def test_a_same_object_pair_beats_a_shallower_sibling_id() -> None:
+    """Independence must not undo the pairing rule.
+
+    The top level carries an id and nothing else, while ``data`` carries a code and an
+    id TOGETHER. The complete pair is the stronger evidence and must win, even though
+    the lonely id is shallower.
+    """
+    identifier, code = extract({"id": "99", "data": {"customer_code": "TT1", "id": "42"}})
+    assert (identifier, code) == ("42", "TT1")
+
+
+# ---------------------------------------------------------------------------
 # Must NOT be guessed at — a WRONG code is worse than no code
 # ---------------------------------------------------------------------------
 
