@@ -86,6 +86,21 @@ class RegistrationResult:
     #: read timeout are indistinguishable in the stored lead (both arrive with
     #: ``http_status`` None), and a real outage becomes undiagnosable.
     error_code: str | None = None
+    #: A REDACTED, size-bounded copy of an upstream body we could not parse.
+    #:
+    #: WHY THIS EXISTS. On 2026-10-07 an owner-authorized live registration came
+    #: back 2xx with no customer id and no customer code. The provider's actual body
+    #: was the single most valuable piece of evidence in the whole exercise — and it
+    #: was LOST, because the container was recreated to disarm the write switch and
+    #: that discarded the log holding it.
+    #:
+    #: Logs do not survive a container being recreated. A database row does. So when
+    #: a body cannot be parsed, a sanitised copy is carried on the result and written
+    #: to the lead, where the next operator can actually read it.
+    #:
+    #: It MUST already be redacted by the adapter: an upstream error body can echo
+    #: the request, passwords included.
+    diagnostic_body: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, ProviderStatus):

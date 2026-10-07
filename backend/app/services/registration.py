@@ -476,11 +476,24 @@ class RegistrationService:
         # PENDING is not terminal, so any response stored by an earlier terminal
         # outcome is cleared. Keeping it would let a replay report a dead
         # outcome for a lead an admin retry may still complete.
+        # An UNPARSEABLE upstream body is kept, REDACTED and bounded, in
+        # `last_error_message` — the one place an operator will actually look.
+        #
+        # This exists because of a specific loss: on 2026-10-07 an owner-authorized
+        # live registration returned 2xx with no customer code, and the provider's
+        # actual body — the whole point of running the test — was destroyed when the
+        # container was recreated to disarm the write switch. Logs do not survive
+        # that. A database row does.
+        detail = (
+            f"{result.message}\nUpstream said: {result.diagnostic_body}"
+            if result.diagnostic_body
+            else (result.message or "The registration service is unavailable.")
+        )
         updated = self.repository.update_status(
             lead.lead_id,
             status=RegistrationStatus.PENDING,
             last_error_code=_unavailable_code(result),
-            last_error_message=(result.message or "The registration service is unavailable."),
+            last_error_message=detail[:500],
             increment_attempt=is_retry,
             response_status=None,
             response_body=None,
