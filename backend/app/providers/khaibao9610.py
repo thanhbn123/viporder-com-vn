@@ -83,6 +83,29 @@ def looks_like_duplicate(body: str) -> bool:
     return bool(DUPLICATE_PATTERN.search(strip_accents(body)))
 
 
+#: How much of an unparseable upstream body is kept. Enough to see the KEY NAMES —
+#: which is the diagnostic question — and not enough to become a data dump.
+DIAGNOSTIC_EXCERPT_CHARS = 400
+
+
+def _redacted_excerpt(body: str, *secrets: str | None) -> str:
+    """A short, REDACTED copy of an upstream body, safe to persist.
+
+    Removing the secrets is not optional: an upstream error body can echo the
+    request, and this text is written into the database and shown to operators.
+    Empty and whitespace-only bodies return an empty string rather than noise.
+    """
+    text = (body or "").strip()
+    if not text:
+        return ""
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "<REDACTED>")
+    if len(text) > DIAGNOSTIC_EXCERPT_CHARS:
+        text = text[:DIAGNOSTIC_EXCERPT_CHARS] + "…<truncated>"
+    return text
+
+
 class ViporderFrontendProvider:
     """Live adapter for the (unverified) KHAIBAO9610 frontend registration API."""
 
@@ -476,6 +499,12 @@ class ViporderFrontendProvider:
                     http_status=http_status,
                     retryable=False,
                     error_code="UNUSABLE_RESPONSE",
+                    # KEEP THE EVIDENCE, REDACTED AND BOUNDED. Losing this once cost
+                    # the whole point of an owner-authorized live test; see the field
+                    # comment in base.py.
+                    diagnostic_body=_redacted_excerpt(
+                        body_text, request.password, request.confirm_password
+                    ),
                 )
             return RegistrationResult(
                 status=ProviderStatus.SUCCESS,

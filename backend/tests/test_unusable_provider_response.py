@@ -121,3 +121,123 @@ def test_an_id_alone_is_enough_to_be_a_success() -> None:
     assert result.status is ProviderStatus.SUCCESS
     assert result.external_customer_id == "42"
     assert result.external_customer_code is None
+
+
+# ---------------------------------------------------------------------------
+# KEEP THE EVIDENCE — the fix for losing it once
+# ---------------------------------------------------------------------------
+
+SECRET = "a-test-password-value-1234"
+
+
+def test_an_unparseable_body_is_carried_on_the_result() -> None:
+    """The provider's actual body is the diagnostic question. It must survive the
+    call instead of living only in a log that a container recreate will discard."""
+    body = {"message": "ok", "unexpected": "shape", "reference": "ABC-123"}
+    result = _provider(body).register(REQUEST)
+    assert result.diagnostic_body, "the upstream body was not kept"
+    assert "ABC-123" in result.diagnostic_body
+
+
+def test_the_carried_body_is_REDACTED_of_the_password() -> None:
+    """An upstream error body can echo the request. This text is written to the
+    database and read by operators, so it must never contain the password."""
+    echoed = {"message": f"rejected password {SECRET}"}
+    result = _provider(echoed).register(REQUEST)
+    assert SECRET not in (result.diagnostic_body or ""), (
+        "the password reached the stored diagnostic body"
+    )
+    assert "<REDACTED>" in (result.diagnostic_body or "")
+
+
+def test_the_carried_body_is_redacted_of_the_confirmation_too() -> None:
+    result = _provider({"echo": SECRET}).register(REQUEST)
+    assert SECRET not in (result.diagnostic_body or "")
+
+
+def test_the_carried_body_is_bounded() -> None:
+    """A diagnostic, not a data dump: it must stay inside String(500) once stored."""
+    huge = {"message": "x" * 5000}
+    result = _provider(huge).register(REQUEST)
+    assert len(result.diagnostic_body or "") <= 500, len(result.diagnostic_body or "")
+
+
+def test_a_body_of_braces_is_kept_as_evidence() -> None:
+    """`{}` is not nothing — it is the provider literally returning an empty object,
+    which is itself the answer to "what shape did it send?"."""
+    result = _provider({}).register(REQUEST)
+    assert result.diagnostic_body == "{}"
+
+
+def test_a_truly_EMPTY_body_carries_nothing_rather_than_noise() -> None:
+    """No body at all is the one case where an excerpt would be pure noise."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"", request=request)
+
+    provider = ViporderFrontendProvider(
+        mode="http",
+        enable_real_calls=True,
+        enable_real_registration=True,
+        base_url="https://example.invalid/frontend/v1",
+        user_agent="test-agent",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = provider.register(REQUEST)
+    assert result.status is ProviderStatus.UNUSABLE_RESPONSE
+    assert result.diagnostic_body == ""
+
+
+def test_the_excerpt_helper_leaves_no_secret_behind() -> None:
+    """Direct test of the helper, including a secret that appears twice."""
+    from app.providers.khaibao9610 import _redacted_excerpt
+
+    text = f"password={SECRET}&confirm={SECRET}&note=ok"
+    out = _redacted_excerpt(text, SECRET, SECRET)
+    assert SECRET not in out
+    assert out.count("<REDACTED>") == 2
+
+
+def test_the_service_stores_the_excerpt_on_the_lead(make_harness) -> None:
+    """END TO END: an unparseable upstream body must be readable in the DATABASE.
+
+    That is the whole point of the change. The evidence lost on 2026-10-07 lived
+    only in a container log, and recreating the container destroyed it. A row
+    survives.
+    """
+    from app.providers.base import ProviderStatus, RegistrationResult
+    from tests.conftest import payload
+
+    class _UnusableProvider:
+        """A provider that answers 2xx and identifies nobody, exactly as observed."""
+
+        name = "unusable-for-test"
+
+        def register(self, request):  # type: ignore[no-untyped-def]
+            return RegistrationResult(
+                status=ProviderStatus.UNUSABLE_RESPONSE,
+                message="The provider accepted the registration but returned no customer identifier we can read.",
+                http_status=200,
+                retryable=False,
+                error_code="UNUSABLE_RESPONSE",
+                diagnostic_body='{"message":"ok","provider_reference":"REF-999"}',
+            )
+
+    harness = make_harness(provider=_UnusableProvider(), khaibao9610_mode="mock")
+    response = harness.post_registration(payload(phone="0912000777"))
+
+    # The client is told the truth, not "success".
+    assert response.status_code == 202, response.text
+    assert response.json()["registration_status"] == "PENDING"
+
+    # And the evidence is IN THE DATABASE, where the next operator can read it.
+    rows = harness.lead_rows()
+    assert len(rows) == 1, f"expected one lead, got {len(rows)}"
+    row = rows[0]
+    assert row.registration_status == "PENDING"
+    assert row.last_error_code == "UNUSABLE_RESPONSE"
+    assert row.last_error_message and "REF-999" in row.last_error_message, (
+        f"the upstream body was not preserved: {row.last_error_message!r}"
+    )
+    # The redaction still applies on the way to the database.
+    assert "a-test-password-value" not in (row.last_error_message or "")
