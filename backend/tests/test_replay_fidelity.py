@@ -28,6 +28,7 @@ from sqlalchemy import text
 
 from app.errors import DUPLICATE_PHONE, IDEMPOTENCY_KEY_REUSED, PROVIDER_INVALID
 from app.models import RegistrationStatus
+from app.services.registration import MESSAGE_PENDING
 from tests.conftest import Harness, payload
 
 KEY = "replay-fidelity-key"
@@ -80,8 +81,9 @@ def test_duplicate_replay_does_not_claim_the_registration_is_pending(make_harnes
     # actually exists: while the messages were English, translating them would
     # have left both lines passing VACUOUSLY — the strings would no longer appear
     # anywhere, so the assertions would check nothing while still going green.
-    assert "hoàn tất trong" not in replay.text
-    assert "chưa xác nhận được ngay" not in replay.text
+    # Named through the constant, so a reworded message cannot make this vacuous.
+    assert MESSAGE_PENDING not in replay.text
+    assert "chưa tạo được mã khách hàng ngay" not in replay.text
 
 
 def test_invalid_replays_as_422_with_a_byte_identical_body(make_harness) -> None:
@@ -119,6 +121,19 @@ def test_pending_replays_as_202_with_the_same_token(make_harness) -> None:
     assert first.json() == second.json()
     assert first.json()["registration_status"] == "PENDING"
     assert len(harness.lead_rows()) == 1
+
+
+def test_pending_message_promises_only_what_the_page_delivers(make_harness) -> None:
+    """The page shows no tracking token and has no status lookup, so the customer
+    must not be told to keep one. It is told who acts next and not to re-register."""
+    harness = make_harness(mock_provider_behaviour="unavailable")
+
+    message = _post(harness).json()["message"]
+
+    assert message == MESSAGE_PENDING
+    assert "mã theo dõi" not in message
+    assert "liên hệ qua số điện thoại" in message
+    assert "không cần đăng ký lại" in message
 
 
 @pytest.mark.parametrize(
