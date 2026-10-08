@@ -74,10 +74,13 @@ MAX_IDEMPOTENCY_KEY_LENGTH = 128
 # The four `MESSAGE_RETRY_*` below are deliberately LEFT in English — they go to
 # the operator endpoint, not to a customer.
 MESSAGE_REGISTERED = "Đăng ký thành công."
+# The page never shows the tracking token and offers nowhere to enter one, so the
+# customer must not be told to "keep the tracking code". The owner confirmed on
+# 2026-10-08 that VIPORDER staff follow up PENDING leads by phone.
 MESSAGE_PENDING = (
-    "Chúng tôi đã ghi nhận đăng ký của bạn nhưng chưa xác nhận được ngay. "
-    "Vui lòng giữ mã theo dõi để kiểm tra kết quả; chúng tôi sẽ hoàn tất trong "
-    "thời gian sớm nhất."
+    "Chúng tôi đã ghi nhận đăng ký của bạn nhưng chưa tạo được mã khách hàng ngay. "
+    "VIPORDER sẽ liên hệ qua số điện thoại bạn đã cung cấp để hoàn tất. "
+    "Bạn không cần đăng ký lại."
 )
 MESSAGE_ALREADY_REGISTERED = "This registration is already confirmed."
 MESSAGE_DUPLICATE_PHONE = (
