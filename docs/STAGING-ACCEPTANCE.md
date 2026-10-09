@@ -64,10 +64,9 @@ Người deploy điền kết quả của lần deploy gần nhất. Không đá
 - [ ] Nhân viên lấy được số vừa đăng ký qua danh sách cần gọi lại (`follow-up`)
 
 ### B6. Liên hệ và chân trang
-- [ ] Phần **Liên hệ** hiện **chưa có** hotline, Zalo, địa chỉ — cố ý, vì công ty chưa
-      công bố và trang không được tự bịa (`index.html`, `TODO(g07-content)`). Anh quyết:
-      ☐ ra mắt như vậy  ☐ bổ sung trước khi ra mắt — gửi: hotline `________`,
-      Zalo `________`, địa chỉ `________`
+- [ ] Phần **Liên hệ** và chân trang hiện đúng: Hotline / Zalo **0968 961 962**, địa chỉ
+      **Số 62 Khu đô thị Nam Hồng, Đồng Nguyên, Bắc Ninh** (chủ dự án cung cấp 2026-10-09)
+- [ ] Trên điện thoại: bấm **Hotline** mở trình gọi điện; bấm **Chat Zalo** mở Zalo
 - [ ] Chân trang: tên công ty / mã số thuế — ☐ không cần  ☐ cần, gửi: `________`
 
 ### B7. Trang lỗi

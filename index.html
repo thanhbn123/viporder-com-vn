@@ -47,12 +47,13 @@
     result must not be built on an invented fact:
 
       TODO(g06-content): MISSING FACTS — supply from the business, never guess:
-        - telephone       no support hotline is published anywhere on the site
-        - address         no registered office / PostalAddress is published
         - sameAs          no official Facebook / Zalo / YouTube profile links
+                          (the Zalo chat link is a phone number, not a profile)
         - foundingDate    unknown
         - legalName/taxID no registered entity name or tax code is published
-        - contactPoint    depends on telephone, so blocked by the same gap
+
+      telephone, address and contactPoint were supplied by the owner on
+      2026-10-09 and are now shown in the contact section and the footer.
         - potentialAction G04B added a public tracking lookup (#tracking), but it
                           is a client-side form answered from a JSON API: it has no
                           crawlable result URL, so there is still no SearchAction
@@ -73,6 +74,20 @@
           "url": "https://viporder.com.vn/static/img/apple-touch-icon.png",
           "width": 180,
           "height": 180
+        },
+        "telephone": "+84968961962",
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "Số 62 Khu đô thị Nam Hồng, Đồng Nguyên",
+          "addressRegion": "Bắc Ninh",
+          "addressCountry": "VN"
+        },
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "telephone": "+84968961962",
+          "contactType": "customer service",
+          "areaServed": "VN",
+          "availableLanguage": "vi"
         }
       },
       {
@@ -761,21 +776,23 @@
           nhập khẩu và khai báo hải quan.
         </p>
 
-        <!--
-          DIRECT CONTACT CHANNELS — NOT PUBLISHED YET
-
-          TODO(g07-content): VIPORDER has not published a support hotline or a
-          Zalo account anywhere on this site, and one must not be invented. Add
-          the real values here and the tracking already wired in app.js starts
-          reporting phone_click / zalo_click with no further code change:
-
-            <a href="tel:+84XXXXXXXXX" class="contact-link"
-               data-viporder-contact="phone">Hotline: 0xxx xxx xxx</a>
-
-            <a href="https://zalo.me/XXXXXXXXX" class="contact-link"
+        <!-- Contact facts supplied by the owner on 2026-10-09. The hotline is also
+             the Zalo number. data-viporder-contact labels each click for
+             analytics (contact-links.js); no other code change is needed. -->
+        <ul class="contact-list">
+          <li>
+            <a href="tel:+84968961962" class="contact-link"
+               data-viporder-contact="phone">Hotline: 0968 961 962</a>
+          </li>
+          <li>
+            <a href="https://zalo.me/0968961962" class="contact-link"
                data-viporder-contact="zalo"
-               target="_blank" rel="noopener">Chat Zalo</a>
-        -->
+               target="_blank" rel="noopener">Chat Zalo: 0968 961 962</a>
+          </li>
+          <li>
+            <address class="contact-address">Số 62 Khu đô thị Nam Hồng, Đồng Nguyên, Bắc Ninh</address>
+          </li>
+        </ul>
       </div>
 
       <a href="#register" class="btn btn-light btn-large">
@@ -799,6 +816,8 @@
       <p>
         Vận chuyển, nhập khẩu và logistics Trung Quốc - Việt Nam.
       </p>
+      <p>Số 62 Khu đô thị Nam Hồng, Đồng Nguyên, Bắc Ninh</p>
+      <a href="tel:+84968961962" data-viporder-contact="phone">Hotline / Zalo: 0968 961 962</a>
     </div>
 
     <div>
