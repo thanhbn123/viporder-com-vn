@@ -1,6 +1,6 @@
 # KHAIBAO9610 integration — registration and tracking
 
-> ## Status: endpoints OWNER-SUPPLIED since 2026-10-02 — registration still `BLOCKED_EXTERNAL`
+> ## Status: endpoints OWNER-SUPPLIED since 2026-10-02 · success contract MEASURED 2026-10-09 — registration still `BLOCKED_EXTERNAL`
 >
 > On **2026-10-02 the owner supplied the production endpoint information**, and
 > the implementation landed on `feat/g04b-integration`. The base URL and the
@@ -16,22 +16,30 @@
 >
 > What the supply does **not** settle:
 >
-> * **Exactly ONE live registration `POST` has been made** — the owner-authorised
->   one-shot test of **2026-10-07 05:53:38 UTC**, accepted with **201** (§10.6).
->   It is not a working integration: the provider's raw response body was not
->   captured, so no customer code has ever been observed (that POST also predates
->   PR #63 by 7m45s, so it ran against the OLD success handling — see §10.6), and a
->   second `POST`
->   needs new owner authorisation. `KHAIBAO9610_MODE=mock` is still the shipped
->   default in every configuration file (`backend/app/config.py:107`,
->   `deploy/env.production.example:80`, `.env.example:33`). The live adapter
->   refuses to exist unless the mode is `http` **and at least one** of the two
->   capability switches is set
+> * **TWO live registration `POST`s have been made, both owner-authorised, one
+>   each.** The first — **2026-10-07 05:53:38 UTC**, through our application
+>   (§10.6) — lost the provider's raw body and predates PR #63 by 7m45s, so it is
+>   stale evidence about our code. The second — **2026-10-09 16:27:24 UTC**,
+>   posted **directly** to the provider by `tools/test_live_registration.py`
+>   (§10.8) — kept its evidence, and it answers the register schema: **200**, two
+>   keys, **no customer code, no id, no token**. A customer code **has** now been
+>   observed, but **not** in the register response: it is **`customer.code`**, read
+>   back through one `POST /login` and one `GET /auth/profile` (measured value
+>   `TT5233`, `customer.id` `6109`).
+> * **This is still not a working integration.** The backend has **no read-back
+>   step**, so the running system cannot obtain that code: `/register` returns no
+>   token, and a 2xx that identifies nobody is classified `UNUSABLE_RESPONSE` with
+>   the lead left `PENDING`. A third `POST` needs new owner authorisation.
+>   `KHAIBAO9610_MODE=mock` is still the shipped default in every configuration
+>   file (`backend/app/config.py:107`, `deploy/env.production.example:80`,
+>   `.env.example:33`). The live adapter refuses to exist unless the mode is `http`
+>   **and at least one** of the two capability switches is set
 >   (`backend/app/providers/khaibao9610.py:183-190`).
-> * **Six provider facts remain UNKNOWN** — the registration success, duplicate
->   and validation response schemas, the rate limit, the provider's expected
->   timeouts, and whether production requires authentication or an IP allowlist.
->   They are listed in §4.9, and every parser is defensive because of them.
+> * **Five provider facts remain UNKNOWN** — the duplicate and validation response
+>   schemas, the rate limit, the provider's expected timeouts, and whether
+>   production requires authentication or an IP allowlist. They are listed in §4.9
+>   (where item 1 is now answered), and every corresponding parser is defensive
+>   because of them.
 > * **Live tracking CAN now be switched on by itself**, because the read and
 >   write switches are separate: `KHAIBAO9610_MODE=http` with
 >   `KHAIBAO9610_ENABLE_REAL_CALLS=yes` and
@@ -488,13 +496,16 @@ unknown**, is asserted nowhere in this document, and is the reason the code pars
 defensively rather than optimistically. Each item says which guard exists
 *because* the answer is missing.
 
-1. **Registration success response — exact schema. STILL UNKNOWN.** We know the
-   call is `POST {base}/register`; we do not know the status code, the body, or
-   the discriminator that means "created". The adapter treats **any** 2xx as
-   success (`backend/app/providers/khaibao9610.py:415-424`) and only *tries* to
-   pull a customer id/code out of the body under a list of guessed key names
-   (`:302-327`). Both halves are defensive precisely because the real schema was
-   never supplied.
+1. **Registration success response — exact schema. MEASURED 2026-10-09, see
+   §10.8.** The provider answers `POST {base}/register` with **HTTP 200**,
+   `application/json`, **96 bytes** and exactly two keys —
+   `{"status": "success", "message": "Đăng ký tài khoản thành công"}`. There is
+   **no customer code, no customer id and no token** in it. The adapter still
+   treats any 2xx as reaching the provider
+   (`backend/app/providers/khaibao9610.py:415-424`) and still finds no identifier
+   in that body, which is why such a registration is classified
+   `UNUSABLE_RESPONSE` and the lead stays `PENDING`. What remains unknown is not
+   the schema but the *non-success* schemas — items 2 and 3 below.
 2. **Duplicate-registration response — exact status and body. STILL UNKNOWN.**
    The adapter recognises a duplicate only on HTTP **409 or 422** *and* a body
    that accent-insensitively matches a phrase list
@@ -610,10 +621,12 @@ what we tell the customer. Items 16–20 are operational limits and requirements
 Items 21–22 were **added on 2026-10-02**, when the two tracking lookups became
 known; the original checklist of 20 predates them and never asked.
 
-**Where each item stands (2026-10-02).** Nothing was removed: every question below
-is kept exactly as it was asked, and this table records the outcome. A status of
-**SUPPLIED** means the owner answered it directly; **STILL UNKNOWN** means it has
-not been answered, so the corresponding code stays defensive (§4.9).
+**Where each item stands (2026-10-02, rows 9–11 updated 2026-10-09).** Nothing was
+removed: every question below is kept exactly as it was asked, and this table
+records the outcome. A status of **SUPPLIED** means the owner answered it directly;
+**MEASURED** means we observed it ourselves on a live call and the section named
+beside it carries the numbers; **STILL UNKNOWN** means it has not been answered, so
+the corresponding code stays defensive (§4.9).
 
 | # | Item | Status |
 |---|---|---|
@@ -625,9 +638,9 @@ not been answered, so the corresponding code stays defensive (§4.9).
 | 6 | Optional fields | **STILL UNKNOWN** |
 | 7 | Phone format | **STILL UNKNOWN** |
 | 8 | Password rules | **STILL UNKNOWN** |
-| 9 | Success response example | **STILL UNKNOWN** (§4.9 item 1) |
-| 10 | Customer code field | **STILL UNKNOWN** |
-| 11 | Customer id field | **STILL UNKNOWN** |
+| 9 | Success response example | **MEASURED 2026-10-09** — `200`, `{"status":"success","message":"…"}`, 2 keys, no code (§10.8) |
+| 10 | Customer code field | **MEASURED 2026-10-09** — **not in the register body**; it is `customer.code` from `POST /login` and `GET /auth/profile` (§10.8) |
+| 11 | Customer id field | **MEASURED 2026-10-09** — `customer.id`, a small integer, in the same two bodies (§10.8) |
 | 12 | Duplicate-account response | **STILL UNKNOWN** (§4.9 item 2) |
 | 13 | Validation error response | **STILL UNKNOWN** (§4.9 item 3) |
 | 14 | Auth error response | **STILL UNKNOWN**, grouped with item 3 |
@@ -939,10 +952,14 @@ status, we need it so contract tests assert the real thing instead of our guess.
 **Where it lands in the code.** `backend/app/providers/khaibao9610.py:229-238,144-169,269-273`;
 `backend/app/services/registration.py:348-404`.
 
-**Current assumption.** ASSUMPTION — 2xx means success, and the body carries the
-code and id somewhere. Both halves are unverified. The observed public client
-read only `message` from this response and then redirected to login (§4.2, §4.3)
-— it asserted nothing about the code, so it cannot settle this.
+**ANSWERED — measured 2026-10-09 (§10.8).** `HTTP 200`, `application/json`,
+96 bytes, two keys: `{"status": "success", "message": "Đăng ký tài khoản thành
+công"}`. The discriminator is `status == "success"` together with the 200; the body
+carries **neither** the code **nor** the id **nor** a token. The first half of the
+old assumption held (2xx does mean the provider accepted it); the second half —
+"the body carries the code and id somewhere" — is **false**, and the behaviour that
+assumption would have produced is exactly what PR #63 replaced with
+`UNUSABLE_RESPONSE`.
 
 ### Item 10 — Customer code field
 
@@ -967,10 +984,13 @@ ignores remains possible.
 **Where it lands in the code.** `backend/app/providers/khaibao9610.py:150-160,229-238`;
 `backend/app/services/registration.py:476-489`; `backend/app/models.py:141`.
 
-**Current assumption.** NONE — do not guess. Do not turn "the client ignores it"
-into a field name. The candidate key names in the code are guesses and are
-labelled as such (`backend/app/providers/khaibao9610.py:144-146` —
-"best-effort").
+**ANSWERED — measured 2026-10-09 (§10.8).** The register response **never carries
+it**. The code is `customer.code`, returned by `POST {base}/login` (beside the
+access token) and by `GET {base}/auth/profile` (behind that token). Measured value
+for the authorized test identity: `TT5233`. `_extract` already reads that path
+correctly — measured, in the running container, on the real body — so **no parser
+change is needed**; what is missing is a read-back step in `register()`, because
+`/register` returns no token to authenticate `/auth/profile` with.
 
 ### Item 11 — Customer id field
 
@@ -993,8 +1013,11 @@ in the response would be silently stored as the customer id.
 **Where it lands in the code.** `backend/app/providers/khaibao9610.py:161-168`;
 `backend/app/services/registration.py:359-367`; `backend/app/models.py:140`.
 
-**Current assumption.** NONE — do not guess. The key list in the adapter is a
-best-effort guess and must not be mistaken for knowledge.
+**ANSWERED — measured 2026-10-09 (§10.8).** `customer.id`, a small **integer**
+(`6109` for the authorized test identity), in the same two bodies as the code and in
+the same object, so `_extract` pairs the two outright. Still unknown: whether the
+value is stable across later lookups, and whether it is the id used elsewhere in the
+provider's system — one call cannot answer that.
 
 ### Item 12 — Duplicate-account response
 
@@ -1768,29 +1791,177 @@ register body's full schema is one more authorized POST.
   require credentials we do not hold — the 2026-10-07 password was generated in-process
   and never stored, by design.
 
-### Consequence for the next authorized call
+### Consequence for the next authorized call — CARRIED OUT, see §10.8
 
-If a new POST is authorized, the register call should be followed by
-`POST /login` with the same phone and password and then `GET /auth/profile`, so the
-code is read from where it actually lives. The redacted-diagnostic capture added in
-PR #65 will preserve whatever `/register` really returns either way.
+This is exactly what the authorized call of **2026-10-09** did: one
+`POST /register`, then one `POST /login`, then one `GET /auth/profile`. **The
+hypothesis above was confirmed.** `/register` really does return no code and no
+token, and the code really does live at `customer.code` behind the login. §10.8
+has the measured statuses, byte counts and bodies; read it rather than the
+hypothesis.
+
+## 10.8 THE PROVIDER'S OWN REGISTER BODY, AND WHERE THE CODE LIVES — owner-authorized one-shot test, 2026-10-09
+
+**SOURCE: OWNER-AUTHORIZED LIVE TEST**, run with `tools/test_live_registration.py`.
+**DATE/TIME: 2026-10-09 16:27:24 UTC** (`recorded_at` in the evidence file;
+`2026-10-09T23:27:24+07:00` local).
+**POSTS: exactly one** `POST /register`, plus the two read-back calls the
+`LIVE_REG_READ_BACK` flag announces before sending anything — one `POST /login` and
+one `GET /auth/profile`, neither of which creates anything. Consumed once; a second
+POST requires new owner authorization.
+
+**THIS MEASURES THE PROVIDER, NOT US — and that is the difference from §10.6.**
+§10.6 recorded *our own API's* answer to a registration; its six keys (`lead_id`,
+`registration_status`, `login_url`, …) are ours, which is why its 201 and its 228
+bytes say nothing about the provider. The tool used here posts **directly** to
+`https://apiviporder.com/frontend/v1/register`, so everything below is the
+provider's own body.
+
+Measured consequence of that directness: **our staging database was not touched.**
+`select count(*) from leads` read **8 before and 8 after**, and the pre-existing
+lead for the test phone still reads `PENDING`, `attempt_count = 1`,
+`last_error_code = PROVIDER_ERROR`, `in_flight_at` NULL,
+`updated_at 2026-10-08 06:31:13Z`. **No lead row exists for this registration**, so
+nothing in `leads` can be used as evidence about it — the evidence file is the only
+record.
+
+### The three calls, as measured
+
+| Call | Status | Content-type | Bytes | Elapsed |
+|---|---|---|---|---|
+| `POST /frontend/v1/register` | **200** | `application/json` | **96** | 0.623 s |
+| `POST /frontend/v1/login` | **200** | `application/json` | 592 | 0.295 s |
+| `GET /frontend/v1/auth/profile` | **200** | `application/json` | 223 | 0.231 s |
+
+Staging was serving `e8297746243bb6ac0362f3b429ab22391fc377d3` at the time, with
+`registration_writes: disabled` on `/api/v1/health` — the tool does not go through
+the application, so the write switch being off neither enabled nor blocked it.
+
+### Item 9 answered — the register success body
+
+**Two keys. No customer code, no customer id, no token.**
+
+```json
+{"status": "success", "message": "Đăng ký tài khoản thành công"}
+```
+
+`key_names` as recorded: `status`, `message`. The success discriminator is
+`status == "success"` **together with** HTTP **200** — not the 201 that §10.6's
+our-side figure might lead a reader to expect of the provider.
+`password_echoed: false`.
+
+### Items 10 and 11 answered — the code is `customer.code`, behind a login
+
+`POST /login` with the identity just registered returns a token **and** the customer
+record; `GET /auth/profile` with that token returns the same record without the
+token. Token and token type are redacted by the tool; the test identity's phone and
+email are not written down here, following §10.6's practice.
+
+```json
+// POST /login — 592 bytes
+{"access_token": "<REDACTED:by-key>", "token_type": "<REDACTED:by-key>",
+ "expires_in": null,
+ "customer": {"id": 6109, "name": "VIPORDER NGHIEM THU", "code": "TT5233",
+              "phone": "<masked>", "email": "<masked>", "address": null,
+              "created_at": "2026-10-09T16:27:25.000000Z",
+              "updated_at": "2026-10-09T16:27:25.000000Z"}}
+
+// GET /auth/profile — 223 bytes
+{"customer": {"id": 6109, "name": "VIPORDER NGHIEM THU", "code": "TT5233", …}}
+```
+
+| | JSON path | Measured value |
+|---|---|---|
+| **customer code** | **`customer.code`** — in `/login` and in `/auth/profile` | `TT5233` |
+| **customer id** | **`customer.id`** — same two bodies, same object | `6109` (integer) |
+
+`expires_in` came back **null**, so the token's lifetime is not advertised. The
+customer record has exactly `id, name, code, phone, email, address, created_at,
+updated_at`; `address` was null for a registration that never supplied one.
+
+**`TT5233` matches the mock provider's `^TT[0-9]{5}$` shape, so §10.6's way of
+telling mock rows from provider rows no longer works.** The real provider issues
+codes in the same shape as `backend/app/providers/mock.py`. Tell them apart by the
+**id** instead: the provider's `customer.id` is a small integer, the mock's is a
+19-character non-numeric string.
+
+### The parser already reads this correctly — measured, not reasoned
+
+`_extract` was run against all three measured bodies **inside the running staging
+container**, on the image built from `e829774`:
+
+```
+/register        _extract -> (None, None)
+/login           _extract -> ('6109', 'TT5233')
+/auth/profile    _extract -> ('6109', 'TT5233')
+```
+
+So **no parser change is needed to read the code.** `customer` is already in
+`_WRAPPER_KEYS`, `code` in `_AMBIGUOUS_CODE_KEYS` — and `TT5233` survives the
+digits-only status filter that exists to stop `{"code": 200}` being handed to a
+customer — `id` is in `_ID_KEYS`, and the code and the id arrive in the **same**
+object, so they are paired outright rather than through the sibling-wrapper
+fallback. `(None, None)` for `/register` is the *correct* answer, not a miss.
+
+The three shapes are pinned in `backend/tests/test_extract_customer_shapes.py`
+against a masked fixture, `backend/tests/fixtures/live_registration_20261009.json`,
+because the authorization that produced them is spent: if a later change to the
+wrapper or key lists stopped finding `customer.code`, there is no second live call
+available to notice.
+
+### What is still missing — and it is not the parser
+
+**The backend has no read-back step.** `/register` returns no token, so `register()`
+has nothing to authenticate `GET /auth/profile` with; a 2xx that identifies nobody
+is classified `UNUSABLE_RESPONSE` and the lead stays `PENDING` — correct, and
+truthful to the customer. Obtaining the code in production therefore requires the
+registration flow to perform `POST /login` with the password the customer just
+chose and then `GET /auth/profile`. That is a change to `register()` and to the
+service around it — **not** a parser fix — and it is deliberately **not** made in
+the change that records this measurement.
+
+### Scope of this measurement, stated plainly
+
+* **Measured:** the three statuses, content-types, byte counts, latencies and bodies
+  above; the JSON path of the code and of the id; `_extract`'s output on each body;
+  that `leads` was unchanged (8 rows before and after).
+* **NOT measured:** the duplicate-registration response; the validation-error
+  response; the auth-error response; the rate limit; the provider's timeout
+  expectation; whether `/auth/register` differs from `/register`; the token's
+  lifetime; whether the code or the id stay stable on later lookups; and whether
+  `/register` behaves identically when sent **through our adapter** rather than by
+  this tool. A success test exercises no failure path, and one call cannot establish
+  stability.
+* **Budget:** `~/.viporder-live-reg/POST_BUDGET_CONSUMED` was created on the staging
+  host immediately before the call. The tool was run **once** and not re-run.
+* **Evidence on disk, outside this repository:**
+  `~/.viporder-live-reg/registration-evidence-20261009T162724Z.json` on the staging
+  host — 2636 bytes, mode `600`. The password was generated **on that host**, stored
+  at `~/.viporder-live-reg/password` (mode `600`, 20 characters), never printed,
+  never committed, and sent nowhere but the provider.
 
 ## 11. What is not verified
 
 Stated plainly, because a document that lists only what is known is the one that
 gets trusted past its evidence.
 
-* **The registration contract is still unproven, after exactly ONE live `POST`.**
-  The owner-authorised one-shot test of 2026-10-07 (§10.6) was accepted with
-  **201**, so the endpoint, the field names and 2xx handling are observed. What is
-  NOT observed is the response MAPPING: the raw body was not captured and no
-  customer code was found, so the success schema (and the duplicate, validation
-  and auth responses, which were never exercised at all) remain unknown. The
-  adapter's response handling is defensive for exactly that reason
-  (`backend/app/providers/khaibao9610.py:1-12,356-452`), and the mock's
-  responses are ours, not theirs (§8). This paragraph said "no live registration
-  `POST` has ever been made" until that test happened; keeping a false banner in
-  a list whose whole purpose is honesty is worse than the gap it describes.
+* **The registration SUCCESS contract is now proven; the FAILURE contracts are
+  not.** After a second owner-authorised one-shot test on **2026-10-09** (§10.8),
+  the success path is measured end to end: the provider's own `POST /register`
+  body (200, two keys, no code), and the `customer.code` / `customer.id` path in
+  `POST /login` and `GET /auth/profile`. What is **still** unmeasured is every
+  non-success shape — duplicate registration, validation error, auth error,
+  provider-unavailable, rate limit — because a success test exercises none of
+  them. The adapter's handling of those stays defensive for exactly that reason
+  (`backend/app/providers/khaibao9610.py:1-12,356-452`), and the mock's responses
+  are ours, not theirs (§8). Two further gaps, stated so they are not mistaken
+  for solved: the 2026-10-09 call went **directly** to the provider rather than
+  through our adapter, so the adapter's own wire format on a live success is
+  still unexercised; and the backend has **no read-back step**, so the measured
+  code is not something the running system can obtain yet. This paragraph said
+  "no live registration `POST` has ever been made", then "the contract is still
+  unproven"; each was true when written, and keeping either past its evidence
+  would be worse than the gap it describes.
 * **The live `GET`s were read-only reconnaissance, on 2026-10-02.** The two
   envelopes, the two 404 bodies, the full-code keyword and the 401 on the bare
   list are **measured facts of that moment** (§4.7), not a contract and not a
@@ -1806,11 +1977,12 @@ gets trusted past its evidence.
   lookups could not be enabled "without enabling real registration writes", which
   was true before the switches were split and is false now
   (`backend/app/providers/khaibao9610.py:556,570,588` — measured 2026-10-07).
-* **The six UNKNOWN provider facts of §4.9**: the registration success schema,
-  the duplicate-registration response, the validation-error response, the rate
-  limit, the provider's expected timeouts, and whether production requires
-  authentication or an IP allowlist. Each is asserted nowhere in this document,
-  and each corresponding parser is defensive because of it.
+* **The five UNKNOWN provider facts of §4.9**: the duplicate-registration
+  response, the validation-error response, the rate limit, the provider's expected
+  timeouts, and whether production requires authentication or an IP allowlist.
+  Each is asserted nowhere in this document, and each corresponding parser is
+  defensive because of it. §4.9's sixth item — the registration **success**
+  schema — was answered on 2026-10-09 (§10.8) and is no longer in this list.
 * **Anchor drift in this document.** Sections updated on 2026-10-02 — §2's
   tracking sequence, §3, §4.6–§4.9, §5, §6's status table and the status lines on
   items 1/2/5, §7, §8's tracking note, §9 and this section — carry anchors
