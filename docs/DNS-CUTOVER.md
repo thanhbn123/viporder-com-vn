@@ -515,12 +515,41 @@ Steps 2–3 must be confirmed with whoever hosts mail on `103.159.50.70`: if tha
 host's mail certificate or SPF expectations name the apex, they must accept the
 `mail.` name too. **No AAAA** is added (the VPS IPv6 path is untested).
 
-**On the VPS, before step 4** (the Caddy at `/srv/vip-staging-proxy/Caddyfile`
-owns :80/:443 for every project there): a `viporder.com.vn, www.viporder.com.vn`
-block reverse-proxying to the viporder **production** stack, never to staging.
-Caddy can only obtain the certificate *after* DNS points at it, so the first
-minutes after step 4 may show a certificate error unless the certificate is
+**On the VPS, before step 4.** MEASURED 2026-10-10: the production stack already
+runs on `160.22.170.20`, next to staging, and is reachable only on the loopback.
+
+| | Staging (unchanged) | Production |
+|---|---|---|
+| Checkout | `~/viporder-staging` | `~/viporder-production` (`git checkout --detach <SHA>`) |
+| Compose project | `viporder` | `viporder-prod` (`-p viporder-prod`) |
+| Overlay | `deploy/docker-compose.staging.yml` | `deploy/docker-compose.production-vps.yml` |
+| nginx bind | `0.0.0.0:18081` / `0.0.0.0:18443` | **`127.0.0.1:28081` / `127.0.0.1:28443`** |
+| Database volume | `viporder_db-data` | `viporder-prod_db-data` |
+| TLS inside the stack | self-signed `staging.viporder.com.vn` | self-signed `viporder.com.vn` in `deploy/certs/` (git-ignored) |
+| Admin token | `deploy/.env` | `deploy/.env` + `~/.viporder-prod-admin-token` (mode 600) |
+| `KHAIBAO9610_ENABLE_REAL_REGISTRATION` | `no` | **`no` until cutover day** — set `yes` and `up -d` as the last step before step 4 |
+
+The Caddy at `/srv/vip-staging-proxy/Caddyfile` owns :80/:443 for every project
+on the host and is root-owned. On cutover day a `viporder.com.vn, www.viporder.com.vn`
+block reverse-proxies to **`https://127.0.0.1:28443`** (the production nginx,
+never staging's 18443) with `header_up Host viporder.com.vn` and a transport of
+`tls_server_name viporder.com.vn` + `tls_insecure_skip_verify` (the inner
+certificate is self-signed; Caddy terminates the public TLS). The exact block is
+kept beside the checkout at `~/viporder-production/caddy-viporder.com.vn.snippet`.
+Caddy can only obtain the public certificate *after* DNS points at it, so the
+first minutes after step 4 may show a certificate error unless the certificate is
 obtained by DNS-01 beforehand.
+
+Bring-up and checks, as run on 2026-10-10 (all passed at `87e2695`):
+
+```bash
+cd ~/viporder-production/deploy
+C="docker compose -p viporder-prod -f docker-compose.yml -f docker-compose.production-vps.yml"
+$C build app && $C run --rm app alembic upgrade head && $C up -d
+R="--resolve viporder.com.vn:28443:127.0.0.1"
+curl -sk $R https://viporder.com.vn:28443/api/v1/health   # tracking_reads=live, registration_writes=disabled
+curl -sk $R -o /dev/null -w '%{http_code}\n' https://viporder.com.vn:28443/.git/HEAD   # 403, not 200
+```
 
 **Rollback:** step 4 in reverse (A back to `103.159.50.70`). With step 1 done, the
 TTL bounds the rollback to about 5 minutes. Steps 2–3 do not need rolling back.
