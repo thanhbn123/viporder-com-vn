@@ -292,9 +292,9 @@ FIXTURE = json.loads(
 def test_the_measured_register_body_identifies_nobody() -> None:
     """MEASURED: `POST /register` answers 200 with exactly `status` and `message`.
 
-    No code, no id, no token. `(None, None)` is therefore the CORRECT answer and the
-    registration is `UNUSABLE_RESPONSE` — truthful, and the reason the backend still
-    cannot show a code without a read-back step.
+    No code, no id, no token. `(None, None)` is therefore the CORRECT answer. Since
+    the owner chose option B (2026-10-09) the provider then reports SUCCESS without
+    a code, because `status == "success"` — see test_measured_register_success.py.
     """
     body = FIXTURE["register"]["body"]
     assert sorted(body) == ["message", "status"], f"the register body changed: {sorted(body)}"

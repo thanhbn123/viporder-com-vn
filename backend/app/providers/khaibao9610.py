@@ -677,7 +677,28 @@ class ViporderFrontendProvider:
         body_text = response.text or ""
 
         if 200 <= http_status < 300:
-            identifier, code = self._extract(_safe_json(response))
+            payload = _safe_json(response)
+            identifier, code = self._extract(payload)
+            if identifier is None and code is None and _is_measured_success(payload):
+                # MEASURED 2026-10-09 (docs/KHAIBAO9610-INTEGRATION.md §10.8): the
+                # provider's real success body is exactly
+                # `{"status": "success", "message": "..."}` — no code, no id, no
+                # token. The account IS created; the code (`customer.code`) is only
+                # returned after the customer signs in. The provider's own portal
+                # does the same: register, then send the customer to log in.
+                #
+                # Owner decision 2026-10-09 (option B): report SUCCESS without a
+                # code and tell the customer to sign in to see it. We do NOT log in
+                # as the customer to fetch it — that would reuse their password for
+                # a second call and hold a token to their account.
+                return RegistrationResult(
+                    status=ProviderStatus.SUCCESS,
+                    external_customer_id=None,
+                    external_customer_code=None,
+                    message="Registration completed; the customer code is shown after sign-in.",
+                    http_status=http_status,
+                    retryable=False,
+                )
             if identifier is None and code is None:
                 # A 2xx that identifies NOBODY is not a usable success.
                 #
@@ -751,6 +772,19 @@ class ViporderFrontendProvider:
             http_status=http_status,
             retryable=False,
         )
+
+
+#: The provider's measured success discriminator (§10.8). Compared exactly, after
+#: trimming and case-folding: `"ok"`, a `message` of "success", or `code: 200` are
+#: NOT it, and stay UNUSABLE_RESPONSE.
+MEASURED_SUCCESS_STATUS = "success"
+
+
+def _is_measured_success(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    status = payload.get("status")
+    return isinstance(status, str) and status.strip().casefold() == MEASURED_SUCCESS_STATUS
 
 
 def _safe_json(response: httpx.Response) -> object:

@@ -26,10 +26,13 @@
 >   observed, but **not** in the register response: it is **`customer.code`**, read
 >   back through one `POST /login` and one `GET /auth/profile` (measured value
 >   `TT5233`, `customer.id` `6109`).
-> * **This is still not a working integration.** The backend has **no read-back
->   step**, so the running system cannot obtain that code: `/register` returns no
->   token, and a 2xx that identifies nobody is classified `UNUSABLE_RESPONSE` with
->   the lead left `PENDING`. A third `POST` needs new owner authorisation.
+> * **OWNER DECISION 2026-10-09 — option B.** The backend does **not** read the code
+>   back. The measured success body (`200`, `status == "success"`) is now reported
+>   as `SUCCESS` with **no code**: the lead becomes `REGISTERED` with
+>   `external_customer_code = NULL`, and the customer is told to sign in to the
+>   portal to see the code — exactly what the provider's own portal does. Any other
+>   2xx that identifies nobody is still `UNUSABLE_RESPONSE` (§10.8, "option B").
+>   A third live `POST` needs new owner authorisation.
 >   `KHAIBAO9610_MODE=mock` is still the shipped default in every configuration
 >   file (`backend/app/config.py:107`, `deploy/env.production.example:80`,
 >   `.env.example:33`). The live adapter refuses to exist unless the mode is `http`
@@ -1909,7 +1912,22 @@ because the authorization that produced them is spent: if a later change to the
 wrapper or key lists stopped finding `customer.code`, there is no second live call
 available to notice.
 
-### What is still missing — and it is not the parser
+### Option B — what the backend does with this body (owner decision 2026-10-09)
+
+**Superseding the paragraph below.** The owner chose not to add a read-back step.
+`register()` now treats a 2xx whose body identifies nobody **and** whose top-level
+`status` is exactly `"success"` (trimmed, case-folded) as `SUCCESS` with no code and
+no id. The lead is `REGISTERED`, `external_customer_code` is `NULL`, and the page
+tells the customer to sign in at `khachhang.viporder.com.vn` with the phone and
+password just chosen to see the code. The backend makes **one** call, to
+`/register`; it never logs in as the customer. `{"status": "ok"}`, a `message` of
+"success", or a bare `code: 200` remain `UNUSABLE_RESPONSE`
+(`backend/tests/test_measured_register_success.py`).
+
+Consequence to accept: VIPORDER's own lead row does not learn the customer code.
+Staff who need it read it from the provider's system.
+
+### What was missing before option B — kept as the record of the choice
 
 **The backend has no read-back step.** `/register` returns no token, so `register()`
 has nothing to authenticate `GET /auth/profile` with; a 2xx that identifies nobody
