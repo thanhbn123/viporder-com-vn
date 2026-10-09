@@ -473,6 +473,58 @@ proposals because the owner, not this document, decides them.
 
 ## 6. CUTOVER
 
+### 6.0 SUPERSEDING DECISION — the site moves to `160.22.170.20` (owner, 2026-10-08)
+
+**Read this before §6.1.** §6.1 was written for "the new site runs on the existing
+host `103.159.50.70`". On 2026-10-08 the owner decided production runs on the
+staging VPS **`160.22.170.20`**. That is the "conditional" case at the end of §6.1,
+and it changes what must happen in DNS.
+
+**Re-measured 2026-10-09** (public resolver; authoritative `ns1.zonedns.vn` agrees
+for A and MX):
+
+| Name | Type | Value | TTL |
+|---|---|---|---|
+| `viporder.com.vn` | A | `103.159.50.70` | **3600** (was 600 on 2026-10-02) |
+| `viporder.com.vn` | MX | `10 viporder.com.vn.` | 3600 |
+| `viporder.com.vn` | TXT / AAAA / CAA | none | — |
+| `_dmarc.viporder.com.vn` | TXT | none | — |
+| `www.viporder.com.vn` | CNAME | `viporder.com.vn.` | 3600 |
+| `khachhang.viporder.com.vn` | A | `103.159.50.70` | 3600 |
+| `mail`, `webmail`, `cpanel`, `ftp`, `api`, `admin` `.viporder.com.vn` | A | `103.159.50.70` | — |
+| `zz-khong-ton-tai-8341.viporder.com.vn` (random) | A | `103.159.50.70` | — **a wildcard `*` record exists** |
+| `web.viporder.vn` (acceptance host, other zone) | A | `160.22.170.20` | — |
+
+**HAZARD — email.** The MX record points at the **apex name** `viporder.com.vn`,
+not at a mail host. Changing the apex A record to `160.22.170.20` therefore also
+moves **inbound mail for `@viporder.com.vn`** to a VPS that runs no mail server:
+mail would bounce or be lost. Nothing in §6.1 covered this, because §6.1 never
+changed the apex.
+
+**Record changes, in order (PROPOSALS — none applied):**
+
+| # | When | Change | Why |
+|---|---|---|---|
+| 1 | ≥ 24 h before | `viporder.com.vn` A TTL 3600 → **300** (value unchanged) | so step 4 and any rollback take minutes, not an hour |
+| 2 | ≥ 24 h before | ensure `mail.viporder.com.vn` is an **explicit** A `103.159.50.70` (today it may be only the wildcard) | gives mail a name that does not move |
+| 3 | ≥ 24 h before | MX `10 viporder.com.vn.` → **`10 mail.viporder.com.vn.`**, then send/receive a test mail | mail stops depending on the apex before the apex moves |
+| 4 | cutover | `viporder.com.vn` A `103.159.50.70` → **`160.22.170.20`** | the actual move; `www` follows (CNAME) |
+| — | never | `khachhang.viporder.com.vn` A, the wildcard `*`, `mail`/`webmail`/`cpanel` | all stay on `103.159.50.70`; the portal and mail are not moving |
+
+Steps 2–3 must be confirmed with whoever hosts mail on `103.159.50.70`: if that
+host's mail certificate or SPF expectations name the apex, they must accept the
+`mail.` name too. **No AAAA** is added (the VPS IPv6 path is untested).
+
+**On the VPS, before step 4** (the Caddy at `/srv/vip-staging-proxy/Caddyfile`
+owns :80/:443 for every project there): a `viporder.com.vn, www.viporder.com.vn`
+block reverse-proxying to the viporder **production** stack, never to staging.
+Caddy can only obtain the certificate *after* DNS points at it, so the first
+minutes after step 4 may show a certificate error unless the certificate is
+obtained by DNS-01 beforehand.
+
+**Rollback:** step 4 in reverse (A back to `103.159.50.70`). With step 1 done, the
+TTL bounds the rollback to about 5 minutes. Steps 2–3 do not need rolling back.
+
 ### 6.1 Record changes
 
 **All rows in this table are PROPOSALS.** None has been applied. The "current"
