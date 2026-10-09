@@ -225,12 +225,15 @@ def test_list_pending_has_no_production_caller() -> None:
         if "list_pending" in path.read_text(encoding="utf-8")
     }
 
+    # routers/admin.py READS the queue for a human (the follow-up list); it is
+    # not a worker and retries nothing. Anything beyond that is a worker.
     assert callers == {
         "repositories/base.py",
         "repositories/sqlalchemy_repo.py",
+        "routers/admin.py",
     }, (
         "list_pending gained a caller in "
-        f"{sorted(callers - {'repositories/base.py', 'repositories/sqlalchemy_repo.py'})}. "
+        f"{sorted(callers - {'repositories/base.py', 'repositories/sqlalchemy_repo.py', 'routers/admin.py'})}. "
         "Update the retry note in backend/README.md."
     )
 
