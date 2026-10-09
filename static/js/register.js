@@ -505,8 +505,15 @@
     var parts = [data && data.message ? String(data.message) : "Đăng ký thành công."];
     if (data && data.external_customer_code) {
       parts.push("Mã khách hàng của bạn: " + String(data.external_customer_code) + ".");
+      parts.push("Bạn có thể đăng nhập hệ thống khách hàng bằng số điện thoại và mật khẩu vừa tạo.");
+    } else {
+      /* MEASURED 2026-10-09: the provider's register reply carries no code; the code
+       * is shown on the customer portal after sign-in. Say so, rather than leave the
+       * customer wondering where "mã khách hàng" went. */
+      parts.push(
+        "Vui lòng đăng nhập hệ thống khách hàng bằng số điện thoại và mật khẩu vừa tạo để xem mã khách hàng."
+      );
     }
-    parts.push("Bạn có thể đăng nhập hệ thống khách hàng bằng số điện thoại và mật khẩu vừa tạo.");
     setMessage(parts.join(" "), "success");
 
     form.setAttribute("data-completed", "true");
