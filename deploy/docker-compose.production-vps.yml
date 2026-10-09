@@ -1,0 +1,37 @@
+# PRODUCTION-ON-VPS OVERRIDE — the production stack that runs NEXT TO staging on
+# the shared VPS 160.22.170.20 (owner decision 2026-10-08, docs/DNS-CUTOVER.md §6.0).
+#
+#   cd ~/viporder-production/deploy
+#   docker compose -p viporder-prod -f docker-compose.yml -f docker-compose.production-vps.yml up -d
+#
+# What it changes, and why each change exists:
+#
+# * `name: viporder-prod` — a SEPARATE compose project. The staging stack on the
+#   same host is project `viporder` (its containers are viporder-app-1,
+#   viporder-db-1, viporder-nginx-1 and its data volume is viporder_db-data).
+#   Without a distinct project name, `up -d` from this directory would ADOPT and
+#   REPLACE the staging containers and reuse the staging database volume.
+#   With it, this stack gets viporder-prod-*-1 containers and its own
+#   `viporder-prod_db-data` volume. Pass `-p viporder-prod` as well: the flag is
+#   the one precedence rule that cannot be changed by a file.
+#
+# * `ports: !override` — the host's :80/:443 belong to the shared Caddy at
+#   /srv/vip-staging-proxy/Caddyfile (another project, root-owned), and
+#   18081/18443 belong to staging. Production nginx therefore listens ONLY on the
+#   loopback: Caddy reverse-proxies `viporder.com.vn` to https://127.0.0.1:28443
+#   on cutover day (snippet kept beside this checkout on the VPS). Binding
+#   127.0.0.1 rather than 0.0.0.0 means the stack is unreachable from the
+#   internet except through Caddy. `!override` is required: a plain `ports:` in
+#   an override file is APPENDED to the base list, not substituted — measured
+#   with the staging overlay, where the first attempt still tried to bind :80.
+#
+# Nothing else differs from docker-compose.yml. Credentials live in deploy/.env
+# (git-ignored, mode 600) and the TLS material in deploy/certs/ (git-ignored):
+# self-signed for viporder.com.vn until Caddy terminates TLS in front.
+name: viporder-prod
+
+services:
+  nginx:
+    ports: !override
+      - "127.0.0.1:28081:80"
+      - "127.0.0.1:28443:443"
