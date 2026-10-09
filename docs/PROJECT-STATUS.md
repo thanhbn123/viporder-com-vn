@@ -2,13 +2,24 @@
 
 **Repository:** `thanhbn123/viporder-com-vn`
 **Owner:** thanhbn123
-**Last updated:** 2026-10-07 (re-measured; every number below is annotated with the
-command that produced it and the date it was taken)
+**Last updated:** 2026-10-10 (go-live recorded; earlier numbers keep the date they
+were measured)
 
 This document records **measured** state, not intended state. Every SHA and
 status label here was read from the remote with `git` / `gh api`, or produced by
 a command whose output is quoted. A label is only ever one of `PASS`, `FAIL`,
 `BLOCKED` or `NOT STARTED`.
+
+> **LIVE 2026-10-10.** `https://viporder.com.vn` serves this repository from the
+> production stack on `160.22.170.20` (compose project `viporder-prod`, behind the
+> host Caddy), at develop **`faa5fdf`** (first live at `a081559`, same application
+> code). **Real registration is ON** (`/api/v1/health` → `tracking_reads=live`,
+> `registration_writes=live`). Measured from outside, without `--resolve`: apex
+> `200`, `ssl_verify_result=0`, 6/6 security headers, no `x-robots-tag`; `www` `200`
+> (canonical tag points at the apex); `khachhang.viporder.com.vn` unchanged on
+> `103.159.50.70`; the other Caddy sites on the host still up. The temporary
+> acceptance host `web.viporder.vn` was removed from Caddy after cutover. Record of
+> the DNS and VPS steps: `docs/DNS-CUTOVER.md` §6.0.1.
 
 > **Re-measured 2026-10-07.** This document said "Last updated: 2026-10-02" while
 > the tree had moved 100+ commits past its numbers. Three claims were measurably
@@ -94,7 +105,7 @@ redundancy (SHA retained above for recovery).
 | **G01** | Homepage | **PASS** (pre-existing) | merged via PR #1; verified sound, **not rewritten** |
 | **G02** | Registration + lead core | **PASS** | PR #11 → `df9b84ea`; replay CR PR #13 → `4d026def`. Live: exact browser payload → **201**; provider down → **202** `PENDING` with the lead **retained**; duplicate → **409** leaking nothing; **replay of a 409 returns 409 with a byte-identical body** |
 | **G03** | Data / lead store | **PASS, PostgreSQL now executed** | PR #19, PR #24. Repository interface, Alembic `0001`–`0005`, `request_fingerprint`, consent columns, and an **in-flight phone claim** that makes "one attempt per phone at a time" a database invariant — so two concurrent registrations cannot both call the provider. The partial unique index is **proven on real PostgreSQL 16**, in CI: a second `REGISTERED` row for one phone is refused while a `PENDING` one is allowed |
-| **G04** | KHAIBAO9610 integration contract | **BLOCKED_EXTERNAL (narrowed)** | adapter + MOCK shipped. The contract **was supplied** and is measured: endpoints, field names, both tracking envelopes, both 404 bodies and the bare-list 401 (`docs/KHAIBAO9610-INTEGRATION.md` §4.6–§4.9). **One owner-authorised live registration `POST` was made on 2026-10-07 and answered `201`** (§10.6); the provider's raw response body was not captured, so the success schema and five other facts remain unknown — **issue #4**. This row said "contract not supplied" beside a document that records the supplied contract and the live POST |
+| **G04** | KHAIBAO9610 integration contract | **PASS (measured 2026-10-09, option B)** — success contract measured, `docs/KHAIBAO9610-INTEGRATION.md` §10.8; the text that follows is the 2026-10-07 state | adapter + MOCK shipped. The contract **was supplied** and is measured: endpoints, field names, both tracking envelopes, both 404 bodies and the bare-list 401 (`docs/KHAIBAO9610-INTEGRATION.md` §4.6–§4.9). **One owner-authorised live registration `POST` was made on 2026-10-07 and answered `201`** (§10.6); the provider's raw response body was not captured, so the success schema and five other facts remain unknown — **issue #4**. This row said "contract not supplied" beside a document that records the supplied contract and the live POST |
 | **G05** | Marketing / analytics | **PASS** | PR #10. All 7 events + `viporder_lead_pending`; UTM captured server-side. **No PII in any payload** — and this is now MACHINE-CHECKED (`tools/js/no-pii-in-analytics.test.js`) rather than verified by reading, which is what this row previously claimed and was not true of. The property is structural: `analytics.js` never names a customer field, so an event cannot carry one. The check is a source tripwire, so it cannot see a value passed in under a neutral name, and it does not read the two third-party loaders' own code. Tracking **dormant** |
 | **G06** | SEO / public website | **PASS** | OG/Twitter, static JSON-LD, `sitemap.xml`, `robots.txt`, favicon + OG image (1200×630), branded **404** served with a real 404 status and 6/6 headers (PR #21). JSON-LD is parsed by CI |
 | **G07** | UX / conversion | **PASS (measured, not seen)** | Two primary actions, accessible mobile nav, success/pending/error states. **Rendered in a real browser** — desktop and a Pixel 7 profile — in CI on every pull request (`tests/e2e/`, gate **G12A**), with WCAG AA contrast computed from the rendered colours and a readable-size floor. **No pixel has ever been LOOKED at**: the reviewer had no image input, so legibility is proven and appearance is not. |
@@ -103,7 +114,7 @@ redundancy (SHA retained above for recovery).
 | **G10** | CI | **PASS** | `.github/workflows/ci.yml` — **12 required checks** (`gh api repos/thanhbn123/viporder-com-vn/branches/develop/protection`; the Python matrix is two of them), all pinned to the PR **head SHA** and all required before merge. Includes a PostgreSQL service and a negative control for the destructive-test guard. This row said "10 jobs producing 11 required checks" |
 | **G11** | Documentation | **PASS** | `docs/` — architecture, flow, integration, deployment, security, go-live |
 | **G12** | Staging | **PASS (deployed and verified)** | PR #6, plus CR PR #15 (`--workers 1`, pinned `--forwarded-allow-ips`, upstream made deployment-specific). **Deployed as the compose stack on the staging host** and verified 2026-10-07: `curl -D-` header counts, the staging browser suite, the source-exposure probe, and the two live tracking `GET`s. `registration_writes` stays **DISABLED** there. This row said "Nothing deployed — no VPS or DNS access. Docker was never executed"; the containerised path has now been executed, in staging only |
-| **G13** | Release | **BLOCKED_EXTERNAL** | The release PR #17 (`develop` → `main`) **was merged by the owner at `2026-10-07T14:09:00Z`** — `main` is now `b8eb576`. This row said it was "awaiting owner authorization" after that had happened. Still BLOCKED, for what the merge does not settle: **no production deployment has been measured from this repository**, and KHAIBAO9610 registration is still MOCK with the provider's response schema unknown (issue #4). PR #87 makes the next authorized live run read the customer code back |
+| **G13** | Release | **PASS — LIVE 2026-10-10** (see the note at the top; the text that follows is the 2026-10-07 state, kept as history) | The release PR #17 (`develop` → `main`) **was merged by the owner at `2026-10-07T14:09:00Z`** — `main` is now `b8eb576`. This row said it was "awaiting owner authorization" after that had happened. Still BLOCKED, for what the merge does not settle: **no production deployment has been measured from this repository**, and KHAIBAO9610 registration is still MOCK with the provider's response schema unknown (issue #4). PR #87 makes the next authorized live run read the customer code back |
 
 Statuses in this table are updated by the gate that changes them. If a row and a
 PR disagree, **the PR is wrong** — re-measure. A gate is `PASS` only when the
@@ -212,7 +223,7 @@ replacing them would make the document unable to show that anything moved.
 | # | Blocker | Why it is external | Impact |
 |---|---|---|---|
 | 1 | Real KHAIBAO9610 / `apiviporder.com` registration contract | Only the owner/provider can supply it | Real customer registration stays in MOCK. Issue #4 |
-| 2 | DNS + VPS access for `viporder.com.vn` | Owner-held | Staging is deployed (G12). A **production** deployment has not been measured from this repository. |
+| 2 | DNS + VPS access for `viporder.com.vn` | **CLOSED 2026-10-10** | Production deployed on `160.22.170.20` and measured from outside; DNS apex → `160.22.170.20`, mail kept on `103.159.50.70` (`docs/DNS-CUTOVER.md` §6.0.1). |
 | 3 | Final legal/contact content (company name, address, phone) | Business-authoritative | Footer/contact cannot be completed truthfully |
 
 Blocked gates do not stop other gates — see the gate table.

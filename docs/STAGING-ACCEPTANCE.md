@@ -1,5 +1,10 @@
 # Phiếu nghiệm thu staging — viporder.com.vn
 
+> **Đã chuyển tên miền 2026-10-10.** `web.viporder.vn` đã được gỡ khỏi Caddy; trang
+> thật chạy ở **https://viporder.com.vn** và **đăng ký thật đã bật**. Nếu dùng phiếu
+> này để nghiệm thu bản đang chạy, mở `https://viporder.com.vn` thay cho
+> `web.viporder.vn`, và ở B5 **không gửi đăng ký thử** (sẽ tạo tài khoản thật).
+
 **Mục đích.** Đây là điểm chặn số 2 trước khi chuyển tên miền (`docs/DNS-CUTOVER.md` §6.0).
 Kỹ thuật đã được đo bằng máy (§A). Phần §B là việc **chỉ chủ dự án làm được**:
 nhìn trang bằng mắt trên thiết bị thật và xác nhận nội dung kinh doanh đúng.
