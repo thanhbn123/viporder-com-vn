@@ -554,6 +554,53 @@ curl -sk $R -o /dev/null -w '%{http_code}\n' https://viporder.com.vn:28443/.git/
 **Rollback:** step 4 in reverse (A back to `103.159.50.70`). With step 1 done, the
 TTL bounds the rollback to about 5 minutes. Steps 2–3 do not need rolling back.
 
+### 6.0.1 DONE — cutover record (2026-10-09 → 2026-10-10)
+
+Step 1 (TTL 300) and the 24 h lead were **skipped**: the owner had the vendor
+change the apex directly. Steps 2–3 were done *after* step 4, the same day, from the
+DNS panel. Final zone, read from the panel by the owner:
+
+| Name | Type | Value | TTL |
+|---|---|---|---|
+| `@` (`viporder.com.vn`) | A | **`160.22.170.20`** | 3600 |
+| `www` | CNAME | `viporder.com.vn.` | 3600 |
+| `mail` | A | **`103.159.50.70`** (explicit; was a CNAME to the apex for a short time, which sent mail to the VPS) | 300 |
+| `viporder.com.vn.` | MX | **`10 mail.viporder.com.vn.`** | 3600 |
+| `*` | A | `103.159.50.70` (so `khachhang` is unchanged) | 3600 |
+| TXT (SPF/DMARC) | — | none, as before the cutover | — |
+
+VPS, run by the owner's operator session on 2026-10-10:
+
+1. Production deployed at `a081559` (DB backup + `PREV_SHA` `87e2695` recorded),
+   later at develop `faa5fdf` (backup + `PREV_SHA` `a081559`). Alembic `0005`.
+2. `deploy/.env` backed up, `KHAIBAO9610_ENABLE_REAL_REGISTRATION=yes`,
+   `up -d --no-deps app` → `registration_writes=live`. No test registration sent.
+3. As root: Caddyfile backed up, the snippet appended, `caddy validate` → valid,
+   `caddy reload` → exit 0.
+4. From outside: apex `200`, valid certificate, 6/6 headers, no `noindex`; `www`
+   `200`; health `registration_writes=live`; `khachhang`, `qua.viporder.vn`,
+   `cpn.viporder.vn` unaffected. No rollback needed.
+5. The temporary `web.viporder.vn` block was removed from the Caddyfile (backup
+   kept, validate + reload clean); five site blocks remain.
+
+**Lessons (keep for the next deploy):**
+
+- **Recreate nginx after an in-place checkout.** `docker-compose.yml` bind-mounts
+  `index.html`, `404.html`, `robots.txt`, `sitemap.xml` *as single files*. Docker
+  binds the file's inode; `git checkout` writes a new file, so a running nginx keeps
+  serving the old page. After `git checkout` in `~/viporder-production`, run
+  `$C up -d --no-deps --force-recreate nginx`. (`deploy/production.sh` deploys
+  into a new release directory, so the mount source changes and compose recreates
+  nginx on its own; the in-place path does not.)
+- **Read all of `caddy validate`'s output.** It prints formatting warnings *after*
+  `Valid configuration`; a check that reads only the last line reports a false
+  failure. Decide on the exit status.
+- **Search for the site address, not the name.** `grep viporder.com.vn` in the
+  Caddyfile also matched comments and `header_up` lines of another block; look for a
+  line *starting* a site block (`^viporder\.com\.vn[ ,{]`).
+- `www` is served directly (`200`), not redirected; the page's canonical tag names
+  the apex, so search engines index one URL.
+
 ### 6.1 Record changes
 
 **All rows in this table are PROPOSALS.** None has been applied. The "current"
