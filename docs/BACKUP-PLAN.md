@@ -1,8 +1,11 @@
 # Phương án sao lưu — production viporder.com.vn
 
-**Tình trạng hiện tại (10/10/2026):** chỉ có bản sao lưu **thủ công** mỗi lần
-deploy (`~/log-truoc-trien-khai/viporder-prod-db-*.sql`), nằm **trên chính VPS**.
-Nếu VPS hỏng ổ đĩa, bị xoá hoặc bị khoá tài khoản thì mất cả trang lẫn bản sao.
+**Tình trạng (10/10/2026, 09:42):** **Lớp 1 ĐÃ BẬT**. Cron `17 2 * * *` (user
+`deploy`) chạy `deploy/backup-vps.sh`. Bản đầu `viporder-20261010-094223.dump`
+đã phục hồi thử được (pg_restore thoát 0, 2 bảng; leads 0 = 0 vì production chưa
+có lead). Lượt cron đầu là 02:17 ngày 11/10: cần thấy dòng `OK` trong
+`~/viporder-backups/backup.log`. **Lớp 2 chưa làm**: bản sao vẫn chỉ nằm trên
+VPS.
 
 ## Cần bảo vệ gì
 
@@ -40,6 +43,13 @@ Chọn **một**:
 | **A. Google Drive của anh qua `rclone`** (đề xuất) | Miễn phí (15 GB) | Anh tự xem được file trên Drive; không phụ thuộc nhà cung cấp VPS | Phải đăng nhập Google một lần trên VPS (`rclone config`) |
 | B. Một VPS/máy khác kéo về bằng `rsync` | Theo máy có sẵn | Không dùng dịch vụ mây | Cần máy thứ hai luôn bật |
 | C. Snapshot VPS của nhà cung cấp | Thường tính phí | Phục hồi cả máy | Vẫn cùng nhà cung cấp; snapshot chụp cả các dự án khác |
+| **D. NAS đã mount trên VPS** (`/mnt/vip-nas`, dự án vipphone đang dùng) | Không thêm | Có sẵn, không cần đăng nhập gì | NAS phải luôn mount; cùng chỗ với bản sao của dự án khác |
+
+Với cách D: tạo thư mục một lần (`mkdir -p /mnt/vip-nas/viporder`, quyền chỉ cho
+`deploy`), rồi đổi dòng cron thành
+`17 2 * * * BACKUP_COPY_DIR=/mnt/vip-nas/viporder ~/viporder-production/deploy/backup-vps.sh >> ~/viporder-backups/backup.log 2>&1`.
+Nếu NAS chưa mount (thư mục không có) script **báo lỗi và không chép**, chứ không
+lặng lẽ ghi vào ổ của VPS.
 
 Với cách A: cài `rclone`, tạo remote `gdrive`, rồi thêm
 `BACKUP_RCLONE_REMOTE=gdrive:viporder-backups` vào dòng cron. Script sẽ đẩy bản
