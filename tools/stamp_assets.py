@@ -33,7 +33,9 @@ def file_hash(url_path: str) -> str:
 
 
 def stamped(text: str) -> str:
-    return REF.sub(lambda m: f"{m.group(1)}{m.group(2)}?v={file_hash(m.group(2))}{m.group(4)}", text)
+    return REF.sub(
+        lambda m: f"{m.group(1)}{m.group(2)}?v={file_hash(m.group(2))}{m.group(4)}", text
+    )
 
 
 def problems() -> list[str]:
