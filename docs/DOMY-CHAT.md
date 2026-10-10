@@ -9,7 +9,9 @@ trình duyệt ──► viporder.com.vn/api/v1/chat/*  (giới hạn lượt, k
                       │
                       ▼
           https://vanhanh.viporder.vn/domy-web/{webhook/webchat, api/webchat/poll}
-          (cửa hẹp trên Caddy VPS chính: chỉ hai đường này, DOMY tự kiểm chữ ký)
+          QUA TAILSCALE: máy viporder-web (100.83.38.75) → viporder-vps (100.108.103.24)
+          (cửa hẹp trên Caddy VPS chính: chỉ hai đường này, chỉ từ 100.83.38.75,
+           DOMY tự kiểm chữ ký)
                       │
                       ▼
                DOMY 127.0.0.1:8770  →  tri thức · tra đơn · link đặt giao hàng · chuyển nhân viên
@@ -39,6 +41,15 @@ của máy chủ viporder.com.vn, nên với DOMY họ là một người. Ngân
 giữ cả trang dưới ngưỡng đó; poll quá nhịp của cùng một hội thoại (dưới 2,5 giây)
 được trả lô rỗng thay vì tốn ngân sách.
 
+## Đường mạng: vì sao qua Tailscale
+
+Hai VPS (`160.22.170.20` và `160.22.171.228`) cùng khai `/23` nhưng nằm sau hai cổng
+khác nhau, nên gói tin đi thẳng bị rơi (ARP `FAILED`, "No route to host" — đo
+10/10/2026). VPS viporder vì vậy chạy Tailscale (máy `viporder-web`, `--shields-up`,
+`--accept-dns=false`), và compose ghim `vanhanh.viporder.vn` về IP Tailscale của VPS
+chính (`extra_hosts` trong `deploy/docker-compose.production-vps.yml`). Tailscale trên
+VPS viporder tắt hoặc đăng xuất ⇒ chat báo "tạm thời không phản hồi".
+
 ## Đặt giao hàng
 
 Không có form mới. Khách nhắn "giao hàng", "xuất kho", "gọi xe"… hoặc bấm nút
@@ -56,4 +67,5 @@ khách thấy trong khung chat (poll thưa 20 giây khi khung mở hoặc đã c
 ## Chưa làm (cần trước khi bật trên production)
 
 - Rà kho tri thức DOMY: mục nào được nói với khách lạ.
-- Thống nhất hotline: DOMY và form giao hàng đưa `03.6263.1114`, trang đưa `0968 961 962`.
+- Hotline: DOMY và form giao hàng đưa `03.6263.1114` (nhân sự trực), trang đưa
+  `0968 961 962` (số anh Thành). Chủ dự án chốt 11/10/2026 giữ như vậy.
