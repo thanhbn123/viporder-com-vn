@@ -387,7 +387,7 @@ def test_login_url_is_a_server_side_constant(harness: Harness, hostile: str) -> 
     response = harness.post_registration(
         payload(attribution={**payload()["attribution"], "referrer": hostile})
     )
-    assert response.json()["login_url"] == "https://khachhang.viporder.com.vn"
+    assert response.json()["login_url"] == "https://khachhang.viporder.com.vn/login"
 
 
 def test_internal_error_is_a_plain_500_without_a_traceback(make_harness) -> None:

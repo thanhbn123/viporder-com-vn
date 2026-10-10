@@ -21,7 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # The customer portal is a fixed, server-side destination. It is intentionally
 # NOT configurable and NEVER derived from user input: an attacker-supplied
 # redirect target is the classic open-redirect bug.
-LOGIN_URL = "https://khachhang.viporder.com.vn"
+LOGIN_URL = "https://khachhang.viporder.com.vn/login"
 SERVICE_NAME = "viporder-web"
 DEFAULT_SERVICE_VERSION = "0.2.0"
 

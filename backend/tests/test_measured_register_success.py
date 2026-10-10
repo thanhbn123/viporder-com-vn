@@ -99,7 +99,7 @@ def test_the_lead_is_registered_and_the_customer_is_told_to_sign_in(make_harness
     body = response.json()
     assert body["registration_status"] == "REGISTERED"
     assert body["external_customer_code"] is None
-    assert body["login_url"] == "https://khachhang.viporder.com.vn"
+    assert body["login_url"] == "https://khachhang.viporder.com.vn/login"
     (row,) = harness.lead_rows()
     assert row.registration_status is RegistrationStatus.REGISTERED
     assert row.external_customer_code is None

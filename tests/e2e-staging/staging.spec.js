@@ -7,7 +7,7 @@
  */
 const { test, expect } = require("@playwright/test");
 
-const LOGIN = "https://khachhang.viporder.com.vn";
+const LOGIN = "https://khachhang.viporder.com.vn/login";
 const WAREHOUSE = "KY4001103376087-2-4-%7Cs";
 const SEALING = "A1918106";
 

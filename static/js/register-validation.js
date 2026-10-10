@@ -35,7 +35,7 @@
   "use strict";
 
   /* The one host the page is ever allowed to navigate a customer to. */
-  var PORTAL_URL = "https://khachhang.viporder.com.vn";
+  var PORTAL_URL = "https://khachhang.viporder.com.vn/login";
   var PORTAL_HOST = "khachhang.viporder.com.vn";
 
   /* Vietnamese mobile and landline forms: +84 / 84 / 0, then a mobile prefix

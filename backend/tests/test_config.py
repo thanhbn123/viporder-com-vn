@@ -79,7 +79,7 @@ def test_defaults(monkeypatch) -> None:
     assert settings.khaibao9610_mode == "mock"
     assert settings.khaibao9610_timeout_seconds == 10.0
     assert settings.login_url == LOGIN_URL
-    assert LOGIN_URL == "https://khachhang.viporder.com.vn"
+    assert LOGIN_URL == "https://khachhang.viporder.com.vn/login"
 
 
 @pytest.mark.parametrize("value", ["0.5", "31", "120"])
@@ -115,7 +115,7 @@ def test_login_url_is_not_configurable(monkeypatch) -> None:
     """No environment key may move the customer portal destination."""
     monkeypatch.setenv("LOGIN_URL", "https://evil.example")
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
-    assert settings.login_url == "https://khachhang.viporder.com.vn"
+    assert settings.login_url == "https://khachhang.viporder.com.vn/login"
 
 
 def test_dotenv_file_is_not_committed() -> None:
