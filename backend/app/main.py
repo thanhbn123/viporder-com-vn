@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import LOGIN_URL, Settings, get_settings
 from .db import Database
+from .domy_chat import DomyChat
 from .errors import (
     INTERNAL_ERROR,
     ApiError,
@@ -36,7 +37,7 @@ from .notifications import ZaloNotifier
 from .providers.base import RegistrationProvider
 from .providers.factory import build_provider
 from .repositories.sqlalchemy_repo import SqlAlchemyLeadRepository
-from .routers import admin, health, registrations, tracking
+from .routers import admin, chat, health, registrations, tracking
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ def create_app(
     app.state.database = database
     app.state.provider = provider
     app.state.notifier = ZaloNotifier(settings)
+    app.state.domy_chat = DomyChat(settings)
     app.state.repository_factory = lambda: SqlAlchemyLeadRepository(database.session())
 
     should_create = settings.auto_create_schema if create_schema is None else create_schema
@@ -122,6 +124,7 @@ def create_app(
     app.include_router(registrations.router)
     app.include_router(tracking.router)
     app.include_router(admin.router)
+    app.include_router(chat.router)
 
     logger.info(
         "viporder backend ready provider=%s mode=%s login_url=%s",

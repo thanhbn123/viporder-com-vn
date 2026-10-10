@@ -1,0 +1,243 @@
+/* VIPORDER — khung chat Trợ lý DOMY. Dùng biến màu của style.css, có giá trị dự phòng. */
+
+.domy {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 90;
+  font: inherit;
+}
+
+.domy-nut {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary, #cc0000);
+  color: var(--white, #fff);
+  font-weight: 700;
+  font-size: 15px;
+  box-shadow: 0 14px 34px rgba(204, 0, 0, .28);
+  cursor: pointer;
+}
+.domy-nut:hover { background: var(--primary-dark, #990000); }
+.domy-nut-cham {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .35);
+}
+.domy-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--white, #fff);
+  color: var(--primary, #cc0000);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.domy-cua {
+  display: flex;
+  flex-direction: column;
+  width: 370px;
+  max-width: calc(100vw - 32px);
+  height: min(600px, calc(100vh - 40px));
+  background: var(--bg, #fff);
+  color: var(--text, #101828);
+  border: 1px solid var(--border, #e4e7ec);
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(16, 24, 40, .18);
+  overflow: hidden;
+}
+/* Các lớp trên đặt display, nên thuộc tính hidden phải được ép lại cho từng khối. */
+.domy-cua[hidden],
+.domy-nut[hidden],
+.domy-badge[hidden],
+.contact-actions [hidden] { display: none; }
+
+.domy-dau {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--dark, #0a0a0a);
+  color: var(--white, #fff);
+}
+.domy-ten { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.domy-ten strong { font-size: 15px; }
+.domy-phu { font-size: 12px; opacity: .72; }
+.domy-dau-nut {
+  min-width: 34px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.domy-dau-nut:hover { background: rgba(255, 255, 255, .1); }
+
+.domy-than {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface, #f5f7fa);
+}
+
+.domy-tin {
+  max-width: 86%;
+  padding: 9px 12px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.domy-tin-khach {
+  align-self: flex-end;
+  background: var(--primary, #cc0000);
+  color: var(--white, #fff);
+  border-bottom-right-radius: 4px;
+}
+.domy-tin-domy,
+.domy-tin-staff {
+  align-self: flex-start;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e4e7ec);
+  border-bottom-left-radius: 4px;
+}
+.domy-tin-staff { border-color: #a7d7c5; background: #effaf5; }
+.domy-ai-noi { display: block; font-size: 11px; font-weight: 700; color: #1f6f5c; margin-bottom: 2px; }
+.domy-tin-he {
+  align-self: center;
+  max-width: 94%;
+  background: #fff4e5;
+  color: #7a4b00;
+  font-size: 13px;
+  text-align: center;
+}
+.domy-soan { color: var(--muted, #667085); font-style: italic; }
+
+.domy-link { color: var(--primary, #cc0000); font-weight: 600; text-decoration: underline; }
+.domy-link-giao {
+  display: inline-block;
+  margin: 6px 0 2px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--primary, #cc0000);
+  color: var(--white, #fff);
+  text-decoration: none;
+}
+.domy-link-giao:hover { background: var(--primary-dark, #990000); }
+
+.domy-goi-y {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px 0;
+  background: var(--surface, #f5f7fa);
+}
+.domy-goi-y[hidden] { display: none; }
+.domy-goi-y button {
+  padding: 6px 12px;
+  border: 1px solid var(--border, #e4e7ec);
+  border-radius: 999px;
+  background: var(--bg, #fff);
+  color: var(--text, #101828);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.domy-goi-y button:hover { border-color: var(--primary, #cc0000); color: var(--primary, #cc0000); }
+
+.domy-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border, #e4e7ec);
+  background: var(--bg, #fff);
+}
+.domy-o {
+  flex: 1;
+  min-width: 0;
+  max-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e4e7ec);
+  border-radius: 12px;
+  background: var(--surface, #f5f7fa);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  resize: none;
+}
+.domy-gui {
+  height: 42px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--primary, #cc0000);
+  color: var(--white, #fff);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.domy-gui:disabled { opacity: .55; cursor: progress; }
+.domy-chan {
+  margin: 0;
+  padding: 0 14px 10px;
+  background: var(--bg, #fff);
+  color: var(--muted, #667085);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.domy button:focus-visible,
+.domy a:focus-visible,
+.domy textarea:focus-visible {
+  outline: 3px solid var(--primary, #cc0000);
+  outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .domy { right: 12px; bottom: 12px; left: 12px; display: flex; justify-content: flex-end; }
+  .domy-cua {
+    position: fixed;
+    inset: auto 0 0 0;
+    width: 100%;
+    max-width: none;
+    height: min(86vh, 640px);
+    border-radius: 18px 18px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .domy-tin { animation: domy-hien .2s ease-out; }
+  @keyframes domy-hien { from { opacity: .3; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+}
+
+/* Nút "Đặt giao hàng" ở phần Liên hệ (nền tối), cạnh "Bắt đầu đăng ký". */
+.contact-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn-outline-light {
+  background: transparent;
+  color: var(--white, #fff);
+  border: 1px solid rgba(255, 255, 255, .55);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+.btn-outline-light:hover { background: rgba(255, 255, 255, .1); }

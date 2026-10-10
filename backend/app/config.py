@@ -145,6 +145,29 @@ class Settings(BaseSettings):
     zalo_bot_token: str = ""
     zalo_notify_chat_id: str = ""
 
+    # --- DOMY chat on the public site ---------------------------------------
+    # The browser never talks to DOMY directly: it calls /api/v1/chat on this
+    # backend, which signs each message with DOMY_CHAT_SECRET (HMAC-SHA256, the
+    # same scheme DOMY's webchat channel verifies) and forwards it to
+    # DOMY_CHAT_UPSTREAM_URL. Both empty = chat off, and the widget hides itself.
+    # The secret is a credential: never logged, never sent to the browser.
+    domy_chat_upstream_url: str = ""
+    domy_chat_secret: str = ""
+    domy_chat_timeout_seconds: float = Field(default=12.0, ge=2.0, le=30.0)
+    #: Longest message a visitor may send, in characters.
+    domy_chat_max_chars: int = Field(default=1000, ge=50, le=4000)
+    #: Messages one client IP may send per minute (burst guard).
+    domy_chat_messages_per_minute: int = Field(default=6, ge=1)
+    #: Messages per visitor (browser) per calendar day, Vietnam time.
+    domy_chat_messages_per_visitor_day: int = Field(default=40, ge=1)
+    #: Messages per client IP per calendar day: a visitor can clear their browser
+    #: storage to get a new visitor id, but not a new IP.
+    domy_chat_messages_per_ip_day: int = Field(default=120, ge=1)
+    #: Requests per minute this backend may make to DOMY in total. DOMY rate
+    #: limits per source IP, and every website visitor arrives there from THIS
+    #: server's IP — so the budget is shared and must stay under DOMY's own limit.
+    domy_chat_upstream_per_minute: int = Field(default=90, ge=1)
+
     # --- API docs -----------------------------------------------------------
     # None = decide from APP_ENV: docs are on outside production and off inside
     # it. /docs and /openapi.json enumerate every route, parameter and error
@@ -171,13 +194,15 @@ class Settings(BaseSettings):
         "khaibao9610_base_url",
         "zalo_bot_token",
         "zalo_notify_chat_id",
+        "domy_chat_upstream_url",
+        "domy_chat_secret",
         mode="before",
     )
     @classmethod
     def _strip(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("khaibao9610_base_url")
+    @field_validator("khaibao9610_base_url", "domy_chat_upstream_url")
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
@@ -240,6 +265,10 @@ class Settings(BaseSettings):
     @property
     def zalo_notify_enabled(self) -> bool:
         return bool(self.zalo_bot_token and self.zalo_notify_chat_id)
+
+    @property
+    def domy_chat_enabled(self) -> bool:
+        return bool(self.domy_chat_upstream_url and self.domy_chat_secret)
 
     @property
     def is_production(self) -> bool:
