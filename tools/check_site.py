@@ -413,7 +413,9 @@ def check_assets(doc: Doc, page: Path, f: Findings) -> None:
     for ref in refs:
         if urlparse(ref).scheme or ref.startswith("//"):
             continue  # external CDN, not our asset
-        path = ROOT / ref.lstrip("/")
+        # `?v=<hash>` is the cache-busting stamp (tools/stamp_assets.py), not
+        # part of the file name.
+        path = ROOT / urlparse(ref).path.lstrip("/")
         if not path.is_file():
             f.error(
                 where,
@@ -483,6 +485,19 @@ def pages_to_check() -> list[Path]:
     )
 
 
+def check_asset_stamps(f: Findings) -> None:
+    """Every /static CSS/JS URL carries `?v=<hash of the file>`.
+
+    /static is served `immutable` for 30 days, so a changed file behind an
+    unchanged URL never reaches a returning visitor (measured 2026-10-10).
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    import stamp_assets  # noqa: PLC0415 - local tool, imported on demand
+
+    for problem in stamp_assets.problems():
+        f.error("asset-stamp", f"{problem} (run: python tools/stamp_assets.py)")
+
+
 def main() -> int:
     f = Findings()
     pages = pages_to_check()
@@ -507,6 +522,7 @@ def main() -> int:
         )
 
     check_sitemap_excludes_error_pages(f)
+    check_asset_stamps(f)
 
     print()
     for w in f.warnings:
