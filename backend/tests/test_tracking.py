@@ -244,6 +244,7 @@ def test_package_sealing_found_returns_the_wrapped_object_projected(
             "china_tracking_code": "CN123456789",
             "vietnam_tracking_code": "VN987654321",
             "package_sealing_code": "SEAL-2026-0001",
+            "delivery_code": "XK-001",
             "weight": 12.5,
             "created_at": "2026-02-14 09:00:00",
         }
@@ -401,6 +402,8 @@ def test_the_projection_is_a_whitelist_not_a_passthrough() -> None:
     assert set(projected) == {
         "kind",
         "customer_code",
+        "delivery_code",
+        "delivery_customer",
         "date",
         "weight",
         "china_tracking_code",
@@ -438,6 +441,53 @@ def test_the_sealing_projection_is_also_a_closed_whitelist() -> None:
         "warehouse_imports_count",
         "warehouse_imports",
     }
+
+
+# --- delivery (vietnam_warehouse_export) -------------------------------------
+
+#: MEASURED 2026-10-10, parcel 773444793906887 after "Xuất kho VN": the export
+#: object the earlier fixture only ever showed as null.
+MEASURED_EXPORT = {
+    "id": 18993,
+    "code": "GH19881",
+    "customer": {"id": 2874, "code": "TT2840", "name": "Thường xinh gái"},
+}
+
+
+def test_an_exported_parcel_shows_its_delivery_code_and_customer() -> None:
+    raw = {**MEASURED_WAREHOUSE_IMPORT, "vietnam_warehouse_export": MEASURED_EXPORT}
+    projected = normalize_warehouse_import(raw)
+    assert projected["delivery_code"] == "GH19881"
+    assert projected["delivery_customer"] == "TT2840 - Thường xinh gái"
+    # The export's internal ids never leave: neither 18993 nor 2874.
+    assert 18993 not in projected.values()
+    assert 2874 not in projected.values()
+
+
+def test_a_parcel_not_yet_exported_has_no_delivery_fields() -> None:
+    projected = normalize_warehouse_import(MEASURED_WAREHOUSE_IMPORT)
+    assert projected["delivery_code"] is None
+    assert projected["delivery_customer"] is None
+
+
+@pytest.mark.parametrize(
+    ("export", "expected"),
+    [
+        ({"code": "GH1", "customer": {"code": "TT1"}}, "TT1"),
+        ({"code": "GH1", "customer": {"name": "Chỉ có tên"}}, "Chỉ có tên"),
+        ({"code": "GH1", "customer": None}, None),
+        ("not an object", None),
+        ([], None),
+    ],
+)
+def test_a_partial_or_odd_export_never_raises(export: object, expected: object) -> None:
+    raw = {**MEASURED_WAREHOUSE_IMPORT, "vietnam_warehouse_export": export}
+    assert normalize_warehouse_import(raw)["delivery_customer"] == expected
+
+
+def test_nested_parcels_carry_their_delivery_code() -> None:
+    parcels = normalize_package_sealing(MEASURED_PACKAGE_SEALING)["warehouse_imports"]
+    assert parcels[0]["delivery_code"] == "XK-001"
 
 
 # --- status_logs ------------------------------------------------------------
@@ -566,6 +616,7 @@ def test_non_object_entries_inside_the_lists_are_dropped() -> None:
             "china_tracking_code": "CN1",
             "vietnam_tracking_code": None,
             "package_sealing_code": None,
+            "delivery_code": None,
             "weight": None,
             "created_at": None,
         }

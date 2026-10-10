@@ -339,14 +339,18 @@
    * sits INSIDE this layout because its position differs between the two modes
    * (last for a warehouse import, before the date for a package) and a row appended
    * at the end would be in the wrong place in one of them. */
+  /* `highlight: true` marks the codes a customer reads out on the phone (owner,
+   * 2026-10-10): customer, delivery customer, delivery code and bag code.
+   * "Mã vận đơn Việt Nam" and "VNPost" are NOT shown (owner, 2026-10-10): the
+   * API still returns them, the page simply does not render them. */
   var WAREHOUSE_LAYOUT = [
-    { label: "Mã khách", key: "customer_code" },
+    { label: "Mã khách", key: "customer_code", highlight: true },
+    { label: "Khách giao hàng", key: "delivery_customer", highlight: true },
+    { label: "Mã giao hàng", key: "delivery_code", highlight: true },
     { label: "Ngày nhập", key: "date" },
     { label: "Cân nặng", key: "weight" },
     { label: "Mã vận đơn Trung Quốc", key: "china_tracking_code" },
-    { label: "Mã vận đơn Việt Nam", key: "vietnam_tracking_code" },
-    { label: "VNPost", key: "vnpost_tracking_code" },
-    { label: "Mã bao", key: "package_sealing_code" },
+    { label: "Mã bao", key: "package_sealing_code", highlight: true },
     { label: "Tên hàng", product: true },
     { label: "Số lượng", key: "product_quantity" },
     { label: "Số kiện", key: "package_quantity" },
@@ -354,8 +358,8 @@
   ];
 
   var PACKAGE_LAYOUT = [
-    { label: "Mã bao", key: "code" },
-    { label: "Mã khách", key: "customer_code" },
+    { label: "Mã bao", key: "code", highlight: true },
+    { label: "Mã khách", key: "customer_code", highlight: true },
     { label: "Cân nặng thực", key: "actual_weight" },
     { label: "Kích thước (D × R × C)", dimensions: true },
     { label: "Thể tích", key: "volume" },
@@ -366,8 +370,8 @@
 
   var CHILD_LAYOUT = [
     { label: "Mã vận đơn Trung Quốc", key: "china_tracking_code" },
-    { label: "Mã vận đơn Việt Nam", key: "vietnam_tracking_code" },
-    { label: "Mã bao", key: "package_sealing_code" },
+    { label: "Mã bao", key: "package_sealing_code", highlight: true },
+    { label: "Mã giao hàng", key: "delivery_code", highlight: true },
     { label: "Cân nặng", key: "weight" },
     { label: "Ngày tạo", key: "created_at" }
   ];
@@ -415,7 +419,9 @@
       /* Absent fields are SKIPPED ENTIRELY — no row, no "null", no dash. A dash
        * would be a value the provider never sent. */
       if (value !== "") {
-        rows.push({ label: entry.label, value: value });
+        rows.push(entry.highlight
+          ? { label: entry.label, value: value, highlight: true }
+          : { label: entry.label, value: value });
       }
     }
     return rows;

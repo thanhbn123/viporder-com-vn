@@ -69,6 +69,8 @@ const WAREHOUSE_FOUND = {
     china_tracking_code: "CN987654321",
     vietnam_tracking_code: "VN123456789",
     vnpost_tracking_code: "VP998877665",
+    delivery_code: "GH19881",
+    delivery_customer: "TT2840 - Thường xinh gái",
     package_sealing_code: "B2026-001",
     product_name_vi: "Áo thun nam",
     product_name_cn: "男士T恤",
@@ -238,9 +240,21 @@ test.describe("tracking lookup", () => {
     expect(fields["Ngày nhập"]).toBe("2026-09-29");
     expect(fields["Cân nặng"]).toBe("12.5");
     expect(fields["Mã vận đơn Trung Quốc"]).toBe("CN987654321");
-    expect(fields["Mã vận đơn Việt Nam"]).toBe("VN123456789");
-    expect(fields["VNPost"]).toBe("VP998877665");
+    /* Not shown since 2026-10-10 (owner), although the API still returns them. */
+    expect(fields["Mã vận đơn Việt Nam"]).toBeUndefined();
+    expect(fields["VNPost"]).toBeUndefined();
     expect(fields["Mã bao"]).toBe("B2026-001");
+    expect(fields["Mã giao hàng"]).toBe("GH19881");
+    expect(fields["Khách giao hàng"]).toBe("TT2840 - Thường xinh gái");
+    /* The codes a customer reads out are highlighted: customer, delivery
+     * customer, delivery code and bag code, in that order. */
+    await expect(page.locator("#trackingResults > dl dd.tracking-code")).toHaveText([
+      "TT12345",
+      "TT2840 - Thường xinh gái",
+      "GH19881",
+      "B2026-001",
+    ]);
+    await expect(page.locator("#trackingResults dd.tracking-code").first()).toHaveText("TT12345");
     expect(fields["Số lượng"]).toBe("3");
     expect(fields["Số kiện"]).toBe("1");
 
