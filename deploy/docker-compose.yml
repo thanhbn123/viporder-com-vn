@@ -84,6 +84,8 @@ services:
       KHAIBAO9610_PACKAGE_SEALING_PATH: ${KHAIBAO9610_PACKAGE_SEALING_PATH:-/package-sealings/{keyword}}
       KHAIBAO9610_MAX_RESPONSE_BYTES: ${KHAIBAO9610_MAX_RESPONSE_BYTES:-2097152}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+      ZALO_BOT_TOKEN: ${ZALO_BOT_TOKEN:-}
+      ZALO_NOTIFY_CHAT_ID: ${ZALO_NOTIFY_CHAT_ID:-}
     # NOT published to the host. Only the nginx service reaches this, over the
     # private compose network. Publishing it would expose an application that
     # trusts X-Forwarded-For from any peer (see deploy/Dockerfile).

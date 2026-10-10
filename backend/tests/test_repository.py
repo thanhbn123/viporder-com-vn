@@ -241,7 +241,17 @@ def test_list_pending_has_no_production_caller() -> None:
 def test_no_scheduler_or_worker_exists() -> None:
     """The other half of the same claim, asserted rather than assumed."""
     app_dir = Path(__file__).resolve().parents[1] / "app"
-    source = "\n".join(path.read_text(encoding="utf-8") for path in app_dir.rglob("*.py"))
+    # routers/registrations.py uses BackgroundTasks for ONE thing: the staff
+    # Zalo notification after the response. It retries nothing.
+    notifier_router = app_dir / "routers" / "registrations.py"
+    router_source = notifier_router.read_text(encoding="utf-8")
+    assert "background_tasks.add_task(notifier.notify_registration" in router_source
+    assert router_source.count("add_task(") == 1, "a second background task appeared"
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in app_dir.rglob("*.py")
+        if path != notifier_router
+    )
 
     for forbidden in (
         "BackgroundTasks",

@@ -652,6 +652,10 @@ was added to the sitemap without being added to the site.
 ```zsh
 curl -sS https://viporder.com.vn/ | grep -c 'googletagmanager\|connect.facebook.net\|fbq('
 ```
+> **Superseded 2026-10-10:** GA4 and Meta Pixel are now ENABLED (owner decision);
+> the network panel SHOULD show `gtag/js?id=G-581GP4TP51` and `fbevents.js`. The
+> text below is the cutover-time expectation, kept as history.
+
 **Expected:** `0` occurrences of the loaders. The analytics layer is **dormant by
 default** — `VIPORDER_TRACKING.enabled` is `false`
 (`static/js/analytics.js:71-78`), and the third-party loaders are skipped while it

@@ -32,6 +32,7 @@ from .middleware import (
     RequestSizeLimitMiddleware,
     SecurityHeadersMiddleware,
 )
+from .notifications import ZaloNotifier
 from .providers.base import RegistrationProvider
 from .providers.factory import build_provider
 from .repositories.sqlalchemy_repo import SqlAlchemyLeadRepository
@@ -70,6 +71,7 @@ def create_app(
     app.state.settings = settings
     app.state.database = database
     app.state.provider = provider
+    app.state.notifier = ZaloNotifier(settings)
     app.state.repository_factory = lambda: SqlAlchemyLeadRepository(database.session())
 
     should_create = settings.auto_create_schema if create_schema is None else create_schema

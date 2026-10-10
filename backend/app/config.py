@@ -139,6 +139,12 @@ class Settings(BaseSettings):
     # Empty means the admin route does not exist at all (404), not "open".
     admin_api_token: str = ""
 
+    # --- Staff notification (Zalo Bot) -------------------------------------
+    # Both empty = off. The token is a credential (it is in the API URL) and
+    # is never logged or reported; the chat id is the staff member's chat.
+    zalo_bot_token: str = ""
+    zalo_notify_chat_id: str = ""
+
     # --- API docs -----------------------------------------------------------
     # None = decide from APP_ENV: docs are on outside production and off inside
     # it. /docs and /openapi.json enumerate every route, parameter and error
@@ -160,7 +166,13 @@ class Settings(BaseSettings):
     # Comma-separated origins. Empty = CORS disabled entirely (same-origin).
     cors_allow_origins: str = ""
 
-    @field_validator("admin_api_token", "khaibao9610_base_url", mode="before")
+    @field_validator(
+        "admin_api_token",
+        "khaibao9610_base_url",
+        "zalo_bot_token",
+        "zalo_notify_chat_id",
+        mode="before",
+    )
     @classmethod
     def _strip(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
@@ -224,6 +236,10 @@ class Settings(BaseSettings):
     @property
     def admin_enabled(self) -> bool:
         return bool(self.admin_api_token)
+
+    @property
+    def zalo_notify_enabled(self) -> bool:
+        return bool(self.zalo_bot_token and self.zalo_notify_chat_id)
 
     @property
     def is_production(self) -> bool:
