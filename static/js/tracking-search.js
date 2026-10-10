@@ -371,6 +371,7 @@
   var CHILD_LAYOUT = [
     { label: "Mã vận đơn Trung Quốc", key: "china_tracking_code" },
     { label: "Mã bao", key: "package_sealing_code", highlight: true },
+    { label: "Mã giao hàng", key: "delivery_code", highlight: true },
     { label: "Cân nặng", key: "weight" },
     { label: "Ngày tạo", key: "created_at" }
   ];

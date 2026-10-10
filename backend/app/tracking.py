@@ -47,6 +47,10 @@ Excluded, with the reason each is excluded:
   company touched a parcel is internal operational data.
 * ``area_id`` / ``area_code`` — internal warehouse/area identifiers. They describe
   how the company is organised, not where the customer's parcel is.
+* ``vietnam_warehouse_export.id`` and ``vietnam_warehouse_export.customer.id`` —
+  internal row ids, same reasoning as ``id``. Only the delivery CODE and the
+  delivery customer's code and name are kept (owner, 2026-10-10: the old
+  tracking page shows "Mã giao hàng" and "Khách giao hàng").
 
 **Kept on purpose:** ``status_background_color`` and ``status_text_color``. These
 look like presentation concerns and are usually the first thing to strip, but
@@ -233,6 +237,18 @@ def _inner_object(raw: object) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def _delivery_customer(export: dict) -> str | None:
+    """``"TT2840 - Thường xinh gái"``, as the old tracking page shows it.
+
+    MEASURED 2026-10-10 on an exported parcel: ``vietnam_warehouse_export`` is
+    ``{"id", "code", "customer": {"id", "code", "name"}}`` (null until the parcel
+    leaves the Vietnam warehouse). Either half alone is shown on its own.
+    """
+    customer = _inner_object(export.get("customer"))
+    parts = [p for p in (_text(customer.get("code")), _text(customer.get("name"))) if p]
+    return " - ".join(parts) or None
+
+
 # --- projections ------------------------------------------------------------
 
 
@@ -244,10 +260,13 @@ def normalize_warehouse_import(raw: object) -> dict:
     """
     source = _inner_object(raw)
     customer = _inner_object(source.get("customer"))
+    export = _inner_object(source.get("vietnam_warehouse_export"))
     return {
         "kind": KIND_WAREHOUSE_IMPORT,
         # Top-level on this envelope, NOT nested under `customer`.
         "customer_code": _text(source.get("customer_code")) or _text(customer.get("code")),
+        "delivery_code": _text(export.get("code")),
+        "delivery_customer": _delivery_customer(export),
         "date": _text(source.get("date")),
         "weight": _number(source.get("weight")),
         "china_tracking_code": _text(source.get("china_tracking_code")),
@@ -317,6 +336,8 @@ def _warehouse_imports(value: object) -> list[dict]:
                 "china_tracking_code": _text(entry.get("china_tracking_code")),
                 "vietnam_tracking_code": _text(entry.get("vietnam_tracking_code")),
                 "package_sealing_code": _text(entry.get("package_sealing_code")),
+                # Flat on the nested parcels (measured 2026-10-02).
+                "delivery_code": _text(entry.get("vietnam_warehouse_export_code")),
                 "weight": _number(entry.get("weight")),
                 "created_at": _text(entry.get("created_at")),
             }
