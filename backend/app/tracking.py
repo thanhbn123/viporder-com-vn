@@ -47,6 +47,9 @@ Excluded, with the reason each is excluded:
   company touched a parcel is internal operational data.
 * ``area_id`` / ``area_code`` — internal warehouse/area identifiers. They describe
   how the company is organised, not where the customer's parcel is.
+* ``vietnam_tracking_code`` and ``vnpost_tracking_code`` — removed from the
+  public lookup by the owner on 2026-10-10 (first hidden on the page, then
+  dropped from the API so they are not exposed at all).
 * ``vietnam_warehouse_export.id`` and ``vietnam_warehouse_export.customer.id`` —
   internal row ids, same reasoning as ``id``. Only the delivery CODE and the
   delivery customer's code and name are kept (owner, 2026-10-10: the old
@@ -270,8 +273,6 @@ def normalize_warehouse_import(raw: object) -> dict:
         "date": _text(source.get("date")),
         "weight": _number(source.get("weight")),
         "china_tracking_code": _text(source.get("china_tracking_code")),
-        "vietnam_tracking_code": _text(source.get("vietnam_tracking_code")),
-        "vnpost_tracking_code": _text(source.get("vnpost_tracking_code")),
         "package_sealing_code": _text(source.get("package_sealing_code")),
         "product_name_vi": _text(source.get("product_name_vi")),
         "product_name_cn": _text(source.get("product_name_cn")),
@@ -334,7 +335,6 @@ def _warehouse_imports(value: object) -> list[dict]:
         parcels.append(
             {
                 "china_tracking_code": _text(entry.get("china_tracking_code")),
-                "vietnam_tracking_code": _text(entry.get("vietnam_tracking_code")),
                 "package_sealing_code": _text(entry.get("package_sealing_code")),
                 # Flat on the nested parcels (measured 2026-10-02).
                 "delivery_code": _text(entry.get("vietnam_warehouse_export_code")),
