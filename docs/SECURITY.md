@@ -461,11 +461,14 @@ default-deny (§4). So "the site's CSP" is not a single value: the HTML document
 and the JSON API are governed by different policies. That is a design decision,
 not drift — but it means the strict policy in §4 protects only the API responses.
 
-The analytics layer those domains are reserved for is **dormant by default**:
-`VIPORDER_TRACKING.enabled = false` and each vendor flag is `false`
-(`static/js/analytics.js:72-76`), with the third-party loaders skipped while
-disabled (`:601`). So the permissive CSP is currently permissive for code that
-does not run.
+**Since 2026-10-10 the analytics layer is ENABLED** (owner decision): GA4 is
+loaded directly and Meta Pixel is on; GTM stays off so a container GA4 tag
+cannot double-count (`static/js/analytics.js`, `VIPORDER_TRACKING`). The CSP now
+names Google's published GA4 hosts (`*.googletagmanager.com`,
+`*.google-analytics.com`, `*.analytics.google.com`) and Meta's
+(`connect.facebook.net`, `www.facebook.com`). Third-party script now runs on the
+marketing page, which is what risk 15 below is about. No customer field is ever
+passed to it (`tools/js/no-pii-in-analytics.test.js`).
 
 ### 5.2 The trap
 
@@ -1037,7 +1040,7 @@ route docstring states (`routers/registrations.py:48`).
 | 12 | `_is_idempotency_conflict()`, `_is_phone_conflict()` and `_is_phone_uniqueness()` match driver error **text**, so they are tied to SQLite/psycopg wording (`sqlalchemy_repo.py:212-214`, `:217-229`, `:232-246`) | The design does not depend on the text identifying *which* index: at INSERT the row is always `PENDING`, so a phone-uniqueness failure there can only be the in-flight claim (`sqlalchemy_repo.py:88-95`), and the docstring says the two phone indexes are deliberately not told apart because SQLite does not name them (`:232-240`). That disambiguation was exercised on SQLite only when this row was written; the PostgreSQL-only concurrency job now runs the same insert path against psycopg, where the index *is* named (`.github/workflows/ci.yml:132-151`, `:166-171`) — a reading of the job, not a run made here | Inspect the constraint name structurally where the driver supplies it, and keep the context-based fallback for SQLite; or branch per dialect explicitly instead of matching substrings |
 | 13 | No retention or deletion of personal data (§11.3) | No policy has been agreed, and there is no production data yet | A retention window and a deletion path, on the indexed `created_at` |
 | 14 | `last_error_message` stores up to 500 characters of upstream-provided text (§11.3) | It is the only diagnostic available for a `PENDING` lead, and the adapter avoids copying the body wholesale | A whitelist of upstream error codes mapped to local messages |
-| 15 | The static-site CSP allows `'unsafe-inline'` and third-party analytics domains, while the API's CSP is default-deny (§5.1) | The analytics layer is dormant and its domains are pre-declared so enabling it is a one-line change | Tighten the nginx CSP when the vendor scripts are actually enabled, or enable them with a nonce/hash instead of `'unsafe-inline'` |
+| 15 | The static-site CSP allows `'unsafe-inline'` and third-party analytics domains, while the API's CSP is default-deny (§5.1) | The analytics layer is enabled (2026-10-10: GA4 direct + Meta Pixel), so the vendor domains are in use | Tighten the nginx CSP when the vendor scripts are actually enabled, or enable them with a nonce/hash instead of `'unsafe-inline'` |
 | 16 | **A process killed between the INSERT and the terminal update leaves a phone claimed** until `PHONE_CLAIM_TTL_SECONDS` elapses; during that window the customer is told `REGISTRATION_IN_PROGRESS` — see `docs/REGISTRATION-FLOW.md` §3.4. The TTL is a tradeoff: too short and a slow provider lets two attempts through; too long and a crash locks a phone out for longer. It must exceed `KHAIBAO9610_TIMEOUT_SECONDS` | Both alternatives are worse. Without the claim the provider is called once per concurrent attempt, and a duplicate customer created upstream is a thing nothing on this side records or can explain. Without a TTL the abandoned claim blocks the phone **forever**. The window is bounded by configuration rather than by an operator acting: the TTL floors at 30 s against a 10 s provider timeout (`config.py:113`, `:84`), and reclamation runs before every INSERT (`services/registration.py:135-139`), so the exposure is one transient refusal — the lead row itself is already committed (`docs/REGISTRATION-FLOW.md` §5). **Re-read against the `0005` predicate and unchanged by it:** the single rule also covers registered rows, which narrows when a claim can be *taken*, and says nothing about a claim nobody will *release*. **Corrected since the previous revision:** the "6 calls became 1" measurement this row used to cite is **withdrawn** — it was timing-dependent, CI caught the window it hid, and the replacement is deterministic (`backend/tests/test_repository.py:335`). The TTL path is also no longer untested: five tests cover `release_stale_claims` (`test_repository.py:264`, `:281`, `:297`, `:304`, `:361`), and writing them found a real `TypeError` on SQLite that appeared only when a row actually held a claim (`sqlalchemy_repo.py:74-88`) | Make the reservation reapable on death rather than aged out — a PostgreSQL session-scoped advisory lock, or a lease with a heartbeat, either of which releases the moment the owner dies instead of after a fixed interval; failing that, a per-attempt owner id and a scheduled reaper instead of an inline age test. Either way it still needs the test this risk has none of: kill a process mid-attempt and assert the phone is refused until the TTL and accepted after it |
 
 Risks 1–2 are recorded because they are the honest remainder of a control that is

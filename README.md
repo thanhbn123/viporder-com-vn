@@ -55,7 +55,7 @@ sitemap.xml              the pages that exist
 static/css/style.css     styles
 static/js/app.js         page behaviour: mobile nav, footer year, click hooks
 static/js/register.js    the registration form: validation, idempotency, states
-static/js/analytics.js   first-party event layer (dormant; no third-party egress)
+static/js/analytics.js   event layer: GA4 (direct) + Meta Pixel enabled since 2026-10-10
 static/img/              favicon and Open Graph assets
 
 backend/                 FastAPI service: registration, lead store, provider adapter

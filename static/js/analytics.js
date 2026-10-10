@@ -70,11 +70,15 @@
    * ================================================================== */
   var VIPORDER_TRACKING = {
     // Master switch. While false, NO third-party request is ever made.
-    enabled: false,
+    enabled: true,
 
+    /* GTM stays OFF while GA4 is loaded directly: a GTM container that also
+     * carries a GA4 tag for the same property would count every event twice.
+     * Switch to GTM only after checking what the container holds, and then
+     * turn ga4 off. */
     gtm: { enabled: false, id: "GTM-KKCBDP5R" },
-    ga4: { enabled: false, id: "G-581GP4TP51" },
-    metaPixel: { enabled: false, id: "901417776091392" }
+    ga4: { enabled: true, id: "G-581GP4TP51" },
+    metaPixel: { enabled: true, id: "901417776091392" }
   };
   window.VIPORDER_TRACKING = VIPORDER_TRACKING;
 
@@ -422,6 +426,44 @@
     }
   }
 
+  /* Direct GA4 (gtag.js, no GTM) reads only gtag-shaped dataLayer entries —
+   * ["event", name, params] — not the GTM-shaped objects `emit` pushes. So
+   * when GA4 is loaded without GTM, each event is ALSO pushed in gtag shape.
+   * Events raised before the config command is queued wait in `ga4Pending`:
+   * an event queued ahead of `config` has no destination. `page_view` is not
+   * forwarded: the config's own page_view covers it. */
+  var ga4Ready = false;
+  var ga4Pending = [];
+
+  function ga4Direct() {
+    return VIPORDER_TRACKING.enabled && VIPORDER_TRACKING.ga4.enabled && !VIPORDER_TRACKING.gtm.enabled;
+  }
+
+  function ga4Forward(name, eventId, params) {
+    if (!ga4Direct() || name === EVENTS.PAGE_VIEW) {
+      return;
+    }
+    var flat = { viporder_event_id: eventId };
+    for (var key in params) {
+      if (Object.prototype.hasOwnProperty.call(params, key)) {
+        var value = params[key];
+        if (value === null || typeof value !== "object") {
+          flat[key] = value;
+        }
+      }
+    }
+    if (ga4Ready) {
+      dataLayerGtag("event", name, flat);
+    } else {
+      ga4Pending.push([name, flat]);
+    }
+  }
+
+  /* gtag.js only accepts an `arguments` object from the queue, so build one. */
+  function dataLayerGtag() {
+    dataLayerPush(arguments);
+  }
+
   function emit(name, eventId, params) {
     var extra = params && typeof params === "object" ? params : {};
     try {
@@ -443,6 +485,7 @@
        * GTM drains whatever is already queued when it does load. */
       dataLayerPush(payload);
       metaForward(name, eventId, extra);
+      ga4Forward(name, eventId, extra);
     } catch (err) {
       debug("emit failed", name, err);
     }
@@ -604,11 +647,18 @@
     }
     /* gtag.js drains these commands from dataLayer once it loads, so no
      * generated inline <script> is needed (keeps the page CSP-friendly). */
-    dataLayerPush(["js", new Date()]);
-    dataLayerPush(["config", VIPORDER_TRACKING.ga4.id, {
+    dataLayerGtag("js", new Date());
+    /* Directly loaded, gtag sends the page_view itself; behind GTM the
+     * container's own tags do. */
+    dataLayerGtag("config", VIPORDER_TRACKING.ga4.id, {
       anonymize_ip: true,
-      send_page_view: false
-    }]);
+      send_page_view: ga4Direct()
+    });
+    ga4Ready = true;
+    while (ga4Pending.length) {
+      var queued = ga4Pending.shift();
+      dataLayerGtag("event", queued[0], queued[1]);
+    }
     injectScriptOnce(
       "viporder-ga4",
       "https://www.googletagmanager.com/gtag/js?id=" +

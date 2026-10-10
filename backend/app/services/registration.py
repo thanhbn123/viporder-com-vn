@@ -21,6 +21,7 @@ import json
 import logging
 import secrets
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from pydantic import SecretStr
@@ -116,6 +117,10 @@ class RegistrationService:
         self.repository = repository
         self.provider = provider
         self.settings = settings
+        #: Called once per NEWLY CREATED lead with (info, status, body), after
+        #: the attempt. Never for a replay, a duplicate refused before INSERT,
+        #: or a retry. ``info`` is an allow-list of lead fields: no password.
+        self.on_new_lead: Callable[[dict, int, dict], None] | None = None
 
     @property
     def login_url(self) -> str:
@@ -197,7 +202,20 @@ class RegistrationService:
             self.provider.name,
         )
 
-        return self._attempt(lead, payload)
+        status_code, body = self._attempt(lead, payload)
+        if self.on_new_lead is not None:
+            info = {
+                "full_name": payload.full_name,
+                "phone": phone_display(lead.phone),
+                "email": payload.email,
+                "province": payload.province,
+                "service_interest": payload.service_interest,
+            }
+            try:
+                self.on_new_lead(info, status_code, body)
+            except Exception as exc:  # noqa: BLE001 - a hook must never fail a registration
+                logger.warning("new-lead hook failed type=%s", type(exc).__name__)
+        return status_code, body
 
     def get_status(self, lead_id: str, tracking_token: str | None) -> dict:
         lead = self.repository.get(lead_id)
