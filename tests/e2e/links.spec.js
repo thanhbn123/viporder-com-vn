@@ -10,7 +10,7 @@
 
 const { test, expect } = require("@playwright/test");
 
-const PORTAL = "https://khachhang.viporder.com.vn";
+const PORTAL = "https://khachhang.viporder.com.vn/login";
 
 test.describe("links", () => {
   test("no internal link is broken", async ({ page, request }) => {

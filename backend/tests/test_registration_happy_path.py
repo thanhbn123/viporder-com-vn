@@ -6,7 +6,7 @@ import re
 
 from tests.conftest import Harness, payload
 
-LOGIN_URL = "https://khachhang.viporder.com.vn"
+LOGIN_URL = "https://khachhang.viporder.com.vn/login"
 
 
 def test_registration_returns_201_and_registered(harness: Harness) -> None:

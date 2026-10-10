@@ -48,7 +48,7 @@
       ? window.VipOrderRegisterValidation
       : null;
 
-  var PORTAL_URL = rules ? rules.PORTAL_URL : "https://khachhang.viporder.com.vn";
+  var PORTAL_URL = rules ? rules.PORTAL_URL : "https://khachhang.viporder.com.vn/login";
   var PORTAL_HOST = rules ? rules.PORTAL_HOST : "khachhang.viporder.com.vn";
   var IDEM_STORAGE_KEY = "vo_idem_key_v1";
   /* The phone the stored key was minted for, so the binding survives a reload. */
