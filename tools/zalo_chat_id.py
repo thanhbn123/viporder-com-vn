@@ -3,7 +3,8 @@
 
 Standard library only, so it runs on the VPS without the app's environment.
 
-    # 1. Message the bot from the staff Zalo account (any text), then:
+    # 1. Start this FIRST, then message the bot from the staff Zalo account
+    #    while it waits (up to ~5 minutes):
     ZALO_BOT_TOKEN=... python3 tools/zalo_chat_id.py
     # 2. Put the printed id in deploy/.env as ZALO_NOTIFY_CHAT_ID, then:
     ZALO_BOT_TOKEN=... ZALO_NOTIFY_CHAT_ID=... python3 tools/zalo_chat_id.py --test
@@ -21,6 +22,11 @@ import urllib.error
 import urllib.request
 
 API = "https://bot-api.zapps.me"
+# getUpdates long-polls ~30 s and answers 408 when nothing arrived in that
+# window. Measured 2026-10-10: a message sent BEFORE the call was not
+# returned, so the tool waits through several windows instead of one.
+POLL_SECONDS = 30
+POLL_ROUNDS = 10
 
 
 def call(token: str, method: str, body: dict) -> dict:
@@ -72,10 +78,22 @@ def main(argv: list[str]) -> int:
         print(f"Refused: error_code={reply.get('error_code')} {reply.get('description')}")
         return 1
 
-    reply = call(token, "getUpdates", {"timeout": 30})
-    if not reply.get("ok"):
-        print(f"Refused: error_code={reply.get('error_code')} {reply.get('description')}")
-        print("If no message was waiting, send the bot a message and run this again.")
+    print(
+        f"Đang chờ tin nhắn tới bot (tối đa ~{POLL_SECONDS * POLL_ROUNDS // 60} phút). "
+        "NHẮN BOT MỘT TIN BẤT KỲ NGAY BÂY GIỜ từ tài khoản Zalo nhận thông báo.",
+        flush=True,
+    )
+    reply: dict = {}
+    for round_no in range(1, POLL_ROUNDS + 1):
+        reply = call(token, "getUpdates", {"timeout": POLL_SECONDS})
+        if reply.get("ok") and _updates(reply.get("result")):
+            break
+        if reply.get("error_code") not in (None, 408):
+            print(f"Refused: error_code={reply.get('error_code')} {reply.get('description')}")
+            return 1
+        print(f"  ... chưa có tin (lượt {round_no}/{POLL_ROUNDS})", flush=True)
+    else:
+        print("No messages yet. Rerun, and message the bot while this is waiting.")
         return 1
     seen: dict[str, str] = {}
     for update in _updates(reply.get("result")):
