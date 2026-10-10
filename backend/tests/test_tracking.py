@@ -203,8 +203,9 @@ def test_warehouse_import_found_returns_the_bare_object_projected(
     assert data["customer_code"] == "TT00123"
     assert data["weight"] == 12.5
     assert data["china_tracking_code"] == "CN123456789"
-    assert data["vietnam_tracking_code"] == "VN987654321"
-    assert data["vnpost_tracking_code"] == "VNPOST999"
+    # Dropped from the public lookup (owner, 2026-10-10).
+    assert "vietnam_tracking_code" not in data
+    assert "vnpost_tracking_code" not in data
     assert data["package_sealing_code"] == "SEAL-2026-0001"
     assert data["product_name_vi"] == "Quần áo"
     assert data["product_name_cn"] == "衣服"
@@ -242,7 +243,6 @@ def test_package_sealing_found_returns_the_wrapped_object_projected(
     assert data["warehouse_imports"] == [
         {
             "china_tracking_code": "CN123456789",
-            "vietnam_tracking_code": "VN987654321",
             "package_sealing_code": "SEAL-2026-0001",
             "delivery_code": "XK-001",
             "weight": 12.5,
@@ -407,8 +407,6 @@ def test_the_projection_is_a_whitelist_not_a_passthrough() -> None:
         "date",
         "weight",
         "china_tracking_code",
-        "vietnam_tracking_code",
-        "vnpost_tracking_code",
         "package_sealing_code",
         "product_name_vi",
         "product_name_cn",
@@ -614,7 +612,6 @@ def test_non_object_entries_inside_the_lists_are_dropped() -> None:
     assert normalize_package_sealing({"data": raw})["warehouse_imports"] == [
         {
             "china_tracking_code": "CN1",
-            "vietnam_tracking_code": None,
             "package_sealing_code": None,
             "delivery_code": None,
             "weight": None,
