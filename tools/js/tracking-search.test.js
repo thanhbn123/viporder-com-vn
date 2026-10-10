@@ -334,10 +334,10 @@ test("absent fields are skipped entirely — no row, and no 'null'", () => {
     weight: null,
     date: undefined,
     china_tracking_code: "",
-    vietnam_tracking_code: "VN999",
+    package_sealing_code: "B999",
   });
   const labels = view.fields.map((row) => row.label);
-  assert.deepEqual(labels, ["Mã khách", "Mã vận đơn Việt Nam"]);
+  assert.deepEqual(labels, ["Mã khách", "Mã bao"]);
   assert.equal(JSON.stringify(view).includes("null"), false);
   assert.equal(JSON.stringify(view).includes("undefined"), false);
 });
@@ -350,6 +350,8 @@ test("zero and false are VALUES and keep their row", () => {
 test("warehouse fields are rendered in the agreed order", () => {
   const view = t.viewFor("warehouse_import", {
     customer_code: "TT001",
+    delivery_customer: "TT2840 - Khách nhận",
+    delivery_code: "GH1",
     date: "2026-09-30",
     weight: "12.5",
     china_tracking_code: "CN1",
@@ -363,11 +365,11 @@ test("warehouse fields are rendered in the agreed order", () => {
   });
   assert.deepEqual(view.fields.map((row) => row.label), [
     "Mã khách",
+    "Khách giao hàng",
+    "Mã giao hàng",
     "Ngày nhập",
     "Cân nặng",
     "Mã vận đơn Trung Quốc",
-    "Mã vận đơn Việt Nam",
-    "VNPost",
     "Mã bao",
     "Tên hàng",
     "Số lượng",
@@ -527,7 +529,7 @@ test("a package's inner imports become a sub-list of whitelisted rows", () => {
     ],
   });
   assert.equal(view.children.length, 2, "an entry with no renderable field is not a card");
-  assert.equal(view.children[0].fields.length, 5);
+  assert.equal(view.children[0].fields.length, 4, "Mã vận đơn Việt Nam is no longer rendered");
   assert.equal(view.children[1].fields.length, 1);
   assert.equal(JSON.stringify(view).includes("secret"), false);
   assert.equal(view.childrenLabel, "Kiện hàng bên trong");

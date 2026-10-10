@@ -158,7 +158,7 @@
        * grid row. A <div> wrapper would work too but would need
        * `display: contents`, which is worth avoiding inside a <dl>. */
       dl.appendChild(el("dt", null, rows[i].label));
-      dl.appendChild(el("dd", null, rows[i].value));
+      dl.appendChild(el("dd", rows[i].highlight ? "tracking-code" : null, rows[i].value));
     }
     host.appendChild(dl);
   }

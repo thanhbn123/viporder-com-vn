@@ -894,6 +894,14 @@ select {
   overflow-wrap: anywhere;
 }
 
+/* The codes a customer reads out on the phone: customer, delivery customer,
+   delivery code, bag code (owner, 2026-10-10). Brand red on white is 5.9:1,
+   above WCAG AA for body text. */
+.tracking-fields dd.tracking-code {
+  color: var(--primary);
+  font-weight: 700;
+}
+
 .tracking-block {
   margin-top: 22px;
 }

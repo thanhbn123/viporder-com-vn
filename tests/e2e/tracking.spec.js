@@ -238,9 +238,12 @@ test.describe("tracking lookup", () => {
     expect(fields["Ngày nhập"]).toBe("2026-09-29");
     expect(fields["Cân nặng"]).toBe("12.5");
     expect(fields["Mã vận đơn Trung Quốc"]).toBe("CN987654321");
-    expect(fields["Mã vận đơn Việt Nam"]).toBe("VN123456789");
-    expect(fields["VNPost"]).toBe("VP998877665");
+    /* Not shown since 2026-10-10 (owner), although the API still returns them. */
+    expect(fields["Mã vận đơn Việt Nam"]).toBeUndefined();
+    expect(fields["VNPost"]).toBeUndefined();
     expect(fields["Mã bao"]).toBe("B2026-001");
+    /* The codes a customer reads out are highlighted. */
+    await expect(page.locator("#trackingResults dd.tracking-code").first()).toHaveText("TT12345");
     expect(fields["Số lượng"]).toBe("3");
     expect(fields["Số kiện"]).toBe("1");
 
