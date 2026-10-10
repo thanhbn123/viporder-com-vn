@@ -21,6 +21,7 @@ import json
 import logging
 import secrets
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from pydantic import SecretStr
@@ -74,10 +75,13 @@ MAX_IDEMPOTENCY_KEY_LENGTH = 128
 # The four `MESSAGE_RETRY_*` below are deliberately LEFT in English — they go to
 # the operator endpoint, not to a customer.
 MESSAGE_REGISTERED = "Đăng ký thành công."
+# The page never shows the tracking token and offers nowhere to enter one, so the
+# customer must not be told to "keep the tracking code". The owner confirmed on
+# 2026-10-08 that VIPORDER staff follow up PENDING leads by phone.
 MESSAGE_PENDING = (
-    "Chúng tôi đã ghi nhận đăng ký của bạn nhưng chưa xác nhận được ngay. "
-    "Vui lòng giữ mã theo dõi để kiểm tra kết quả; chúng tôi sẽ hoàn tất trong "
-    "thời gian sớm nhất."
+    "Chúng tôi đã ghi nhận đăng ký của bạn nhưng chưa tạo được mã khách hàng ngay. "
+    "VIPORDER sẽ liên hệ qua số điện thoại bạn đã cung cấp để hoàn tất. "
+    "Bạn không cần đăng ký lại."
 )
 MESSAGE_ALREADY_REGISTERED = "This registration is already confirmed."
 MESSAGE_DUPLICATE_PHONE = (
@@ -113,6 +117,10 @@ class RegistrationService:
         self.repository = repository
         self.provider = provider
         self.settings = settings
+        #: Called once per NEWLY CREATED lead with (info, status, body), after
+        #: the attempt. Never for a replay, a duplicate refused before INSERT,
+        #: or a retry. ``info`` is an allow-list of lead fields: no password.
+        self.on_new_lead: Callable[[dict, int, dict], None] | None = None
 
     @property
     def login_url(self) -> str:
@@ -194,7 +202,20 @@ class RegistrationService:
             self.provider.name,
         )
 
-        return self._attempt(lead, payload)
+        status_code, body = self._attempt(lead, payload)
+        if self.on_new_lead is not None:
+            info = {
+                "full_name": payload.full_name,
+                "phone": phone_display(lead.phone),
+                "email": payload.email,
+                "province": payload.province,
+                "service_interest": payload.service_interest,
+            }
+            try:
+                self.on_new_lead(info, status_code, body)
+            except Exception as exc:  # noqa: BLE001 - a hook must never fail a registration
+                logger.warning("new-lead hook failed type=%s", type(exc).__name__)
+        return status_code, body
 
     def get_status(self, lead_id: str, tracking_token: str | None) -> dict:
         lead = self.repository.get(lead_id)

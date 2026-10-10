@@ -318,9 +318,9 @@ Retries a `PENDING`/`FAILED` lead. The body may carry `{"password": "..."}`.
 > password, or inventing one) would either break the hard constraint or create
 > an account the customer cannot sign in to.
 
-> **There is no retry worker.** `LeadRepository.list_pending()` exists and is
-> tested, but **nothing calls it**: this service has no scheduler, worker, cron
-> job or background task. A `PENDING` lead is completed *only* by
+> **There is no retry worker.** `LeadRepository.list_pending()` is read only by
+> the admin follow-up list below, for a person; this service has no scheduler,
+> worker, cron job or background task. A `PENDING` lead is completed *only* by
 >
 > * the customer, registering again — a `PENDING`/`FAILED` lead does not block a
 >   new attempt; or
@@ -331,6 +331,20 @@ Retries a `PENDING`/`FAILED` lead. The body may carry `{"password": "..."}`.
 > completed — but do not assume anything is working the queue.
 > `tests/test_repository.py` asserts this state of affairs, so if someone later
 > wires a worker, that test fails and points back at this note.
+
+### `GET /api/v1/admin/registrations/follow-up?limit=100`
+
+Lists `PENDING`/`FAILED` registration leads, oldest first, for staff to call
+back — the customer-facing PENDING message promises that call. Same gate as the
+retry route: `X-Admin-Token` must equal `ADMIN_API_TOKEN`, otherwise `404`.
+Returns only `lead_id, registration_status, full_name, phone_display, email,
+province, service_interest, attempt_count, last_error_code, created_at`, with
+`Cache-Control: no-store`. Whoever holds the token can read customer contact
+details: hand it only to the people who make the calls.
+
+```bash
+curl -s -H "X-Admin-Token: $ADMIN_API_TOKEN" https://<host>/api/v1/admin/registrations/follow-up
+```
 
 ---
 

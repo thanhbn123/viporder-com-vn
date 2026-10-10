@@ -58,6 +58,8 @@ def health(request: Request) -> JSONResponse:
         "version": settings.app_version,
         "checks": {
             "database": "ok" if database_ok else "error",
+            # Whether staff get a Zalo message per new lead. Never the token.
+            "notifications": {"zalo": "on" if settings.zalo_notify_enabled else "off"},
             "provider": {
                 "mode": mode,
                 "status": provider_health(

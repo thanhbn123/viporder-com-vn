@@ -2,13 +2,24 @@
 
 **Repository:** `thanhbn123/viporder-com-vn`
 **Owner:** thanhbn123
-**Last updated:** 2026-10-07 (re-measured; every number below is annotated with the
-command that produced it and the date it was taken)
+**Last updated:** 2026-10-10 (go-live recorded; earlier numbers keep the date they
+were measured)
 
 This document records **measured** state, not intended state. Every SHA and
 status label here was read from the remote with `git` / `gh api`, or produced by
 a command whose output is quoted. A label is only ever one of `PASS`, `FAIL`,
 `BLOCKED` or `NOT STARTED`.
+
+> **LIVE 2026-10-10.** `https://viporder.com.vn` serves this repository from the
+> production stack on `160.22.170.20` (compose project `viporder-prod`, behind the
+> host Caddy), at develop **`faa5fdf`** (first live at `a081559`, same application
+> code). **Real registration is ON** (`/api/v1/health` → `tracking_reads=live`,
+> `registration_writes=live`). Measured from outside, without `--resolve`: apex
+> `200`, `ssl_verify_result=0`, 6/6 security headers, no `x-robots-tag`; `www` `200`
+> (canonical tag points at the apex); `khachhang.viporder.com.vn` unchanged on
+> `103.159.50.70`; the other Caddy sites on the host still up. The temporary
+> acceptance host `web.viporder.vn` was removed from Caddy after cutover. Record of
+> the DNS and VPS steps: `docs/DNS-CUTOVER.md` §6.0.1.
 
 > **Re-measured 2026-10-07.** This document said "Last updated: 2026-10-02" while
 > the tree had moved 100+ commits past its numbers. Three claims were measurably
@@ -57,8 +68,8 @@ Owner-supplied SHAs **matched the remote exactly**.
 
 | Item | Value | Command |
 |---|---|---|
-| `main` | `c0cbe28` — **untouched throughout** | `git rev-parse --short origin/main` |
-| `develop` | `deeab14` | `git rev-parse --short origin/develop` |
+| `main` | `b8eb576` — **merged into** by PR #17 (`develop` → `main`), merged by the owner at `2026-10-07T14:09:00Z`. Until then `c0cbe28`, untouched | `git rev-parse --short origin/main`; PR #17 `merged_at` |
+| `develop` | `ae7edab` — same tree as `main` (`git diff origin/develop origin/main` is empty) | `git rev-parse --short origin/develop` |
 | Merged pull requests | `60` | `gh pr list --state merged --limit 500 --json number -q length` |
 | Required status checks | **12** | `gh api repos/thanhbn123/viporder-com-vn/branches/develop/protection` |
 | `pytest -q` (SQLite) | `607 passed, 12 skipped` | `env -u DATABASE_URL -u TEST_DATABASE_URL python -m pytest -q` |
@@ -94,7 +105,7 @@ redundancy (SHA retained above for recovery).
 | **G01** | Homepage | **PASS** (pre-existing) | merged via PR #1; verified sound, **not rewritten** |
 | **G02** | Registration + lead core | **PASS** | PR #11 → `df9b84ea`; replay CR PR #13 → `4d026def`. Live: exact browser payload → **201**; provider down → **202** `PENDING` with the lead **retained**; duplicate → **409** leaking nothing; **replay of a 409 returns 409 with a byte-identical body** |
 | **G03** | Data / lead store | **PASS, PostgreSQL now executed** | PR #19, PR #24. Repository interface, Alembic `0001`–`0005`, `request_fingerprint`, consent columns, and an **in-flight phone claim** that makes "one attempt per phone at a time" a database invariant — so two concurrent registrations cannot both call the provider. The partial unique index is **proven on real PostgreSQL 16**, in CI: a second `REGISTERED` row for one phone is refused while a `PENDING` one is allowed |
-| **G04** | KHAIBAO9610 integration contract | **BLOCKED_EXTERNAL (narrowed)** | adapter + MOCK shipped. The contract **was supplied** and is measured: endpoints, field names, both tracking envelopes, both 404 bodies and the bare-list 401 (`docs/KHAIBAO9610-INTEGRATION.md` §4.6–§4.9). **One owner-authorised live registration `POST` was made on 2026-10-07 and answered `201`** (§10.6); the provider's raw response body was not captured, so the success schema and five other facts remain unknown — **issue #4**. This row said "contract not supplied" beside a document that records the supplied contract and the live POST |
+| **G04** | KHAIBAO9610 integration contract | **PASS (measured 2026-10-09, option B)** — success contract measured, `docs/KHAIBAO9610-INTEGRATION.md` §10.8; the text that follows is the 2026-10-07 state | adapter + MOCK shipped. The contract **was supplied** and is measured: endpoints, field names, both tracking envelopes, both 404 bodies and the bare-list 401 (`docs/KHAIBAO9610-INTEGRATION.md` §4.6–§4.9). **One owner-authorised live registration `POST` was made on 2026-10-07 and answered `201`** (§10.6); the provider's raw response body was not captured, so the success schema and five other facts remain unknown — **issue #4**. This row said "contract not supplied" beside a document that records the supplied contract and the live POST |
 | **G05** | Marketing / analytics | **PASS** | PR #10. All 7 events + `viporder_lead_pending`; UTM captured server-side. **No PII in any payload** — and this is now MACHINE-CHECKED (`tools/js/no-pii-in-analytics.test.js`) rather than verified by reading, which is what this row previously claimed and was not true of. The property is structural: `analytics.js` never names a customer field, so an event cannot carry one. The check is a source tripwire, so it cannot see a value passed in under a neutral name, and it does not read the two third-party loaders' own code. Tracking **dormant** |
 | **G06** | SEO / public website | **PASS** | OG/Twitter, static JSON-LD, `sitemap.xml`, `robots.txt`, favicon + OG image (1200×630), branded **404** served with a real 404 status and 6/6 headers (PR #21). JSON-LD is parsed by CI |
 | **G07** | UX / conversion | **PASS (measured, not seen)** | Two primary actions, accessible mobile nav, success/pending/error states. **Rendered in a real browser** — desktop and a Pixel 7 profile — in CI on every pull request (`tests/e2e/`, gate **G12A**), with WCAG AA contrast computed from the rendered colours and a readable-size floor. **No pixel has ever been LOOKED at**: the reviewer had no image input, so legibility is proven and appearance is not. |
@@ -103,7 +114,7 @@ redundancy (SHA retained above for recovery).
 | **G10** | CI | **PASS** | `.github/workflows/ci.yml` — **12 required checks** (`gh api repos/thanhbn123/viporder-com-vn/branches/develop/protection`; the Python matrix is two of them), all pinned to the PR **head SHA** and all required before merge. Includes a PostgreSQL service and a negative control for the destructive-test guard. This row said "10 jobs producing 11 required checks" |
 | **G11** | Documentation | **PASS** | `docs/` — architecture, flow, integration, deployment, security, go-live |
 | **G12** | Staging | **PASS (deployed and verified)** | PR #6, plus CR PR #15 (`--workers 1`, pinned `--forwarded-allow-ips`, upstream made deployment-specific). **Deployed as the compose stack on the staging host** and verified 2026-10-07: `curl -D-` header counts, the staging browser suite, the source-exposure probe, and the two live tracking `GET`s. `registration_writes` stays **DISABLED** there. This row said "Nothing deployed — no VPS or DNS access. Docker was never executed"; the containerised path has now been executed, in staging only |
-| **G13** | Release | **BLOCKED_EXTERNAL** | release PR (`develop` → `main`) opened as a **candidate only**, awaiting owner authorization. Staging acceptance has now been performed (G12); KHAIBAO9610 registration is still MOCK, and the provider's response schema is still unknown |
+| **G13** | Release | **PASS — LIVE 2026-10-10** (see the note at the top; the text that follows is the 2026-10-07 state, kept as history) | The release PR #17 (`develop` → `main`) **was merged by the owner at `2026-10-07T14:09:00Z`** — `main` is now `b8eb576`. This row said it was "awaiting owner authorization" after that had happened. Still BLOCKED, for what the merge does not settle: **no production deployment has been measured from this repository**, and KHAIBAO9610 registration is still MOCK with the provider's response schema unknown (issue #4). PR #87 makes the next authorized live run read the customer code back |
 
 Statuses in this table are updated by the gate that changes them. If a row and a
 PR disagree, **the PR is wrong** — re-measure. A gate is `PASS` only when the
@@ -120,9 +131,9 @@ gets skimmed.
 
 | Not verified | Why it matters |
 |---|---|
-| **The real KHAIBAO9610 API** | No live call has ever been made from this repository. **`MOCK` is not working registration.** |
+| **The real KHAIBAO9610 API** | Two live registration POSTs have reached it: one **unauthorised** on 2026-10-02 (answered 200) and one **owner-authorised** on 2026-10-07 (answered 2xx) — neither captured the provider's raw body, and neither returned a customer code where the adapter looks (G04, issue #4). This row said "no live call has ever been made" after both. The success schema is still unknown, so **`MOCK` is still not working registration.** |
 | ~~**A human LOOKING at the rendered page**~~ — **CLOSED 2026-10-02** | There is a real-browser gate (G12A) rendering every page at desktop and Pixel 7 in CI, checking geometry, contrast, type size, focus visibility and accessible names — it caught three real contrast/size defects on its first run. What was missing was **judgement**, because the agent doing this work **has no image input**. Eleven screenshots were committed to `docs/visual-acceptance/` and the **owner reviewed and approved them on 2026-10-02**. Kept visible because the row was true and load-bearing while it stood. **Not discharged by the approval:** the homepage-only accessibility audit, the single audited viewport, no breakpoint sweep, no screen-reader run, and captures of a staging *candidate* rather than a deployed host. |
-| **Docker / docker-compose** | Docker is not installed on the machine this was built on. The compose file is validated as configuration (YAML parses, every key is a real setting, defaults are safe) but the stack has **never been run**. |
+| **Docker / docker-compose in production** | The compose stack **has run** — on the staging host (G12, 2026-10-07). This row said it had "never been run" after that. What is still unverified is any **production** run of it. |
 | **More than one uvicorn worker** | Both deployment paths pin `--workers 1`. The concurrency guarantees — the phone claim and the idempotency binding — are verified within a process (sync handlers run in a threadpool, so the races are real), but they have **not** been exercised across multiple workers. Raise the worker count only after re-running `tests/test_concurrency.py` against that topology. |
 
 **Closed since the first revision of this document:**
@@ -212,7 +223,7 @@ replacing them would make the document unable to show that anything moved.
 | # | Blocker | Why it is external | Impact |
 |---|---|---|---|
 | 1 | Real KHAIBAO9610 / `apiviporder.com` registration contract | Only the owner/provider can supply it | Real customer registration stays in MOCK. Issue #4 |
-| 2 | DNS + VPS access for `viporder.com.vn` | Owner-held | Nothing can be deployed. Prep only. |
+| 2 | DNS + VPS access for `viporder.com.vn` | **CLOSED 2026-10-10** | Production deployed on `160.22.170.20` and measured from outside; DNS apex → `160.22.170.20`, mail kept on `103.159.50.70` (`docs/DNS-CUTOVER.md` §6.0.1). |
 | 3 | Final legal/contact content (company name, address, phone) | Business-authoritative | Footer/contact cannot be completed truthfully |
 
 Blocked gates do not stop other gates — see the gate table.

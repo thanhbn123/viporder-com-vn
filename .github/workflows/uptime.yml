@@ -1,0 +1,85 @@
+name: Uptime viporder.com.vn
+
+# Every 10 minutes, check the live site from outside. When it is down, open ONE
+# issue labelled `site-down`: GitHub emails the repository owner (the Gmail
+# on the account) for the new issue and for the failed run. When it recovers,
+# the issue is closed with a comment, which emails again. No secret needed.
+#
+# Scheduled workflows only run from the DEFAULT branch (main), and GitHub may
+# start them a few minutes late under load.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      LABEL: site-down
+    steps:
+      - name: Check homepage and health (3 tries, 30 s apart)
+        id: probe
+        run: |
+          set -u
+          problem=""
+          for attempt in 1 2 3; do
+            problem=""
+            home=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://viporder.com.vn/ 2>&1) || true
+            [ "$home" = "200" ] || problem="Trang chủ trả '$home' (cần 200)."
+            health=$(curl -sS --max-time 20 https://viporder.com.vn/api/v1/health 2>&1) || true
+            if ! printf '%s' "$health" | python3 -c '
+          import json, sys
+          b = json.load(sys.stdin)
+          assert b["status"] == "ok", b["status"]
+          assert b["checks"]["provider"]["capabilities"]["registration_writes"] == "live"
+          '; then
+              problem="$problem /api/v1/health không ổn: $(printf '%s' "$health" | head -c 300)"
+            fi
+            [ -z "$problem" ] && break
+            echo "attempt $attempt: $problem"
+            [ "$attempt" -lt 3 ] && sleep 30
+          done
+          # One line by construction; newlines are flattened just in case.
+          echo "problem=$(printf '%s' "$problem" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the site-down issue
+        if: steps.probe.outputs.problem != ''
+        env:
+          PROBLEM: ${{ steps.probe.outputs.problem }}
+        run: |
+          gh label create "$LABEL" --color B60205 --description "viporder.com.vn is down" --force
+          open=$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number')
+          now=$(TZ=Asia/Ho_Chi_Minh date '+%H:%M %d/%m/%Y')
+          if [ -z "$open" ]; then
+            gh issue create --label "$LABEL" \
+              --title "🔴 viporder.com.vn đang lỗi ($now)" \
+              --body "Kiểm tra tự động lúc $now (giờ Việt Nam) thất bại 3 lần liên tiếp.
+
+          $PROBLEM
+
+          Issue này tự đóng khi trang chạy lại. Lần chạy: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID"
+          else
+            echo "issue #$open already open; not opening another"
+          fi
+          exit 1
+
+      - name: Close the site-down issue on recovery
+        if: steps.probe.outputs.problem == ''
+        run: |
+          open=$(gh issue list --label "$LABEL" --state open --json number --jq '.[].number' 2>/dev/null || true)
+          now=$(TZ=Asia/Ho_Chi_Minh date '+%H:%M %d/%m/%Y')
+          for n in $open; do
+            gh issue close "$n" --comment "🟢 viporder.com.vn đã chạy lại lúc $now (giờ Việt Nam)."
+          done

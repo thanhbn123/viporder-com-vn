@@ -16,6 +16,9 @@ now be found, and the shapes that must NOT be guessed at.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.providers.khaibao9610 import ViporderFrontendProvider
@@ -263,3 +266,63 @@ def test_an_all_digit_code_under_the_ambiguous_key_is_refused() -> None:
 def test_an_all_digit_code_under_an_UNAMBIGUOUS_key_is_accepted() -> None:
     """Because `customer_code: 12345` can only mean a customer."""
     assert extract({"customer_code": 12345}) == (None, "12345")
+
+
+# ---------------------------------------------------------------------------
+# THE MEASURED PROVIDER SHAPES — owner-authorized live test, 2026-10-09
+# ---------------------------------------------------------------------------
+#
+# Everything above this line is a shape we REASONED the provider might send. The
+# three below are the shapes it ACTUALLY sent, once, on 2026-10-09T16:27:24Z
+# (docs/KHAIBAO9610-INTEGRATION.md §10.8). They are pinned here because the
+# authorization that produced them is spent: if a later change to `_WRAPPER_KEYS`,
+# `_AMBIGUOUS_CODE_KEYS` or `_ID_KEYS` stopped finding `customer.code`, no second
+# live call is available to notice it.
+#
+# The fixture is loaded from disk rather than inlined so that the masking is visible
+# in one place and so the recorded bytes/status live beside the body they describe.
+
+FIXTURE = json.loads(
+    (Path(__file__).parent / "fixtures" / "live_registration_20261009.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+def test_the_measured_register_body_identifies_nobody() -> None:
+    """MEASURED: `POST /register` answers 200 with exactly `status` and `message`.
+
+    No code, no id, no token. `(None, None)` is therefore the CORRECT answer. Since
+    the owner chose option B (2026-10-09) the provider then reports SUCCESS without
+    a code, because `status == "success"` — see test_measured_register_success.py.
+    """
+    body = FIXTURE["register"]["body"]
+    assert sorted(body) == ["message", "status"], f"the register body changed: {sorted(body)}"
+    assert extract(body) == (None, None)
+
+
+@pytest.mark.parametrize("call", ["login", "profile"], ids=["login", "auth-profile"])
+def test_the_measured_customer_record_yields_the_code_and_the_id(call: str) -> None:
+    """MEASURED: the code lives at `customer.code` and the id at `customer.id`.
+
+    Both `POST /login` and `GET /auth/profile` carry the same record, so both must
+    extract to the same pair. The id is an INTEGER on the wire and must still be
+    returned as a string.
+    """
+    assert extract(FIXTURE[call]["body"]) == ("6109", "TT5233")
+
+
+def test_the_fixture_carries_no_live_secret_or_test_identity() -> None:
+    """The fixture is committed, so it must stay masked.
+
+    The tool redacts the token by key; the phone and email are masked by hand. This
+    test fails if a future refresh of the fixture pastes the real values back in.
+    """
+    raw = (Path(__file__).parent / "fixtures" / "live_registration_20261009.json").read_text(
+        encoding="utf-8"
+    )
+    customer = FIXTURE["login"]["body"]["customer"]
+    assert FIXTURE["login"]["body"]["access_token"].startswith("<REDACTED")
+    assert customer["phone"].startswith("<MASKED")
+    assert customer["email"].startswith("<MASKED")
+    assert "@" not in raw.replace("<MASKED:test-email>", ""), "an email address leaked in"

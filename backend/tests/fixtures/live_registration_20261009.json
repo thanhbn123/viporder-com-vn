@@ -1,0 +1,50 @@
+{
+  "_source": "tools/test_live_registration.py, owner-authorized one-shot live test, 2026-10-09T16:27:24Z. See docs/KHAIBAO9610-INTEGRATION.md section 10.8.",
+  "_masking": "The access token and token type were redacted by the tool itself. The phone and email of the test identity are masked HERE, deliberately: they are not needed to pin the extractor, this repository is public, and section 10.6 set the practice of not writing the test identity down. Everything else is the measured body, byte for byte.",
+  "register": {
+    "http_status": 200,
+    "content_type": "application/json",
+    "bytes": 96,
+    "body": {
+      "status": "success",
+      "message": "Đăng ký tài khoản thành công"
+    }
+  },
+  "login": {
+    "http_status": 200,
+    "content_type": "application/json",
+    "bytes": 592,
+    "body": {
+      "access_token": "<REDACTED:by-key>",
+      "token_type": "<REDACTED:by-key>",
+      "expires_in": null,
+      "customer": {
+        "id": 6109,
+        "name": "VIPORDER NGHIEM THU",
+        "code": "TT5233",
+        "phone": "<MASKED:test-phone>",
+        "email": "<MASKED:test-email>",
+        "address": null,
+        "created_at": "2026-10-09T16:27:25.000000Z",
+        "updated_at": "2026-10-09T16:27:25.000000Z"
+      }
+    }
+  },
+  "profile": {
+    "http_status": 200,
+    "content_type": "application/json",
+    "bytes": 223,
+    "body": {
+      "customer": {
+        "id": 6109,
+        "name": "VIPORDER NGHIEM THU",
+        "code": "TT5233",
+        "phone": "<MASKED:test-phone>",
+        "email": "<MASKED:test-email>",
+        "address": null,
+        "created_at": "2026-10-09T16:27:25.000000Z",
+        "updated_at": "2026-10-09T16:27:25.000000Z"
+      }
+    }
+  }
+}

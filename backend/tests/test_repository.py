@@ -225,12 +225,15 @@ def test_list_pending_has_no_production_caller() -> None:
         if "list_pending" in path.read_text(encoding="utf-8")
     }
 
+    # routers/admin.py READS the queue for a human (the follow-up list); it is
+    # not a worker and retries nothing. Anything beyond that is a worker.
     assert callers == {
         "repositories/base.py",
         "repositories/sqlalchemy_repo.py",
+        "routers/admin.py",
     }, (
         "list_pending gained a caller in "
-        f"{sorted(callers - {'repositories/base.py', 'repositories/sqlalchemy_repo.py'})}. "
+        f"{sorted(callers - {'repositories/base.py', 'repositories/sqlalchemy_repo.py', 'routers/admin.py'})}. "
         "Update the retry note in backend/README.md."
     )
 
@@ -238,7 +241,17 @@ def test_list_pending_has_no_production_caller() -> None:
 def test_no_scheduler_or_worker_exists() -> None:
     """The other half of the same claim, asserted rather than assumed."""
     app_dir = Path(__file__).resolve().parents[1] / "app"
-    source = "\n".join(path.read_text(encoding="utf-8") for path in app_dir.rglob("*.py"))
+    # routers/registrations.py uses BackgroundTasks for ONE thing: the staff
+    # Zalo notification after the response. It retries nothing.
+    notifier_router = app_dir / "routers" / "registrations.py"
+    router_source = notifier_router.read_text(encoding="utf-8")
+    assert "background_tasks.add_task(notifier.notify_registration" in router_source
+    assert router_source.count("add_task(") == 1, "a second background task appeared"
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in app_dir.rglob("*.py")
+        if path != notifier_router
+    )
 
     for forbidden in (
         "BackgroundTasks",

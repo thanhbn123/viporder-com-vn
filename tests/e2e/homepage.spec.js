@@ -30,9 +30,9 @@ test.describe("homepage, desktop", () => {
   });
 
   test("the login call to action points at the customer portal", async ({ page }) => {
-    const login = page.locator('a[href="https://khachhang.viporder.com.vn"]').first();
+    const login = page.locator('a[href="https://khachhang.viporder.com.vn/login"]').first();
     await expect(login).toBeVisible();
-    await expect(login).toHaveAttribute("href", "https://khachhang.viporder.com.vn");
+    await expect(login).toHaveAttribute("href", "https://khachhang.viporder.com.vn/login");
   });
 
   test("the services are present and readable", async ({ page }) => {

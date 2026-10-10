@@ -16,13 +16,15 @@ from __future__ import annotations
 import logging
 import secrets as py_secrets
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import Settings
-from ..dependencies import get_service, get_settings_dep
+from ..dependencies import get_repository, get_service, get_settings_dep
 from ..errors import NOT_FOUND, ApiError
+from ..models import Lead
+from ..repositories.base import LeadRepository
 from ..services.registration import RegistrationService
 
 logger = logging.getLogger(__name__)
@@ -67,3 +69,56 @@ def retry_registration(
     """Retry a PENDING/FAILED lead against the provider."""
     body = service.retry(lead_id, password=payload.password if payload else None)
     return JSONResponse(status_code=200, content=body)
+
+
+# EXACTLY these fields leave the service. An allowlist, so a column added to
+# `Lead` later is not published by default. Excluded on purpose:
+# `tracking_token` (it authorises the status lookup), `idempotency_key`,
+# `request_fingerprint`, `response_body`, UTM fields and the canonical `phone`
+# (the display form is what a person dials). No password exists to exclude:
+# the service never stores one.
+FOLLOW_UP_FIELDS = (
+    "lead_id",
+    "registration_status",
+    "full_name",
+    "phone_display",
+    "email",
+    "province",
+    "service_interest",
+    "attempt_count",
+    "last_error_code",
+    "created_at",
+)
+
+
+def _follow_up_row(lead: Lead) -> dict[str, object]:
+    row: dict[str, object] = {}
+    for name in FOLLOW_UP_FIELDS:
+        value = getattr(lead, name)
+        if name == "registration_status":
+            value = value.value
+        elif name == "created_at":
+            value = value.isoformat()
+        row[name] = value
+    return row
+
+
+@router.get("/registrations/follow-up")
+def list_follow_up(
+    limit: int = Query(default=100, ge=1, le=200),
+    _settings: Settings = Depends(require_admin),
+    repository: LeadRepository = Depends(get_repository),
+) -> JSONResponse:
+    """PENDING/FAILED leads, oldest first — the people staff must call back.
+
+    The customer-facing PENDING message promises a phone call, so the people
+    owed one must be listable by a human. This is a read for that human, not a
+    worker: nothing here retries, and nothing calls it on a schedule.
+    """
+    leads = repository.list_pending(limit=limit)
+    return JSONResponse(
+        status_code=200,
+        content={"count": len(leads), "leads": [_follow_up_row(lead) for lead in leads]},
+        # Customer names, phones and emails: never cache, anywhere.
+        headers={"Cache-Control": "no-store"},
+    )

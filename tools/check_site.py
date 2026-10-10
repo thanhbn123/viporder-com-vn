@@ -31,6 +31,8 @@ CUSTOMER_PORTAL_HOST = "khachhang.viporder.com.vn"
 ALLOWED_EXTERNAL_HOSTS = {
     CANONICAL_HOST,
     CUSTOMER_PORTAL_HOST,
+    # The owner's Zalo chat link (contact section, supplied 2026-10-09).
+    "zalo.me",
 }
 
 TITLE_MIN, TITLE_MAX = 15, 70

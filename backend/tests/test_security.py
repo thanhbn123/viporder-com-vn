@@ -387,7 +387,7 @@ def test_login_url_is_a_server_side_constant(harness: Harness, hostile: str) -> 
     response = harness.post_registration(
         payload(attribution={**payload()["attribution"], "referrer": hostile})
     )
-    assert response.json()["login_url"] == "https://khachhang.viporder.com.vn"
+    assert response.json()["login_url"] == "https://khachhang.viporder.com.vn/login"
 
 
 def test_internal_error_is_a_plain_500_without_a_traceback(make_harness) -> None:
@@ -405,3 +405,67 @@ def test_internal_error_is_a_plain_500_without_a_traceback(make_harness) -> None
     assert "Traceback" not in response.text
     assert "secret internal detail" not in response.text
     assert "/srv/app/db.py" not in response.text
+
+
+# --- admin follow-up list ------------------------------------------------------
+
+FOLLOW_UP = "/api/v1/admin/registrations/follow-up"
+
+
+def test_follow_up_list_is_404_when_the_token_env_is_unset(harness: Harness) -> None:
+    response = harness.client.get(FOLLOW_UP, headers={"X-Admin-Token": "anything"})
+    assert response.status_code == 404
+
+
+def test_follow_up_list_is_404_with_a_wrong_or_missing_token(make_harness) -> None:
+    harness = make_harness(admin_api_token="correct-horse")
+    assert harness.client.get(FOLLOW_UP, headers={"X-Admin-Token": "wrong"}).status_code == 404
+    assert harness.client.get(FOLLOW_UP).status_code == 404
+
+
+def test_follow_up_list_returns_only_the_contact_fields_of_pending_leads(make_harness) -> None:
+    """Staff are promised to call PENDING customers back; this is how they find them.
+    It must publish contact details and NOTHING that authorises anything."""
+    harness = make_harness(admin_api_token="correct-horse", mock_provider_behaviour="unavailable")
+    pending = harness.post_registration().json()
+    assert pending["registration_status"] == "PENDING"
+
+    response = harness.client.get(FOLLOW_UP, headers={"X-Admin-Token": "correct-horse"})
+
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert body["count"] == 1
+    row = body["leads"][0]
+    assert row["lead_id"] == pending["lead_id"]
+    assert row["registration_status"] == "PENDING"
+    assert set(row) == {
+        "lead_id",
+        "registration_status",
+        "full_name",
+        "phone_display",
+        "email",
+        "province",
+        "service_interest",
+        "attempt_count",
+        "last_error_code",
+        "created_at",
+    }
+    assert pending["tracking_token"] not in response.text
+    assert "password" not in response.text.lower()
+
+
+def test_follow_up_list_omits_completed_registrations(make_harness) -> None:
+    harness = make_harness(admin_api_token="correct-horse")
+    assert harness.post_registration().json()["registration_status"] == "REGISTERED"
+
+    body = harness.client.get(FOLLOW_UP, headers={"X-Admin-Token": "correct-horse"}).json()
+
+    assert body == {"count": 0, "leads": []}
+
+
+def test_follow_up_list_bounds_its_limit(make_harness) -> None:
+    harness = make_harness(admin_api_token="correct-horse")
+    headers = {"X-Admin-Token": "correct-horse"}
+    assert harness.client.get(FOLLOW_UP + "?limit=0", headers=headers).status_code == 422
+    assert harness.client.get(FOLLOW_UP + "?limit=201", headers=headers).status_code == 422

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
 
 from ..dependencies import get_service
@@ -20,6 +20,7 @@ TRACKING_TOKEN_HEADER = "X-Tracking-Token"  # nosec B105
 def create_registration(
     request: Request,
     payload: RegistrationCreate,
+    background_tasks: BackgroundTasks,
     service: RegistrationService = Depends(get_service),
 ) -> JSONResponse:
     """Register a new customer.
@@ -28,6 +29,13 @@ def create_registration(
     kept but the provider could not be reached, ``409``/``422`` for duplicates
     and validation problems.
     """
+    notifier = getattr(request.app.state, "notifier", None)
+    if notifier is not None and notifier.enabled:
+        # Staff hear about every new lead, after the customer has their answer.
+        def _queue(info: dict, status: int, response_body: dict) -> None:
+            background_tasks.add_task(notifier.notify_registration, info, status, response_body)
+
+        service.on_new_lead = _queue
     status_code, body = service.register(
         payload, idempotency_key=request.headers.get(IDEMPOTENCY_HEADER)
     )

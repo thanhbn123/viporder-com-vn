@@ -86,7 +86,7 @@ def test_provider_unavailable_returns_202_pending_and_keeps_lead(
     assert body["external_customer_id"] is None
     assert body["external_customer_code"] is None
     assert body["tracking_token"]
-    assert body["login_url"] == "https://khachhang.viporder.com.vn"
+    assert body["login_url"] == "https://khachhang.viporder.com.vn/login"
 
     _assert_lead_retained(harness, body["lead_id"], "PENDING")
     lead = harness.lead_row(body["lead_id"])

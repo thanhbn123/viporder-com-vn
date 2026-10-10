@@ -51,6 +51,16 @@ USAGE (the owner runs this; substitute real values):
 
 Add `--base-url https://apiviporder.com/frontend/v1` to override the endpoint.
 
+READING THE CUSTOMER CODE BACK (opt-in, `LIVE_REG_READ_BACK=yes`). The 2026-10-07
+POST proved `/register` answers 2xx WITHOUT a customer code (§10.6), and the
+read-only probe of §10.7 found where the code most likely lives: `GET
+/auth/profile`, behind the token `POST /login` returns. With this flag, a 2xx
+registration is followed by exactly ONE `POST /login` (`{account, password}`, the
+same identity) and, only if a token comes back, exactly ONE `GET /auth/profile`.
+Neither creates anything; both are announced before the registration is sent,
+neither is retried, redirects are refused, and both land in the same evidence
+file. The token is redacted exactly like the password.
+
 WHAT IT PRINTS: HTTP status, content type, elapsed time, the response's KEY NAMES
 (never values blindly), a sanitized body with any password occurrence redacted and
 long values truncated, and the evidence file path — before the POST is sent.
@@ -125,6 +135,27 @@ REQUIRED_ENV = {
 #: Any response value longer than this is truncated rather than printed whole.
 MAX_VALUE = 300
 
+#: Cloudflare in front of the provider rejects non-browser clients with Error 1010
+#: (§4.1), so a self-describing User-Agent would spend the one authorized attempt
+#: on a 403 that never reached the API. Must equal the backend's
+#: `DEFAULT_BROWSER_USER_AGENT` — kept as a literal so this tool stays stdlib-only,
+#: and pinned equal by a test so the two cannot drift apart.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+READ_BACK_FLAG = "LIVE_REG_READ_BACK"
+
+#: A string under a key containing any of these is redacted BY KEY, whatever its
+#: value. Value-based redaction only covers secrets we already hold; a token the
+#: provider returns under a key `TOKEN_PATHS` does not list (Sanctum's
+#: `plainTextToken`, say) would otherwise reach the evidence file whole.
+SENSITIVE_KEY_PARTS = ("token", "password", "secret", "jwt", "authorization", "bearer")
+
+#: Where an earlier automation of the owner's found the login token (§4.1).
+TOKEN_PATHS = (("access_token",), ("token",), ("data", "access_token"), ("data", "token"))
+
 
 def _fail(missing: list[str]) -> int:
     print("REFUSING TO SEND. Missing:")
@@ -134,7 +165,9 @@ def _fail(missing: list[str]) -> int:
     return 2
 
 
-def _sanitize(value: object, secret: str, depth: int = 0, *, truncate: bool = True) -> object:
+def _sanitize(
+    value: object, secret: str | tuple[str, ...], depth: int = 0, *, truncate: bool = True
+) -> object:
     """Redact every form of the password and truncate long values, recursively.
 
     THE ONLY REDACTION PATH IN THIS FILE. `str.replace(secret, ...)` alone is not
@@ -144,23 +177,34 @@ def _sanitize(value: object, secret: str, depth: int = 0, *, truncate: bool = Tr
     Vietnamese password before. So all normalizations and both JSON escape modes
     are redacted here — and this same function is run once more over the finished
     evidence text, so an escape introduced by the serializer cannot survive.
+
+    `secret` may be several values (the password and a login token). All of them
+    are redacted in ONE pass, before truncation: redacting one secret per call
+    would let the first call truncate a long token that the second then misses.
     """
     if depth > 6:
         return "<max depth>"
     if isinstance(value, dict):
-        return {k: _sanitize(v, secret, depth + 1, truncate=truncate) for k, v in value.items()}
+        return {
+            k: "<REDACTED:by-key>"
+            if isinstance(v, str) and any(part in str(k).lower() for part in SENSITIVE_KEY_PARTS)
+            else _sanitize(v, secret, depth + 1, truncate=truncate)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [_sanitize(v, secret, depth + 1, truncate=truncate) for v in value[:20]]
     if isinstance(value, str):
         out = value
-        if secret:
-            forms: list[str] = []
+        forms: list[str] = []
+        for one in (secret,) if isinstance(secret, str) else secret:
+            if not one:
+                continue
             for normalised in (
-                secret,
-                unicodedata.normalize("NFC", secret),
-                unicodedata.normalize("NFD", secret),
-                unicodedata.normalize("NFKC", secret),
-                unicodedata.normalize("NFKD", secret),
+                one,
+                unicodedata.normalize("NFC", one),
+                unicodedata.normalize("NFD", one),
+                unicodedata.normalize("NFKC", one),
+                unicodedata.normalize("NFKD", one),
             ):
                 for form in (
                     normalised,
@@ -169,6 +213,7 @@ def _sanitize(value: object, secret: str, depth: int = 0, *, truncate: bool = Tr
                 ):
                     if form and form not in forms:
                         forms.append(form)
+        if forms:
             for form in sorted(forms, key=len, reverse=True):
                 out = out.replace(form, "<REDACTED>")
         if truncate and len(out) > MAX_VALUE:
@@ -192,7 +237,7 @@ def _evidence_path() -> Path:
     return (base / f"registration-evidence-{stamp}.json").resolve()
 
 
-def _write_evidence(path: Path, report: dict[str, object], secret: str) -> None:
+def _write_evidence(path: Path, report: dict[str, object], secret: str | tuple[str, ...]) -> None:
     """Record via a same-directory temp file, then rename it into place.
 
     §16.3: the rename is the atomic step. A crash before it leaves any existing
@@ -231,6 +276,7 @@ def _report(
     body: object,
     password_echoed: bool,
     note: str,
+    read_back: object = None,
 ) -> dict[str, object]:
     """The on-disk contract of one attempt. Keys are stable so a later run diffs."""
     return {
@@ -247,6 +293,7 @@ def _report(
         "body_sanitized": body,
         "password_echoed": password_echoed,
         "note": note,
+        "read_back": read_back,
     }
 
 
@@ -263,6 +310,134 @@ def _response_keys(o: object, prefix: str = "", depth: int = 0) -> list[str]:
     if isinstance(o, list) and o:
         return _response_keys(o[0], f"{prefix}[].", depth + 1)
     return []
+
+
+def _exchange(req: urllib.request.Request) -> tuple[int | None, str, bytes, str, float]:
+    """ONE request, redirects refused, no retry. Returns status, type, body, note, elapsed."""
+    started = time.monotonic()
+    try:
+        opener = urllib.request.build_opener(_RefuseRedirects())
+        with opener.open(req, timeout=30) as resp:  # noqa: S310
+            return (
+                resp.status,
+                resp.headers.get("Content-Type", ""),
+                resp.read(),
+                "",
+                time.monotonic() - started,
+            )
+    except urllib.error.HTTPError as exc:
+        note = ""
+        if 300 <= exc.code < 400:
+            note = f"redirect to {exc.headers.get('Location', '(none)')} NOT followed"
+        return (
+            exc.code,
+            exc.headers.get("Content-Type", ""),
+            exc.read(),
+            note,
+            time.monotonic() - started,
+        )
+    except urllib.error.URLError as exc:
+        return None, "", b"", f"transport failure: {exc.reason}", time.monotonic() - started
+
+
+def _parse(raw: bytes) -> tuple[bool, object]:
+    text = raw.decode("utf-8", errors="replace")
+    try:
+        return True, json.loads(text)
+    except json.JSONDecodeError:
+        return False, text
+
+
+def _find_token(parsed: object) -> str:
+    for path in TOKEN_PATHS:
+        node = parsed
+        for key in path:
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, str) and node.strip():
+            return node.strip()
+    return ""
+
+
+def _code_candidates(o: object, prefix: str = "", depth: int = 0) -> list[str]:
+    """Paths of every value shaped like a customer code (`TT` + digits, §4.1)."""
+    if depth > 6:
+        return []
+    if isinstance(o, dict):
+        return [p for k, v in o.items() for p in _code_candidates(v, f"{prefix}{k}.", depth + 1)]
+    if isinstance(o, list):
+        return [
+            p for i, v in enumerate(o[:20]) for p in _code_candidates(v, f"{prefix}{i}.", depth + 1)
+        ]
+    if isinstance(o, str) and len(o) > 2 and o[:2].upper() == "TT" and o[2:].isdigit():
+        return [f"{prefix.rstrip('.')}={o}"]
+    return []
+
+
+def _step(
+    endpoint: str,
+    method: str,
+    status: int | None,
+    ctype: str,
+    raw: bytes,
+    note: str,
+    elapsed: float,
+) -> dict[str, object]:
+    is_json, parsed = _parse(raw)
+    return {
+        "endpoint": endpoint,
+        "method": method,
+        "http_status": status,
+        "content_type": ctype or None,
+        "elapsed_seconds": round(elapsed, 3),
+        "bytes": len(raw),
+        "body_is_json": is_json,
+        "key_names": _response_keys(parsed) if is_json else [],
+        "body_sanitized": parsed,
+        "note": note,
+    }
+
+
+def _read_back(base: str, phone: str, password: str) -> tuple[dict[str, object], str]:
+    """`POST /login` once, then `GET /auth/profile` once if a token came back.
+
+    Returns the UNSANITIZED steps and the token; the caller redacts both the
+    password and the token from everything before printing or writing it.
+    """
+    headers = {"Accept": "application/json", "User-Agent": BROWSER_USER_AGENT}
+    login_url = f"{base}/login"
+    status, ctype, raw, note, elapsed = _exchange(
+        urllib.request.Request(  # noqa: S310 - same operator-supplied base
+            login_url,
+            data=json.dumps({"account": phone, "password": password}).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"},
+            method="POST",
+        )
+    )
+    steps: dict[str, object] = {
+        "login": _step(login_url, "POST", status, ctype, raw, note, elapsed)
+    }
+    is_json, parsed = _parse(raw)
+    token = _find_token(parsed) if is_json and status is not None and 200 <= status < 300 else ""
+    steps["token_found"] = bool(token)
+    if not token:
+        steps["profile"] = None
+        steps["note"] = (
+            "no token in the login response at "
+            + " | ".join(".".join(p) for p in TOKEN_PATHS)
+            + "; profile NOT requested"
+        )
+        return steps, ""
+
+    profile_url = f"{base}/auth/profile"
+    status, ctype, raw, note, elapsed = _exchange(
+        urllib.request.Request(  # noqa: S310
+            profile_url, headers={**headers, "Authorization": f"Bearer {token}"}, method="GET"
+        )
+    )
+    steps["profile"] = _step(profile_url, "GET", status, ctype, raw, note, elapsed)
+    is_json, parsed = _parse(raw)
+    steps["customer_code_candidates"] = _code_candidates(parsed) if is_json else []
+    return steps, token
 
 
 def main() -> int:
@@ -340,6 +515,10 @@ def main() -> int:
     # worthless exactly when it is needed most.
     print(f"  evidence   : {evidence_file}")
     print("  (printed BEFORE the POST; the record is written whatever the answer)")
+    read_back = os.environ.get(READ_BACK_FLAG, "").strip().lower() in ("yes", "true", "1")
+    if read_back:
+        print(f"  read-back  : ON — after a 2xx, ONE POST {base}/login and, if it")
+        print(f"               returns a token, ONE GET {base}/auth/profile")
     print()
 
     data = json.dumps(body).encode("utf-8")
@@ -349,7 +528,7 @@ def main() -> int:
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "VIPORDER-integration-check/1.0 (+pre-staging verification)",
+            "User-Agent": BROWSER_USER_AGENT,
         },
         method="POST",
     )
@@ -393,6 +572,8 @@ def main() -> int:
 
     elapsed = time.monotonic() - started
 
+    secrets: tuple[str, ...] = (password,)
+
     def record(**fields: object) -> None:
         report = _report(
             endpoint=url,
@@ -402,7 +583,7 @@ def main() -> int:
             **fields,  # type: ignore[arg-type]
         )
         try:
-            _write_evidence(evidence_file, report, password)
+            _write_evidence(evidence_file, report, secrets)
             print(f"  evidence written: {evidence_file}")
         except OSError as exc:
             # Never lose the terminal report because the disk refused the file.
@@ -469,6 +650,29 @@ def main() -> int:
     print("\n  SANITIZED BODY:")
     print(json.dumps(_sanitize(parsed, password), indent=4, ensure_ascii=False)[:4000])
 
+    read_back_steps: dict[str, object] | None = None
+    if read_back and not redirect_refused and 200 <= (status or 0) < 300:
+        print("\n  READ-BACK: logging in once with the identity just registered")
+        steps, token = _read_back(base, phone, password)
+        if token:
+            secrets = (password, token)
+        read_back_steps = _sanitize(steps, secrets)  # type: ignore[assignment]
+        assert isinstance(read_back_steps, dict)
+        for name_ in ("login", "profile"):
+            step = read_back_steps.get(name_)
+            if isinstance(step, dict):
+                print(f"    {name_:<8}: HTTP {step['http_status']}  {step['note'] or ''}".rstrip())
+                for k in step["key_names"][:40]:  # type: ignore[index]
+                    print(f"      {k}")
+        print(f"    token found: {'yes (redacted)' if token else 'NO'}")
+        if read_back_steps.get("note"):
+            print(f"    {read_back_steps['note']}")
+        candidates = read_back_steps.get("customer_code_candidates") or []
+        print(f"    customer-code candidates: {candidates or 'NONE'}")
+    elif read_back:
+        read_back_steps = {"skipped": "the registration did not answer 2xx; no login was attempted"}
+        print("\n  READ-BACK SKIPPED: the registration did not answer 2xx.")
+
     record(
         elapsed_seconds=elapsed,
         status=status,
@@ -478,6 +682,7 @@ def main() -> int:
         key_names=key_names,
         body=_sanitize(parsed, password),
         password_echoed=password_echoed,
+        read_back=read_back_steps,
     )
 
     if redirect_refused:

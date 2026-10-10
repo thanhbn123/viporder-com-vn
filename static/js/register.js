@@ -48,7 +48,7 @@
       ? window.VipOrderRegisterValidation
       : null;
 
-  var PORTAL_URL = rules ? rules.PORTAL_URL : "https://khachhang.viporder.com.vn";
+  var PORTAL_URL = rules ? rules.PORTAL_URL : "https://khachhang.viporder.com.vn/login";
   var PORTAL_HOST = rules ? rules.PORTAL_HOST : "khachhang.viporder.com.vn";
   var IDEM_STORAGE_KEY = "vo_idem_key_v1";
   /* The phone the stored key was minted for, so the binding survives a reload. */
@@ -505,8 +505,15 @@
     var parts = [data && data.message ? String(data.message) : "Đăng ký thành công."];
     if (data && data.external_customer_code) {
       parts.push("Mã khách hàng của bạn: " + String(data.external_customer_code) + ".");
+      parts.push("Bạn có thể đăng nhập hệ thống khách hàng bằng số điện thoại và mật khẩu vừa tạo.");
+    } else {
+      /* MEASURED 2026-10-09: the provider's register reply carries no code; the code
+       * is shown on the customer portal after sign-in. Say so, rather than leave the
+       * customer wondering where "mã khách hàng" went. */
+      parts.push(
+        "Vui lòng đăng nhập hệ thống khách hàng bằng số điện thoại và mật khẩu vừa tạo để xem mã khách hàng."
+      );
     }
-    parts.push("Bạn có thể đăng nhập hệ thống khách hàng bằng số điện thoại và mật khẩu vừa tạo.");
     setMessage(parts.join(" "), "success");
 
     form.setAttribute("data-completed", "true");

@@ -424,3 +424,155 @@ def test_a_transport_failure_is_also_recorded(tmp_path) -> None:
     assert len(files) == 1, files
     text = files[0].read_text(encoding="utf-8")
     assert "transport_failure" in text
+
+
+# ---------------------------------------------------------------------------
+# Read-back: register → login → profile, so ONE authorized run finds the code
+# ---------------------------------------------------------------------------
+
+#: Longer than the tool's truncation limit ON PURPOSE: redacting the password in one
+#: pass and the token in a second would truncate the token first and leak its head.
+LONG_TOKEN = "tok-" + "x" * 400 + "-tail"
+
+
+class _Provider(http.server.BaseHTTPRequestHandler):
+    """Answers per path, like the real API: register, login, auth/profile."""
+
+    seen: list[dict[str, object]] = []
+    register_status = 201
+    login_body = json.dumps({"access_token": LONG_TOKEN}).encode()
+
+    def _answer(self, status: int, body: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _record(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        type(self).seen.append(
+            {
+                "method": self.command,
+                "path": self.path,
+                "auth": self.headers.get("Authorization"),
+                "ua": self.headers.get("User-Agent"),
+                "body": json.loads(self.rfile.read(length)) if length else None,
+            }
+        )
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._record()
+        if self.path.endswith("/register"):
+            self._answer(type(self).register_status, b'{"message":"ok"}')
+        elif self.path.endswith("/login"):
+            self._answer(200, type(self).login_body)
+        else:
+            self._answer(404, b"{}")
+
+    def do_GET(self) -> None:  # noqa: N802
+        self._record()
+        if (
+            self.path.endswith("/auth/profile")
+            and self.headers.get("Authorization") == f"Bearer {LONG_TOKEN}"
+        ):
+            self._answer(200, b'{"data":{"customer_code":"TT01234","phone":"0968961962"}}')
+        else:
+            self._answer(401, b'{"error":"Unauthenticated."}')
+
+    def log_message(self, *args: object) -> None:  # noqa: D102
+        pass
+
+
+@pytest.fixture
+def provider():
+    _Provider.seen = []
+    _Provider.register_status = 201
+    _Provider.login_body = json.dumps({"access_token": LONG_TOKEN}).encode()
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Provider)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}/frontend/v1"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_without_read_back_only_the_registration_is_sent(provider) -> None:
+    result = _run(provider)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [(r["method"], r["path"]) for r in _Provider.seen] == [("POST", "/frontend/v1/register")]
+
+
+def test_read_back_logs_in_once_and_reads_the_profile_once(provider, tmp_path) -> None:
+    result = _run(provider, LIVE_REG_READ_BACK="yes", LIVE_REG_EVIDENCE_DIR=str(tmp_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [(r["method"], r["path"]) for r in _Provider.seen] == [
+        ("POST", "/frontend/v1/register"),
+        ("POST", "/frontend/v1/login"),
+        ("GET", "/frontend/v1/auth/profile"),
+    ]
+    login = _Provider.seen[1]["body"]
+    assert login == {"account": IDENTITY["LIVE_REG_PHONE"], "password": FAKE_SECRET}
+    assert _Provider.seen[2]["auth"] == f"Bearer {LONG_TOKEN}"
+
+    text = _evidence_files(tmp_path)[0].read_text(encoding="utf-8")
+    assert "data.customer_code=TT01234" in text, text
+    assert "data.customer_code=TT01234" in result.stdout, result.stdout
+    for leaked in (FAKE_SECRET, LONG_TOKEN, LONG_TOKEN[:40], LONG_TOKEN[-40:]):
+        assert leaked not in text, "a secret reached the evidence file"
+        assert leaked not in result.stdout + result.stderr, "a secret reached the terminal"
+
+
+def test_read_back_is_announced_before_the_registration(provider) -> None:
+    result = _run(provider, LIVE_REG_READ_BACK="yes")
+    assert result.stdout.index("read-back  : ON") < result.stdout.index("HTTP status"), (
+        result.stdout
+    )
+
+
+def test_no_token_means_no_profile_request(provider, tmp_path) -> None:
+    _Provider.login_body = b'{"message":"ok"}'
+    result = _run(provider, LIVE_REG_READ_BACK="yes", LIVE_REG_EVIDENCE_DIR=str(tmp_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [r["path"] for r in _Provider.seen] == ["/frontend/v1/register", "/frontend/v1/login"]
+    assert "profile NOT requested" in _evidence_files(tmp_path)[0].read_text(encoding="utf-8")
+
+
+def test_a_refused_registration_is_never_followed_by_a_login(provider, tmp_path) -> None:
+    _Provider.register_status = 422
+    result = _run(provider, LIVE_REG_READ_BACK="yes", LIVE_REG_EVIDENCE_DIR=str(tmp_path))
+
+    assert result.returncode == 1, result.stdout
+    assert [r["path"] for r in _Provider.seen] == ["/frontend/v1/register"]
+    assert "READ-BACK SKIPPED" in result.stdout
+
+
+def test_every_request_presents_the_backends_browser_user_agent(provider) -> None:
+    """Cloudflare answers a non-browser UA with Error 1010 — a 403 that would spend
+    the authorized attempt without ever reaching the API."""
+    from app.config import DEFAULT_BROWSER_USER_AGENT
+
+    _run(provider, LIVE_REG_READ_BACK="yes")
+    assert _Provider.seen
+    assert {r["ua"] for r in _Provider.seen} == {DEFAULT_BROWSER_USER_AGENT}
+
+
+def test_a_token_under_an_unlisted_key_is_still_redacted(provider, tmp_path) -> None:
+    """Value-based redaction only knows the token it extracted. A token under a key
+    the tool does not look for must still not reach the record — redacted by key —
+    and must not be guessed at: no profile request is made without a found token."""
+    sanctum_token = "42|" + "s" * 40
+    _Provider.login_body = json.dumps({"data": {"plainTextToken": sanctum_token}}).encode()
+
+    result = _run(provider, LIVE_REG_READ_BACK="yes", LIVE_REG_EVIDENCE_DIR=str(tmp_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [r["path"] for r in _Provider.seen] == ["/frontend/v1/register", "/frontend/v1/login"]
+    text = _evidence_files(tmp_path)[0].read_text(encoding="utf-8")
+    assert "plainTextToken" in text, "the key name is structure and must stay visible"
+    assert sanctum_token not in text
+    assert sanctum_token not in result.stdout + result.stderr
