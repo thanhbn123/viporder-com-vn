@@ -670,7 +670,7 @@ test.describe("tracking lookup", () => {
      * controller without it cannot build a safe URL. The failure mode this guards
      * against is the worst one available: a button that looks fine and does
      * nothing at all, with no message anywhere. */
-    await page.route("**/static/js/tracking-search.js", (route) => route.abort());
+    await page.route("**/static/js/tracking-search.js*", (route) => route.abort());
     await page.goto("/");
     await page.locator("#tracking").scrollIntoViewIfNeeded();
 
