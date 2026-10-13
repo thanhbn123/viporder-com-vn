@@ -60,6 +60,8 @@ def health(request: Request) -> JSONResponse:
             "database": "ok" if database_ok else "error",
             # Whether staff get a Zalo message per new lead. Never the token.
             "notifications": {"zalo": "on" if settings.zalo_notify_enabled else "off"},
+            # Public-site DOMY chat: "on" when both upstream URL and secret are set.
+            "chat": {"domy": "on" if settings.domy_chat_enabled else "off"},
             "provider": {
                 "mode": mode,
                 "status": provider_health(

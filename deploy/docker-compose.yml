@@ -86,6 +86,15 @@ services:
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
       ZALO_BOT_TOKEN: ${ZALO_BOT_TOKEN:-}
       ZALO_NOTIFY_CHAT_ID: ${ZALO_NOTIFY_CHAT_ID:-}
+      # Public-site DOMY chat. Empty URL or secret = off. See docs/DOMY-CHAT.md.
+      DOMY_CHAT_UPSTREAM_URL: ${DOMY_CHAT_UPSTREAM_URL:-}
+      DOMY_CHAT_SECRET: ${DOMY_CHAT_SECRET:-}
+      DOMY_CHAT_TIMEOUT_SECONDS: ${DOMY_CHAT_TIMEOUT_SECONDS:-12}
+      DOMY_CHAT_MAX_CHARS: ${DOMY_CHAT_MAX_CHARS:-1000}
+      DOMY_CHAT_MESSAGES_PER_MINUTE: ${DOMY_CHAT_MESSAGES_PER_MINUTE:-6}
+      DOMY_CHAT_MESSAGES_PER_VISITOR_DAY: ${DOMY_CHAT_MESSAGES_PER_VISITOR_DAY:-40}
+      DOMY_CHAT_MESSAGES_PER_IP_DAY: ${DOMY_CHAT_MESSAGES_PER_IP_DAY:-120}
+      DOMY_CHAT_UPSTREAM_PER_MINUTE: ${DOMY_CHAT_UPSTREAM_PER_MINUTE:-90}
     # NOT published to the host. Only the nginx service reaches this, over the
     # private compose network. Publishing it would expose an application that
     # trusts X-Forwarded-For from any peer (see deploy/Dockerfile).

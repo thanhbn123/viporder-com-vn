@@ -35,3 +35,13 @@ services:
     ports: !override
       - "127.0.0.1:28081:80"
       - "127.0.0.1:28443:443"
+
+  # DOMY chat (docs/DOMY-CHAT.md). The app reaches DOMY on the main VPS over
+  # Tailscale: vanhanh.viporder.vn resolves publicly to 160.22.171.228, which this
+  # VPS cannot reach (both hosts claim the same /23 behind different gateways, so
+  # ARP fails — measured 2026-10-10). The main VPS Tailscale address is pinned
+  # here; TLS still verifies against the vanhanh.viporder.vn certificate. Harmless
+  # while chat is off (DOMY_CHAT_* unset).
+  app:
+    extra_hosts:
+      - "vanhanh.viporder.vn:100.108.103.24"

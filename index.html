@@ -103,6 +103,7 @@
   </script>
 
   <link rel="stylesheet" href="/static/css/style.css?v=3435b49ed0">
+  <link rel="stylesheet" href="/static/css/domy-chat.css?v=bb5034be09">
 
   <!-- External scripts only: tools/check_site.py fails the build on any inline
        executable <script> body or inline event handler, so every handler is
@@ -119,6 +120,9 @@
   <script src="/static/js/tracking.js?v=2cd087b759" defer></script>
   <script src="/static/js/contact-links.js?v=59976de313" defer></script>
   <script src="/static/js/app.js?v=056d2fc714" defer></script>
+  <!-- Trợ lý DOMY: tự ẩn khi backend báo chat tắt (/api/v1/chat/status). -->
+  <script src="/static/js/domy-chat-text.js?v=14b1803346" defer></script>
+  <script src="/static/js/domy-chat.js?v=71889af3c1" defer></script>
 </head>
 
 <body>
@@ -795,9 +799,16 @@
         </ul>
       </div>
 
-      <a href="#register" class="btn btn-light btn-large">
-        Bắt đầu đăng ký
-      </a>
+      <div class="contact-actions">
+        <!-- Hiện ra khi chat DOMY bật: bấm là mở khung chat và gửi sẵn câu này. -->
+        <button type="button" class="btn btn-outline-light btn-large"
+                data-domy-ask="Tôi muốn đặt giao hàng" hidden>
+          Đặt giao hàng
+        </button>
+        <a href="#register" class="btn btn-light btn-large">
+          Bắt đầu đăng ký
+        </a>
+      </div>
 
     </div>
 
