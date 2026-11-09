@@ -77,6 +77,15 @@ DUPLICATE_PATTERN = re.compile(
 MIN_TIMEOUT_SECONDS = 1.0
 MAX_TIMEOUT_SECONDS = 30.0
 
+#: The read-back login (§10.8, option A — owner decision 2026-11-09). MEASURED
+#: 2026-10-09: ``POST /login`` with the identity just registered answers 200 in
+#: ~0.3 s and its body already carries the customer record (``customer.code``,
+#: ``customer.id``), so no ``GET /auth/profile`` is needed.
+DEFAULT_LOGIN_PATH = "/login"
+#: Its own, short ceiling. The read-back is a convenience on top of a registration
+#: that has ALREADY succeeded; it must never hold the customer's answer hostage.
+READ_BACK_TIMEOUT_SECONDS = 3.0
+
 
 def strip_accents(text: str) -> str:
     """Return ``text`` with Vietnamese diacritics removed and lowercased."""
@@ -172,6 +181,8 @@ class ViporderFrontendProvider:
         warehouse_import_path: str = "/warehouse-imports/{keyword}",
         package_sealing_path: str = "/package-sealings/{keyword}",
         max_response_bytes: int = 2 * 1024 * 1024,
+        login_path: str = DEFAULT_LOGIN_PATH,
+        read_back_timeout_seconds: float = READ_BACK_TIMEOUT_SECONDS,
         client: httpx.Client | None = None,
     ) -> None:
         if mode != "http":
@@ -202,6 +213,7 @@ class ViporderFrontendProvider:
             )
         for label, path in (
             ("REGISTER_PATH", register_path),
+            ("LOGIN_PATH", login_path),
             ("WAREHOUSE_IMPORT_PATH", warehouse_import_path),
             ("PACKAGE_SEALING_PATH", package_sealing_path),
         ):
@@ -223,6 +235,11 @@ class ViporderFrontendProvider:
             raise ProviderConfigurationError(
                 f"KHAIBAO9610_MAX_RESPONSE_BYTES must be at least 1024, got {max_response_bytes!r}"
             )
+        if not MIN_TIMEOUT_SECONDS <= float(read_back_timeout_seconds) <= MAX_TIMEOUT_SECONDS:
+            raise ProviderConfigurationError(
+                f"read_back_timeout_seconds must be between {MIN_TIMEOUT_SECONDS:g} and "
+                f"{MAX_TIMEOUT_SECONDS:g}, got {read_back_timeout_seconds!r}"
+            )
 
         self.mode = mode
         # Stored, not merely validated. The constructor previously checked the flag
@@ -237,6 +254,8 @@ class ViporderFrontendProvider:
         self.warehouse_import_path = warehouse_import_path
         self.package_sealing_path = package_sealing_path
         self.max_response_bytes = int(max_response_bytes)
+        self.login_path = login_path
+        self.read_back_timeout_seconds = float(read_back_timeout_seconds)
         self._owns_client = client is None
         self._client = client or httpx.Client(timeout=self.timeout_seconds)
 
@@ -605,6 +624,61 @@ class ViporderFrontendProvider:
         """
         return self._tracking_get(self.package_sealing_path, keyword)
 
+    def _read_back(self, request: RegistrationRequest) -> tuple[str | None, str | None]:
+        """ONE ``POST /login`` as the customer just registered; returns (id, code).
+
+        Option A (owner decision 2026-11-09, superseding option B of 2026-10-09):
+        the provider's ``/register`` success body carries no code, and the owner
+        wants the code in the lead row, in the 201 and in the staff notification
+        — so the adapter signs in once with the password the customer chose and
+        reads ``customer.code`` out of the login body (MEASURED shape, §10.8).
+
+        Everything about this call is best-effort and fail-soft:
+
+        - exactly ONE request, never retried — a second login is a second chance
+          to trip a rate limit nobody has measured (§4.9);
+        - its own short timeout (``read_back_timeout_seconds``), so a slow login
+          cannot delay a registration that has already succeeded;
+        - ANY failure returns ``(None, None)`` and the caller reports the success
+          without a code, exactly as option B did. A failed read-back is a missing
+          convenience, not a failed registration;
+        - the body is never logged (it carries a bearer token), the password is
+          never logged, and the token is discarded with the response — it is not
+          stored, not returned, not used for anything else.
+        """
+        url = f"{self.base_url}{self.login_path}"
+        timeout = httpx.Timeout(
+            self.read_back_timeout_seconds,
+            connect=min(CONNECT_TIMEOUT_CEILING_SECONDS, self.read_back_timeout_seconds),
+        )
+        try:
+            response = self._client.post(
+                url,
+                json={"account": request.phone, "password": request.password},
+                headers=self._headers(),
+                timeout=timeout,
+            )
+        except httpx.HTTPError as exc:
+            # Includes timeouts. Only the CLASS is logged: httpx exception text can
+            # quote the request.
+            logger.warning("khaibao9610 read-back login failed (%s)", type(exc).__name__)
+            return None, None
+
+        if not 200 <= response.status_code < 300:
+            logger.warning("khaibao9610 read-back login refused (HTTP %s)", response.status_code)
+            return None, None
+
+        identifier, code = self._extract(_safe_json(response))
+        if code is None:
+            # A 2xx that carries no `customer.code` is not the measured shape.
+            # Say so, without the body: the body is where the token lives.
+            logger.warning(
+                "khaibao9610 read-back login answered %s but no customer code could be read",
+                response.status_code,
+            )
+            return None, None
+        return identifier, code
+
     # -- provider contract ---------------------------------------------------
 
     def register(self, request: RegistrationRequest) -> RegistrationResult:
@@ -687,15 +761,30 @@ class ViporderFrontendProvider:
                 # returned after the customer signs in. The provider's own portal
                 # does the same: register, then send the customer to log in.
                 #
-                # Owner decision 2026-10-09 (option B): report SUCCESS without a
-                # code and tell the customer to sign in to see it. We do NOT log in
-                # as the customer to fetch it — that would reuse their password for
-                # a second call and hold a token to their account.
+                # Owner decision 2026-10-09 (option B) was to report SUCCESS with no
+                # code. Owner decision 2026-11-09 (option A) supersedes it: sign in
+                # ONCE as the customer and read `customer.code` back, so the lead
+                # row, the 201 and the staff notification all carry the code. If
+                # the read-back fails for any reason, the answer is option B's —
+                # SUCCESS without a code — because the account DOES exist.
+                identifier, code = self._read_back(request)
+                if code is None:
+                    return RegistrationResult(
+                        status=ProviderStatus.SUCCESS,
+                        external_customer_id=None,
+                        external_customer_code=None,
+                        message=(
+                            "Registration completed; the customer code could not be "
+                            "read back and is shown after sign-in."
+                        ),
+                        http_status=http_status,
+                        retryable=False,
+                    )
                 return RegistrationResult(
                     status=ProviderStatus.SUCCESS,
-                    external_customer_id=None,
-                    external_customer_code=None,
-                    message="Registration completed; the customer code is shown after sign-in.",
+                    external_customer_id=identifier,
+                    external_customer_code=code,
+                    message="Registration completed.",
                     http_status=http_status,
                     retryable=False,
                 )

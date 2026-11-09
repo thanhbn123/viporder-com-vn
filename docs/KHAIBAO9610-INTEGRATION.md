@@ -26,13 +26,20 @@
 >   observed, but **not** in the register response: it is **`customer.code`**, read
 >   back through one `POST /login` and one `GET /auth/profile` (measured value
 >   `TT5233`, `customer.id` `6109`).
-> * **OWNER DECISION 2026-10-09 — option B.** The backend does **not** read the code
->   back. The measured success body (`200`, `status == "success"`) is now reported
->   as `SUCCESS` with **no code**: the lead becomes `REGISTERED` with
->   `external_customer_code = NULL`, and the customer is told to sign in to the
->   portal to see the code — exactly what the provider's own portal does. Any other
->   2xx that identifies nobody is still `UNUSABLE_RESPONSE` (§10.8, "option B").
->   A third live `POST` needs new owner authorisation.
+> * **OWNER DECISION 2026-11-09 — option A, superseding option B of 2026-10-09.**
+>   On the measured success body (`200`, `status == "success"`) the backend now
+>   performs **exactly one** `POST /login` with the identity the customer just
+>   registered and reads `customer.code` / `customer.id` out of the login body (the
+>   measured shape, §10.8 — no `GET /auth/profile` is needed). The lead becomes
+>   `REGISTERED` **with** the code, the 201 carries it, and so does the staff Zalo
+>   notification. If the read-back fails for any reason (transport, non-2xx, no
+>   code in the body) the answer is option B's: `REGISTERED` with
+>   `external_customer_code = NULL`, and the notification **says** the code is
+>   missing instead of omitting the line. The read-back is never retried and has
+>   its own 3 s ceiling (§10.8, "option A"). Any other 2xx that identifies nobody
+>   is still `UNUSABLE_RESPONSE`. **Not yet measured live**: this change has been
+>   exercised only against the recorded 2026-10-09 bodies; a live registration on
+>   staging needs new owner authorisation.
 >   `KHAIBAO9610_MODE=mock` is still the shipped default in every configuration
 >   file (`backend/app/config.py:107`, `deploy/env.production.example:80`,
 >   `.env.example:33`). The live adapter refuses to exist unless the mode is `http`
@@ -1912,9 +1919,41 @@ because the authorization that produced them is spent: if a later change to the
 wrapper or key lists stopped finding `customer.code`, there is no second live call
 available to notice.
 
-### Option B — what the backend does with this body (owner decision 2026-10-09)
+### Option A — the backend reads the code back (owner decision 2026-11-09)
 
-**Superseding the paragraph below.** The owner chose not to add a read-back step.
+**Supersedes option B below.** Measured on production on 2026-11-09 (SQL, read
+only): **61 of 61 `REGISTERED` leads carried no code**, and the staff notification
+silently omitted its `Mã KH` line for every one of them — the owner saw the gap in
+the message for lead `e4806cb1…` and chose to reverse the 2026-10-09 decision.
+
+`register()` now does, on the measured success body only:
+
+1. **one** `POST {base}/login` with `{"account": <phone as sent to /register>,
+   "password": <the customer's password>}`, the same headers as `/register`, and a
+   separate ceiling (`READ_BACK_TIMEOUT_SECONDS = 3.0`, connect capped at 5 s);
+2. `_extract()` on the body — the measured login body
+   (`tests/fixtures/live_registration_20261009.json`, `login`) yields
+   `('6109', 'TT5233')`, so no `GET /auth/profile`;
+3. `SUCCESS` with that id and code → the lead row, the 201 and the Zalo message all
+   carry it.
+
+Fail-soft, deliberately: any transport error, timeout, non-2xx, non-JSON body or a
+2xx without `customer.code` returns option B's answer — `SUCCESS`, no code — and
+the notification prints `Mã KH: — (chưa đọc được, tra SĐT trên khaibao9610)`
+(`app/notifications.py`, `MISSING_CODE_LINE`). The login is **never retried**: the
+provider's rate limit is still unknown (§4.9). The login body is never logged (it
+holds a bearer token); the token is discarded with the response; the password is
+used for this one call and nothing else (`tests/test_measured_register_success.py`).
+
+What is accepted with this choice: the backend signs in as the customer once,
+leaving one login event on the customer's provider account. What is **not**
+measured: that `/login` still behaves as on 2026-10-09 under real traffic, and
+whether consecutive logins are rate-limited. Both need a live staging registration
+with the usual four gates and the owner's explicit authorisation.
+
+### Option B — what the backend did with this body (owner decision 2026-10-09, superseded)
+
+**Superseded by option A above on 2026-11-09; kept as the record.** The owner chose not to add a read-back step.
 `register()` now treats a 2xx whose body identifies nobody **and** whose top-level
 `status` is exactly `"success"` (trimmed, case-folded) as `SUCCESS` with no code and
 no id. The lead is `REGISTERED`, `external_customer_code` is `NULL`, and the page

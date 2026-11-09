@@ -293,7 +293,9 @@ def test_the_measured_register_body_identifies_nobody() -> None:
     """MEASURED: `POST /register` answers 200 with exactly `status` and `message`.
 
     No code, no id, no token. `(None, None)` is therefore the CORRECT answer. Since
-    the owner chose option B (2026-10-09) the provider then reports SUCCESS without
+    the owner chose option B (2026-10-09) the provider reported SUCCESS without a code;
+    since option A (2026-11-09) it reads the code back via one POST /login — see
+    test_measured_register_success.py. Under option B it reported SUCCESS without
     a code, because `status == "success"` — see test_measured_register_success.py.
     """
     body = FIXTURE["register"]["body"]

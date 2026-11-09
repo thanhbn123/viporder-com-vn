@@ -140,3 +140,70 @@ def test_text_is_built_from_the_allow_list_only() -> None:
     assert "leak-me" not in text
     assert "Nguyễn Văn A" in text
     assert "Lead: L1" in text
+
+
+# --- the customer code line (option A + D, 2026-11-09) ------------------------------
+
+
+def test_a_201_with_a_code_shows_it() -> None:
+    text = build_registration_text(
+        {"full_name": "A", "phone": "0912 345 678"},
+        201,
+        {"lead_id": "L1", "external_customer_code": "TT5233"},
+    )
+    assert "Mã KH: TT5233" in text
+    assert "chưa đọc được" not in text
+
+
+def test_a_201_without_a_code_says_so_instead_of_staying_silent() -> None:
+    """Until 2026-11-09 the line was omitted; 61 code-less leads went unnoticed."""
+    from app.notifications import MISSING_CODE_LINE
+
+    text = build_registration_text(
+        {"full_name": "A", "phone": "0912 345 678"},
+        201,
+        {"lead_id": "L1", "external_customer_code": None},
+    )
+    assert MISSING_CODE_LINE in text
+    assert "khaibao9610" in MISSING_CODE_LINE
+
+
+@pytest.mark.parametrize("status", [202, 409, 422])
+def test_non_201_outcomes_do_not_claim_a_missing_code(status: int) -> None:
+    text = build_registration_text({"full_name": "A", "phone": "0912"}, status, {"lead_id": "L1"})
+    assert "Mã KH" not in text
+
+
+def test_the_code_reaches_the_staff_message_end_to_end(make_harness) -> None:  # type: ignore[no-untyped-def]
+    from pathlib import Path
+
+    from app.providers.khaibao9610 import ViporderFrontendProvider
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "live_registration_20261009.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/register"):
+            return httpx.Response(200, json=fixture["register"]["body"], request=request)
+        return httpx.Response(200, json=fixture["login"]["body"], request=request)
+
+    provider = ViporderFrontendProvider(
+        mode="http",
+        enable_real_calls=True,
+        enable_real_registration=True,
+        base_url="https://example.invalid/frontend/v1",
+        user_agent="test-agent",
+        client=httpx.Client(transport=httpx.MockTransport(upstream)),
+    )
+    harness = make_harness(zalo_bot_token=TOKEN, zalo_notify_chat_id=CHAT, provider=provider)
+    recorder = Recorder()
+    _arm(harness, recorder)
+
+    assert harness.post_registration().status_code == 201
+    text = _sent(recorder)[0]["text"]
+    assert "Mã KH: TT5233" in text
+    assert DEFAULT_PASSWORD not in text
+    assert "access_token" not in text

@@ -43,6 +43,9 @@ OUTCOME_LABELS = {
     422: "❌ Không tạo được (thông tin bị từ chối)",
 }
 
+#: Shown on a 201 whose code could not be read back from the provider.
+MISSING_CODE_LINE = "Mã KH: — (chưa đọc được, tra SĐT trên khaibao9610)"
+
 # The same labels as the <select> on index.html.
 SERVICE_LABELS = {
     "transport": "Vận chuyển Trung - Việt",
@@ -70,6 +73,11 @@ def build_registration_text(info: dict, status_code: int, body: dict) -> str:
     code = body.get("external_customer_code") if isinstance(body, dict) else None
     if code:
         lines.append(f"Mã KH: {code}")
+    elif status_code == 201:
+        # SAY that the code is missing. Until 2026-11-09 the line was simply
+        # omitted, and 61 registered leads went by without anyone noticing that
+        # none of them carried a code. A visible gap is a gap someone fills.
+        lines.append(MISSING_CODE_LINE)
     lines.append(f"Lúc: {datetime.now(VN_TZ).strftime('%H:%M %d/%m/%Y')}")
     lead_id = body.get("lead_id") if isinstance(body, dict) else None
     if lead_id:
